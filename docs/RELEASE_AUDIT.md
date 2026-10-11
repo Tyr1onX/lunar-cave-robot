@@ -10,6 +10,12 @@ Status: **private repository import authorized; not cleared for public release**
 - `p1_offline/` includes only the Python probes; outdated absolute-path P1 YAML removed; excludes run logs and transient helper scripts.
 - P2/P2b scripts under `tzb_ws/tools/` retained; README reflects incomplete real-sensor verification.
 
+## P3–P4b private archive update
+
+The integration branch imports only the four source patches in dependency order (P3 `f91bc6a`, P3b `e402434`, P4a `67359bd`, P4b `9d48d5d`), creating new commits from the current private `main`; the original Git history is not imported. See [P3–P4b validation](P3_P4B_VALIDATION.md) for test commands, observed results, and remaining hardware boundaries. Navigation contents were not changed.
+
+The original STM32 firmware project and any firmware ZIP remain outside Git: permission to redistribute, third-party terms, and compiled firmware artifacts have not been cleared. The upper-computer protocol tests are not hardware acceptance evidence. Existing public-release ownership and license blockers below remain unchanged.
+
 ## Intentionally excluded
 
 - All `.git` data, virtual environments, build/install/log outputs, Python caches, PID files.

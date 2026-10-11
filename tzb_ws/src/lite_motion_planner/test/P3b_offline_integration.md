@@ -2,14 +2,16 @@
 
 This procedure uses the default tzb_description.urdf, robot_state_publisher, the existing offline planner and synthetic feedback only. The test optical edge is a fixture: it uses Orbbec's source RPY convention (-pi/2, 0, -pi/2) and zero translation, so it does not encode or claim a measured camera extrinsic.
 
-## Build into a temporary overlay
+## Build a clean offline overlay
+
+From the cloned repository root (no physical hardware needed):
 
     source /opt/ros/humble/setup.bash
-    source ~/robot_p0/tzb_ws/install/p2-offline/setup.bash
-    cd ~/robot_p0/tzb_ws
-    colcon build --base-paths src/lite_motion_planner --packages-select lite_motion_planner \
-      --build-base /tmp/robot_p3b_build --install-base /tmp/robot_p3b_install --merge-install
-    source /tmp/robot_p3b_install/setup.bash
+    cd tzb_ws
+    colcon build --base-paths src --packages-up-to lite_motion_planner tzb_description \
+      --build-base build/validation --install-base install/validation \
+      --parallel-workers 4 --cmake-args -DBUILD_TESTING=ON
+    source install/validation/setup.bash
 
 ## Dynamic URDF/TF regression
 

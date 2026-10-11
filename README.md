@@ -12,6 +12,12 @@ ThinkBook (Ubuntu 22.04 / ROS 2 Humble): original P0 builds completed for 14 arm
 
 The publishable snapshot intentionally omits original build/install/log directories, Python environments, captured maps/bags, trained model weights and bundled SDK binary libraries. As a result, a full hardware-driver/model build **requires separately installing authorized upstream dependencies and models**; the isolated offline build below does not cover those components.
 
+## P3–P4b archived offline results
+
+The independent integration branch adds P3 timestamp-safe vision TF conversion, P3b URDF/TF synthetic integration, P4a arm serial framing/parsing, and P4b six-joint angle mapping. See [P3–P4b test commands and measured outcomes](docs/P3_P4B_VALIDATION.md) for source commit SHAs, reproducible tests, and limitations. On ThinkBook, the isolated integrated snapshot built successfully and reported **23 passing colcon tests**; P3b dynamic TF and the synthetic vision-to-place sequence also passed.
+
+**Offline accepted ≠ hardware accepted.** No real STM32 command/feedback, arm motion, gripper, camera hand-eye calibration, navigation-to-arm interaction, or physical safety test is validated. The full STM32 firmware project is not in Git pending separate authorization and license review. Do not launch hardware-facing bringup to reproduce these tests.
+
 ## Offline builds (no device access)
 
 Prerequisites: Ubuntu 22.04, ROS 2 Humble, `colcon`, and system dependencies (MoveIt 2, Nav2, slam_toolbox, Eigen/PCL, OMPL, Ruckig, Pinocchio, serial dependencies). Use `rosdep` to inspect missing dependencies; known legacy/external keys `ament_python`, `gz_sim_ros`, `rm_armor_msgs` and `tzb_state_test` cannot be assumed resolvable. In particular, `nav2arm` still needs the unavailable `tzb_state_test` interface at runtime.
