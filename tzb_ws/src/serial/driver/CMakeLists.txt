@@ -16,6 +16,7 @@ find_package(io_context REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(rm_serial_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
@@ -37,6 +38,7 @@ ament_target_dependencies(${PROJECT_NAME}
   geometry_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   rm_serial_msgs
 )
 
@@ -75,6 +77,7 @@ ament_export_dependencies(
   geometry_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   rm_serial_msgs
 )
 

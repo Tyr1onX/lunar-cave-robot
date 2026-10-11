@@ -34,6 +34,18 @@
     # ROS JointState and planner parameters stay in radians unless their own YAML says otherwise.
     tzb.arm_serial_angle_unit: "rad"
     tzb.arm_command_publish_hz: 100.0
+    # Candidate host command lease only. The 100 ms value is provisional until
+    # ThinkBook end-to-end jitter and supported mechanical stop behavior are reviewed.
+    tzb.arm_command_lease_sec: 0.1
+    tzb.arm_command_max_age_sec: 0.1
+    tzb.arm_command_future_tolerance_sec: 0.05
+    # Candidate whole-frame feedback timeout; it cannot detect stale individual CAN axes.
+    tzb.arm_feedback_timeout_sec: 0.5
+    tzb.arm_rearm_quiet_sec: 0.1
+    tzb.arm_safety_status_hz: 2.0
+    tzb.arm_safety_status_topic: "/serial/arm_safety/status"
+    tzb.arm_safety_reset_service: "/serial/arm_safety/reset"
+    tzb.arm_safety_enable_service: "/serial/arm_safety/enable"
     tzb.arm_command_speed_scale: 1.0
     tzb.arm_command_goal_tolerance_rad: 0.005
     # Keep this hard limiter aligned with lite_motion_planner.
