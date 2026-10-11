@@ -23,6 +23,7 @@ from nav2_common.launch import ReplaceString
 
 def generate_launch_description():
     bringup_share = get_package_share_directory("bringup")
+    chassis_bridge_share = get_package_share_directory("chassis_serial_bridge")
     livox_share = get_package_share_directory("livox_ros_driver2")
     imu_tools_share = get_package_share_directory("imu_tools")
     point_lio_share = get_package_share_directory("point_lio")
@@ -32,6 +33,7 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     nav_rviz = LaunchConfiguration("nav_rviz")
+    chassis_device = LaunchConfiguration("chassis_device")
 
     declare_use_sim_time = DeclareLaunchArgument(
         "use_sim_time", default_value="False",
@@ -40,6 +42,10 @@ def generate_launch_description():
     declare_nav_rviz = DeclareLaunchArgument(
         "nav_rviz", default_value="True",
         description="Launch Nav2 RViz, which displays the live /map and Nav2 Goal tool.",
+    )
+    declare_chassis_device = DeclareLaunchArgument(
+        "chassis_device",
+        description="Explicit STM32 USART1 serial device path; use a PTY for offline tests.",
     )
 
     # Single lidar input. Do not start pointcloud_fusion in this launch.
@@ -210,20 +216,17 @@ def generate_launch_description():
         }.items(),
     )
 
-    fake_vel_transform = Node(
-        package="fake_vel_transform",
-        executable="fake_vel_transform_node",
-        name="fake_vel_transform",
-        output="screen",
-        parameters=[{
-            "use_sim_time": use_sim_time,
-            "spin_speed": 12.56,
-        }],
+    chassis_bridge = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(chassis_bridge_share, "launch", "serial.launch.py")
+        ),
+        launch_arguments={"device_name": chassis_device}.items(),
     )
 
     return LaunchDescription([
         declare_use_sim_time,
         declare_nav_rviz,
+        declare_chassis_device,
         livox_driver,
         base_to_livox,
         imu_transform,
@@ -236,5 +239,5 @@ def generate_launch_description():
         map_saver,
         map_saver_lifecycle,
         navigation,
-        fake_vel_transform,
+        chassis_bridge,
     ])
