@@ -140,7 +140,9 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
   (void)declare_parameter<double>("tzb.loop_pause_sec", 0.5);
 
   nav_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-    "/cmd_vel", rclcpp::SensorDataQoS(),
+    declare_parameter<std::string>(
+      "tzb.legacy_chassis_command_topic", "/tzb/legacy_chassis_cmd"),
+    rclcpp::SensorDataQoS(),
     std::bind(&DriverNode::navCallback, this, _1));
   arm_command_sub_ = create_subscription<sensor_msgs::msg::JointState>(
     declare_parameter<std::string>("tzb.arm_command_topic", "/tzb_catch/arm_joint_command"),
