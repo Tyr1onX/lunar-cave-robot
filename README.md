@@ -57,3 +57,20 @@ P2 model sample inference requires a separately authorized OpenVINO `.bin` match
 ## Source provenance and distribution
 
 `docs/RELEASE_AUDIT.md` documents copied components, excluded assets and outstanding release blockers. Individual upstream `LICENSE` and `NOTICE` files are preserved; the entire mixed-origin repository is **not** assigned a blanket open-source license. This is an internal private snapshot; any public release still requires project-owner authorization and another license and data audit.
+
+
+## Unified engineering archive
+
+The branch archive/unified-engineering-assets is based on archive/p3-p4b-offline-validation. It preserves the P0–P4b baseline and adds the reviewed P5a chassis source audit and its 13 standard-library model tests.
+
+The two STM32 source archives were inspected but are not stored in this branch. The arm archive has no project license declaration and contains an upstream repository with no GitHub license metadata; the chassis archive also has no project-level license. Internal redistribution permission is not documented. See docs/RELEASE_AUDIT.md and docs/PROJECT_STATUS.md. The firmware/arm/ and firmware/chassis/ directories contain audit notes only and are not buildable firmware.
+
+P4c is recorded as safety audit complete with remediation pending. Its reported short SHA 2964e87 does not resolve in this repository, and no P4c branch is present. P5b remains under development because the ROS 2 chassis interface has blocking mismatches.
+
+To clone this archive branch:
+
+    git clone --single-branch --branch archive/unified-engineering-assets https://github.com/Tyr1onX/lunar-cave-robot.git
+    cd lunar-cave-robot
+    python3 tools/p5a_offline/test_chassis_control_path.py
+
+ROS 2 recovery and isolated workspace build instructions remain in this README and docs/ARCHITECTURE.md. Use Ubuntu 22.04 with ROS 2 Humble, and build/source tzb_ws and Nav2_rea_ws in separate terminals. No firmware source is currently available from this branch.
