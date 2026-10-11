@@ -1,7 +1,13 @@
-/**:
+chassis_serial_bridge:
   ros__parameters:
-    device_name: "/dev/ttyACM0"
-    baud_rate: 9600
-    flow_control: "none"
-    parity: "none"
-    stop_bits: "1"
+    # Empty by default so launching the node cannot select a physical serial port accidentally.
+    # Nav2 launch requires an explicit chassis_device argument.
+    device_name: ""
+    baud_rate: 115200
+    command_topic: "/cmd_vel"
+    tx_period_ms: 20
+    command_timeout_ms: 100
+    max_linear_x: 0.6
+    max_angular_z: 1.5
+    max_linear_y_abs: 0.01
+    unsupported_axis_tolerance: 0.01
