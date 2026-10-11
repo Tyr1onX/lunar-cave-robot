@@ -8,24 +8,28 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    package_share_dir = get_package_share_directory("rm_serial_driver")
-    default_params_file = os.path.join(package_share_dir, "config", "serial_params.yaml")
-
-    params_file_arg = DeclareLaunchArgument(
-        "params_file",
-        default_value=default_params_file,
-        description="Path to the serial driver parameter file",
-    )
-
-    serial_node = Node(
-        package="rm_serial_driver",
-        executable="node",
-        name="serial_driver",
-        output="screen",
-        parameters=[LaunchConfiguration("params_file")],
-    )
-
+    package_share = get_package_share_directory("chassis_serial_bridge")
+    params_file = os.path.join(package_share, "config", "serial_params.yaml")
+    device_name = LaunchConfiguration("device_name")
+    command_topic = LaunchConfiguration("command_topic")
     return LaunchDescription([
-        params_file_arg,
-        serial_node,
+        DeclareLaunchArgument(
+            "device_name",
+            description="Explicit serial device path for the STM32 USART1 bridge; use a PTY for offline tests.",
+        ),
+        DeclareLaunchArgument(
+            "command_topic",
+            default_value="/cmd_vel",
+            description="Bridge input topic. Nav2 bringup uses the velocity_smoother output.",
+        ),
+        Node(
+            package="chassis_serial_bridge",
+            executable="chassis_serial_bridge_node",
+            name="chassis_serial_bridge",
+            output="screen",
+            parameters=[
+                params_file,
+                {"device_name": device_name, "command_topic": command_topic},
+            ],
+        ),
     ])
