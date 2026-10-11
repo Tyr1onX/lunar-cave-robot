@@ -1,0 +1,29 @@
+terrain_analysis:
+  ros__parameters:
+    scanVoxelSize: 0.05        # 点云体素滤波尺寸
+    decayTime: 2.0             # 点云衰减时间（秒）
+    noDecayDis: 8.0            # 距离超过此值的点不会被衰减
+    clearingDis: 10.0           # 地图清除的距离阈值
+    useSorting: true           # 是否对地面高度估计使用排序方式
+    quantileZ: 0.25            # 地面高度估计使用的分位数
+    considerDrop: false        # 是否考虑下落点
+    limitGroundLift: false     # 是否限制地面升高的最大高度
+    maxGroundLift: 0.15        # 最大允许的地面升高高度
+    clearDyObs: false          # 是否开启动态障碍物清除功能
+    minDyObsDis: 0.3           # 动态障碍物判定的最小距离
+    minDyObsAngle: 0.0         # 动态障碍物判定的最小角度（度）
+    minDyObsRelZ: -2.0         # 动态障碍物判定的最小相对高度
+    absDyObsRelZThre: 0.2      # 动态障碍物相对高度变化的绝对阈值
+    minDyObsVFOV: -28.0        # 垂直视场最小值（度）
+    maxDyObsVFOV: 52.0         # 垂直视场最大值（度）
+    minDyObsPointNum: 3        # 动态障碍物最小点数
+    noDataObstacle: false      # 是否将无数据区域作为障碍物处理
+    noDataBlockSkipNum: 0      # 无数据区域膨胀的次数
+    minBlockPointNum: 5       # 体素内最小点数阈值
+    vehicleHeight: 1.5         # 车辆高度（用于障碍物高度计算）
+    voxelPointUpdateThre: 30  # 体素更新所需的最小点数
+    voxelTimeUpdateThre: 1.0   # 体素更新的最小时间间隔（秒）
+    minRelZ: -1.0              # 相对高度最小值（滤除低点）
+    maxRelZ: 3.0               # 相对高度最大值（滤除高点）
+    disRatioZ: 0.35            # 相对高度与距离的比例系数
+    maxVoxelStorageDist: 10.0  # 体素最大保存距离（超出此范围的体素将被定时清理）

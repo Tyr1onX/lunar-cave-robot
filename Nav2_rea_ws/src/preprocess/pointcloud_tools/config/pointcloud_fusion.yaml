@@ -1,0 +1,11 @@
+pointcloud_fusion:
+  ros__parameters:
+    target_frame: "livox_frame"
+
+    sub_topic1: "/livox/lidar_192_168_36_119"
+    sub_topic2: "/livox/lidar_192_168_36_128"
+
+    pub_custommsg_topic: "/livox/lidar"
+    pub_pointcloud_topic: "/livox/lidar/pointcloud"
+
+    queue_size: 10

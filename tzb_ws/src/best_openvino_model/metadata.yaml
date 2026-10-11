@@ -1,0 +1,8 @@
+author: Ultralytics
+license: AGPL-3.0
+task: detect
+names:
+  0: haomu
+model: best.xml
+weights: best.bin
+# Weights are not distributed.

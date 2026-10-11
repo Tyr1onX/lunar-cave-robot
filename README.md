@@ -1,0 +1,49 @@
+# Lunar Cave Robot
+
+ROS 2 Humble robot project recovered from the NUC and validated on the ThinkBook. This repository keeps **two separate workspaces**: `tzb_ws/` (arm/perception) and `Nav2_rea_ws/` (navigation). Never source both overlays in the same terminal: both define `rm_serial_driver` / `rm_serial_msgs`.
+
+## Validated boundary
+
+ThinkBook (Ubuntu 22.04 / ROS 2 Humble): original P0 builds completed for 14 arm packages and 18 navigation packages; P1 arm planning and collision checks passed with synthetic feedback; P2 only covered offline software/model checks; P2b provides real-bag capture/replay audit scripts but no real RGB-D bag or hand-eye-calibration acceptance is recorded. **No physical arm, base, camera, lidar or serial-device behavior is verified.**
+
+The publishable snapshot intentionally omits original build/install/log directories, Python environments, captured maps/bags, trained model weights and bundled SDK binary libraries. As a result, a full hardware-driver/model build **requires separately installing authorized upstream dependencies and models**; the isolated offline build below does not cover those components.
+
+## Offline builds (no device access)
+
+Prerequisites: Ubuntu 22.04, ROS 2 Humble, `colcon`, and system dependencies (MoveIt 2, Nav2, slam_toolbox, Eigen/PCL, OMPL, Ruckig, Pinocchio, serial dependencies). Use `rosdep` to inspect missing dependencies; known legacy/external keys `ament_python`, `gz_sim_ros`, `rm_armor_msgs` and `tzb_state_test` cannot be assumed resolvable. In particular, `nav2arm` still needs the unavailable `tzb_state_test` interface at runtime.
+
+From the repository root, in **separate terminals**:
+
+```bash
+source /opt/ros/humble/setup.bash
+cd tzb_ws
+colcon build --base-paths src --packages-skip orbbec_camera \
+  --build-base build/offline --install-base install/offline \
+  --parallel-workers 4
+```
+
+```bash
+source /opt/ros/humble/setup.bash
+cd Nav2_rea_ws
+colcon build --base-paths src --packages-skip livox_ros_driver2 fast_lio point_lio pointcloud_tools \
+  --build-base build/offline --install-base install/offline \
+  --parallel-workers 4
+```
+
+Optional camera/laser driver builds need the original SDK libraries obtained from the appropriate licensed upstream distribution; do not copy libraries from NUC or another local system into Git.
+
+## Safe offline arm test
+
+After completing the arm offline build, from `tzb_ws/`:
+
+```bash
+./tools/p2_offline/run.sh
+```
+
+The launcher enforces domain 187, localhost-only ROS, synthetic arm feedback, and `/p2_offline/*` command topics; it never starts robot hardware drivers. Ctrl-C stops it. Only use this offline launcher, **not** the default robot bringup files, when no robot operator is present.
+
+P2 model sample inference requires a separately authorized OpenVINO `.bin` matching the versioned XML and an explicitly supplied RGB sample; `./tools/p2_offline/run_yolo_rgb_sample.sh IMAGE MODEL_DIR` does not activate hardware. P2b bag auditing and replay require independently captured and approved bag files: see `tzb_ws/tools/p2b/README.md`.
+
+## Source provenance and distribution
+
+`docs/RELEASE_AUDIT.md` documents copied components, excluded assets and outstanding release blockers. Individual upstream `LICENSE` and `NOTICE` files are preserved; the entire mixed-origin repository is **not** assigned a blanket open-source license. This is an internal private snapshot; any public release still requires project-owner authorization and another license and data audit.

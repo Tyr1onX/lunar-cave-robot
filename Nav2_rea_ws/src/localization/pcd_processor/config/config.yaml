@@ -1,0 +1,30 @@
+pcd_to_grid_map:
+    ros__parameters:
+        # Processing
+        grid_size: 2000
+        cell_size: 0.05
+        frame_id: "map"
+        pcd_file_path: "/home/eatwhat/Nav2_rea_ws/src/localization/pcd_processor/pcd/nanling01.pcd"
+        publish_rate: 5.0
+        max_height_threshold: 2.3
+        flatness_threshold: 0.001
+        use_voxel_filter: true
+        voxel_size: 0.03
+        map_resolution: 0.05
+
+        # Outlier removal
+        use_outlier_removal: true
+        outlier_removal_method: "statistical"
+
+        # Statistical outlier filter
+        statistical_mean_k: 50
+        statistical_std_dev: 1.0
+
+        # Radius outlier filter
+        radius_search: 0.2
+        min_neighbors: 10
+
+        # Debug
+        publish_input_cloud: true
+        publish_processed_cloud: true
+

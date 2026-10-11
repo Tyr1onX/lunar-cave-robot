@@ -1,0 +1,74 @@
+init_pose_alignment:
+  ros__parameters:
+    # target_pcd_file: "/home/eatwhat/nav_ws/src/localization/alignment/pcd/red.pcd"
+    target_pcd_file: "/home/eatwhat/Nav2_rea_ws/src/localization/pcd_processor/pcd/nanling01.pcd"
+
+    map_frame_id: "map"
+    odom_frame_id: "odom_init"
+    robot_frame_id: "base_frame"
+
+    accumulate_time: 10                  # 累积点云的时间
+    orientation_search_steps: 18         # 方向搜索步数
+    multi_align_attempts: 8              # 普通匹配 多次匹配尝试次数
+    min_inlier_ratio: 0.6                # 最小内点比例
+    max_distance: 30.0                   # 最大有效距离
+    voxel_leaf_size: 0.1                 # 体素滤波叶子大小
+    fitness_score_threshold: 5.0         # 适应度得分阈值
+    good_fitness_score_threshold: 1.0    # 良好的适应度得分阈值
+
+    use_preprocess: true                # 是否对pcd点云预处理
+
+    use_radius_filter: false              # 是否对源点云进行半径滤除
+    filter_radius: 1.0                   # 滤除半径大小
+
+    use_initial_pose: true               # 是否使用参数中的初始位姿
+
+    initial_pose:                        # 初始位姿 blue
+      position:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+        w: 1.0
+
+    # initial_pose:                        # 初始位姿 red
+    #   position:
+    #     x: -1.14
+    #     y: 0.76
+    #     z: 0.0
+    #   orientation:
+    #     x: 0.0
+    #     y: 0.0
+    #     z: 0.0
+    #     w: 1.0
+    
+    use_multi_resolution: true            # 是否使用多分辨率策略
+    use_icp: false                        # 是否使用第二阶段ICP (use_multi_resolution_为true时有效)
+
+    use_cartesian_grid: true             # 是否使用笛卡尔网格化
+    grid_size: 0.3                        # 网格大小
+
+    use_height_threshold: false           # 是否对pcd点云进行高度限制
+    min_height: -1.0                      # 最小有效高度 (use_height_threshold_为true时有效)
+    max_height: 3.0                       # 最大有效高度 (use_height_threshold_为true时有效)
+
+    ndt_leaf_size: 0.5                    # NDT 体素滤波叶子大小
+    ndt_max_iterations: 30                # NDT 最大迭代次数
+    ndt_max_correspondence_distance: 2.0  # NDT 匹配最大有效距离
+
+    icp_leaf_size: 0.25                   # ICP 体素滤波叶子大小
+    icp_max_iterations: 50                # ICP 最大迭代次数
+    icp_max_correspondence_distance: 0.5  # ICP 匹配最大有效距离
+
+    gicp_leaf_size: 0.1                   # GICP 体素滤波叶子大小
+    gicp_max_iterations: 100              # GICP 最大迭代次数
+    gicp_max_correspondence_distance: 0.1 # GICP 匹配最大有效距离
+
+
+init_tf_publisher:
+  ros__parameters:
+    odom_frame_id: "odom_init"
+    map_frame_id: "map"

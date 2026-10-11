@@ -1,0 +1,9 @@
+author: Ultralytics
+license: AGPL-3.0
+task: segment
+names:
+  0: blue_block
+  1: blue block
+model: yoloe-26l-seg.xml
+weights: yoloe-26l-seg.bin
+# Weights are not distributed.

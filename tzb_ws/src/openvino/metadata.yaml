@@ -1,0 +1,7 @@
+author: Ultralytics
+license: AGPL-3.0
+task: segment
+names:
+  0: red_block
+model: yoloe-11l-seg.xml
+weights: yoloe-11l-seg.bin

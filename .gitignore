@@ -1,0 +1,52 @@
+# ROS 2 / colcon outputs
+**/build/
+**/install/
+**/log/
+**/logs/
+**/Log/
+**/.colcon/
+# Local Python environments and caches
+.venv/
+**/.venv/
+venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+# Runtime and recordings
+bags/
+**/bags/
+*.db3
+*.mcap
+*.bag
+*.pcd
+*.pgm
+*.log
+*.pid
+# Models and binary outputs not approved for redistribution
+*.pt
+*.pth
+*.onnx
+*.engine
+*.bin
+# System libraries and SDK binaries provided separately
+*.so
+*.so.*
+*.a
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa*
+id_ed25519*
+.DS_Store
+
+*.npz
+*.npy
+
+**/.vscode/

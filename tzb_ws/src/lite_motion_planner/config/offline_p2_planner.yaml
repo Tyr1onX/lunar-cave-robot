@@ -1,0 +1,215 @@
+/**:
+  ros__parameters:
+    planning_frame: base_link
+    default_group: arm
+    default_ee_frame: tcp_link
+    planning_timeout: 2.0
+    ompl_max_plan_attempts: 4
+    ik_max_iterations: 600
+    ik_pos_tolerance: 0.008
+    ik_rot_tolerance: 0.08
+    ik_damping: 1.0e-05
+    ik_alpha: 0.5
+    ik_max_step_norm: 0.35
+    ik_max_seed_count: 48
+    collision_check_resolution: 0.02
+    trajectory_collision_check_step: 0.05
+    control_period: 0.01
+    enable_visualization: true
+    enable_moveit_visualization: true
+    launch_visualization_rviz: true
+    launch_robot_state_publisher: true
+    publish_joint_states_for_visualization: true
+    enable_joint_state_playback: true
+    joint_state_playback_loop: false
+    joint_state_playback_speed_scale: 0.7
+    publish_moveit_display_trajectory: true
+    publish_moveit_planning_scene: true
+    publish_moveit_monitored_planning_scene: true
+    publish_collision_markers: true
+    publish_robot_collision_markers: false
+    publish_collision_labels: true
+    publish_e3_marker: false
+    visualization_joint_states_topic: /p2_offline/joint_states
+    moveit_display_trajectory_topic: /p2_offline/display_planned_path
+    moveit_planning_scene_topic: /p2_offline/planning_scene
+    moveit_monitored_planning_scene_topic: /p2_offline/monitored_planning_scene
+    relaxed_scene_collision_object_id: E3
+    relaxed_scene_collision_object_ids:
+    - ''
+    relaxed_scene_collision_links:
+    - tcp_link
+    - J6_link
+    - Claw_left_link
+    - claw_right_link
+    relaxed_scene_collision_allowed_penetration: 0.005
+    gripper_scene_collision_object_ids:
+    - ''
+    gripper_scene_collision_links:
+    - Claw_left_link
+    - claw_right_link
+    gripper_scene_collision_allowed_penetration: 0.0
+    gripper_self_collision_links:
+    - Claw_left_link
+    - claw_right_link
+    gripper_self_collision_allowed_penetration: 0.0
+    self_collision_allowed_penetration: 0.0
+    globally_ignored_robot_collision_links:
+    - ''
+    tzb.arm_group: arm
+    tzb.tcp_frame: tcp_link
+    tzb.e3_mesh_resource: package://lite_motion_planner/config/E3.STL
+    tzb.mesh_scale:
+    - 0.001
+    - 0.001
+    - 0.001
+    tzb.e3_marker_topic: /tzb_catch/e3_marker
+    tzb.publish_e3_marker: true
+    tzb.use_yaml_e3_target: true
+    tzb.e3_target_frame: base_link
+    tzb.e3_target_xyz:
+    - -0.26168583161607833
+    - -0.17536907187995862
+    - 0.35735090146410997
+    tzb.e3_target_rpy:
+    - -2.73
+    - -0.0
+    - 2.5
+    tzb.pose_estimator_target_topic: /pose_estimator/object_pose
+    tzb.pose_estimator_reference_frame: camera_link
+    tzb.apply_reference_transform_to_frozen_frame: true
+    tzb.pose_estimator_wait_timeout_sec: 15.0
+    tzb.pose_estimator_continuous_required_sec: 1.0
+    tzb.pose_estimator_continuous_max_gap_sec: 0.25
+    tzb.pose_estimator_reference_transform_matrix:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    tzb.pose_estimator_axis_conversion_matrix:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+    tzb.force_target_roll: false
+    tzb.force_target_pitch: false
+    tzb.force_target_yaw: false
+    tzb.target_rpy_unit: rad
+    tzb.forced_target_roll: -3.14
+    tzb.forced_target_pitch: 0.0
+    tzb.forced_target_yaw: 0.0
+    tzb.adaptive_rpy: false
+    tzb.position_only_target: false
+    tzb.adaptive_rpy_step_deg: 360.0
+    tzb.adaptive_rpy_max_deg: 360.0
+    tzb.adaptive_rpy_max_candidates: 64
+    tzb.joint_positions_unit: rad
+    tzb.ini_joint_positions:
+    - 0.0
+    - 1.0
+    - -2.61
+    - 0.0
+    - 0.0
+    - 0.0
+    tzb.place_joint_positions:
+    - 3.14
+    - -0.25
+    - -0.91
+    - 0.0
+    - 1.57
+    - 0.0
+    tzb.observe_joint_positions:
+    - 0.0
+    - 0.0
+    - -2.0
+    - 0.0
+    - 1.57
+    - 0.0
+    tzb.sentry_joint_positions:
+    - 0.0
+    - 1.13
+    - -2.18
+    - 0.0
+    - 1.57
+    - 0.0
+    tzb.arm_state_topic: /p2_offline/arm_joint_state
+    tzb.arm_feedback_enabled: true
+    tzb.arm_state_wait_timeout_sec: 0.5
+    tzb.arm_state_max_age_sec: 0.5
+    tzb.arm_motion_feedback_timeout_sec: 10.0
+    tzb.arm_motion_goal_tolerance_rad: 0.05
+    tzb.arm_motion_stable_duration_sec: 0.25
+    tzb.require_arm_feedback_for_completion: true
+    tzb.gripper_joint_names:
+    - Claw_left_joint
+    tzb.gripper_home_positions:
+    - 0.0
+    tzb.gripper_open_positions:
+    - -0.5236
+    tzb.gripper_close_positions:
+    - 0.0
+    tzb.gripper_command_topic: /p2_offline/gripper_command
+    tzb.e3_collision_object_enabled: true
+    tzb.grasp_collision_links:
+    - tcp_link
+    - J6_link
+    - Claw_left_link
+    - claw_right_link
+    tzb.grasp_collision_allowed_penetration: -1.0
+    tzb.joint_planning_timeout: 2.0
+    tzb.path_check_step: 0.05
+    tzb.service_wait_sec: 1.0
+    tzb.response_wait_sec: 15.0
+    tzb.post_action_wait_sec: 0.05
+    tzb.joint_goal_tolerance_rad: 0.01
+    tzb.arm_command_enabled: true
+    tzb.arm_command_topic: /p2_offline/arm_joint_command
+    tzb.arm_command_publish_hz: 100.0
+    tzb.arm_command_speed_scale: 1.0
+    tzb.arm_command_goal_tolerance_rad: 0.005
+    tzb.max_arm_command_velocity_rad_s:
+    - 1.2
+    - 1.2
+    - 1.2
+    - 1.8
+    - 1.8
+    - 2.2
+    tzb.sequence_loop: false
+    tzb.loop_pause_sec: 0.5
+    tzb.replay_after_complete: false
+    tzb.replay_loop: false
+    tzb.freeze_camera_pointcloud_enabled: false
+    tzb.reference_marker_republish_hz: 5.0
+    tzb.publish_tcp_trajectory: true
+    tzb.tcp_trajectory_line_width_m: 0.006
+    tzb.tcp_trajectory_min_distance_m: 0.002
+    tzb.tcp_trajectory_max_points: 10000
+    tzb.autostart: true
+    tzb.listen_navigation_goal_status: false
+    tzb.start_topic: /tzb_catch/start
+    tzb.navigation_goal_status_topic: /navigation_goal_status
+    tzb.result_topic: /tzb_catch/result
+    tzb.sentry_mode: false
+    tzb.sentry_execution_limit: 1
+    tzb.arm2nav_state_topic: /arm2nav
+    tzb.arm2nav_arm_state_topic: /arm2nav/from_arm
+    tzb.sentry_trigger_pulse_sec: 0.2
+    joint_trajectory_topic: /p2_offline/trajectory_preview
+    collision_marker_topic: /p2_offline/collision_markers
