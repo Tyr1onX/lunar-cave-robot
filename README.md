@@ -2,6 +2,10 @@
 
 ROS 2 Humble robot project recovered from the NUC and validated on the ThinkBook. This repository keeps **two separate workspaces**: `tzb_ws/` (arm/perception) and `Nav2_rea_ws/` (navigation). Never source both overlays in the same terminal: both define `rm_serial_driver` / `rm_serial_msgs`.
 
+## Architecture and team onboarding
+
+New contributors: start with the [system architecture and module handoff guide](docs/ARCHITECTURE.md) (中文). It maps the two ROS 2 workspaces, main launch files, ROS topics/TF, navigation-arm interfaces, verified scope, and open integration gaps. The diagrams describe source-level design; they are **not** evidence of physical-robot acceptance.
+
 ## Validated boundary
 
 ThinkBook (Ubuntu 22.04 / ROS 2 Humble): original P0 builds completed for 14 arm packages and 18 navigation packages; P1 arm planning and collision checks passed with synthetic feedback; P2 only covered offline software/model checks; P2b provides real-bag capture/replay audit scripts but no real RGB-D bag or hand-eye-calibration acceptance is recorded. **No physical arm, base, camera, lidar or serial-device behavior is verified.**
