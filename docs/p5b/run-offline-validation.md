@@ -4,7 +4,7 @@
 
 ## 1. 构建桥接包
 
-从统一仓库的 `p5b/chassis-ros2-integration` 检出后：
+从统一集成分支 archive/unified-engineering-assets-p5b 检出后执行；该分支以 P5b HEAD eefd91e5d4e378e15b34dc37872413f097131132 为代码基线：
 
 ```bash
 cd ~/robot_p0/Nav2_rea_ws

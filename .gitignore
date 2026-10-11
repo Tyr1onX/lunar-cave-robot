@@ -50,3 +50,26 @@ id_ed25519*
 *.npy
 
 **/.vscode/
+
+# STM32 firmware build outputs, caches, logs, and machine-local files
+firmware/**/cmake-build-*/
+firmware/**/Debug/
+firmware/**/Release/
+firmware/**/.cache/
+firmware/**/MDK-ARM/**/build/
+firmware/**/MDK-ARM/**/Objects/
+firmware/**/MDK-ARM/**/Listings/
+firmware/**/JLinkLog.txt
+firmware/**/build_log.txt
+firmware/**/*.o
+firmware/**/*.d
+firmware/**/*.a
+firmware/**/*.elf
+firmware/**/*.axf
+firmware/**/*.hex
+firmware/**/*.map
+firmware/**/*.lst
+firmware/**/*.crf
+firmware/**/*.dep
+firmware/**/*.log
+firmware/**/*.exe

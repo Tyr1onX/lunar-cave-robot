@@ -14,7 +14,7 @@ The publishable snapshot intentionally omits original build/install/log director
 
 ## P3–P4b archived offline results
 
-The independent integration branch adds P3 timestamp-safe vision TF conversion, P3b URDF/TF synthetic integration, P4a arm serial framing/parsing, and P4b six-joint angle mapping. See [P3–P4b test commands and measured outcomes](docs/P3_P4B_VALIDATION.md) for source commit SHAs, reproducible tests, and limitations. On ThinkBook, the isolated integrated snapshot built successfully and reported **23 passing colcon tests**; P3b dynamic TF and the synthetic vision-to-place sequence also passed.
+The integration history adds P3 timestamp-safe vision TF conversion, P3b URDF/TF synthetic integration, P4a arm serial framing/parsing, P4b six-joint angle mapping, P4c safety audit evidence, P5a chassis source audit, and the P5b one-way ROS 2 chassis command bridge. See [P3–P4b test commands and measured outcomes](docs/P3_P4B_VALIDATION.md) for source commit SHAs, reproducible tests, and limitations. On ThinkBook, the isolated integrated snapshot built successfully and reported **23 passing colcon tests**; P3b dynamic TF and the synthetic vision-to-place sequence also passed.
 
 **Offline accepted ≠ hardware accepted.** No real STM32 command/feedback, arm motion, gripper, camera hand-eye calibration, navigation-to-arm interaction, or physical safety test is validated. The full STM32 firmware project is not in Git pending separate authorization and license review. Do not launch hardware-facing bringup to reproduce these tests.
 
@@ -57,3 +57,26 @@ P2 model sample inference requires a separately authorized OpenVINO `.bin` match
 ## Source provenance and distribution
 
 `docs/RELEASE_AUDIT.md` documents copied components, excluded assets and outstanding release blockers. Individual upstream `LICENSE` and `NOTICE` files are preserved; the entire mixed-origin repository is **not** assigned a blanket open-source license. This is an internal private snapshot; any public release still requires project-owner authorization and another license and data audit.
+
+
+## Unified engineering archive with P5b
+
+Integration branch: archive/unified-engineering-assets-p5b. It starts directly from the latest P5b branch head eefd91e5d4e378e15b34dc37872413f097131132 and carries the reviewed archive documentation forward. The branch retains all P5b code, offline test scripts, the P4c audit and fault-injection records, and the P3–P4b baseline. It does not change main or either existing archive branch.
+
+P4c: the arm safety audit and fault-injection report/test are present. Safety remediation remains open. The original short SHA 2964e87 is still not traceable to a source repository or full commit.
+
+P5a: the six-wheel chassis firmware source audit is complete. Firmware source itself remains outside Git pending redistribution authorization.
+
+P5b: the ROS 2 one-way chassis command path passed the reported offline build and PTY integration validation. This does not verify a real chassis or closed-loop feedback. See docs/p5b/chassis-ros2-integration.md and docs/p5b/run-offline-validation.md.
+
+The arm and chassis STM32 projects remain withheld because project ownership and internal redistribution permission have not been confirmed. The private repository setting does not grant third-party redistribution rights. firmware/arm/ and firmware/chassis/ contain audit notes only.
+
+To clone this integration branch:
+
+~~~bash
+git clone --single-branch --branch archive/unified-engineering-assets-p5b https://github.com/Tyr1onX/lunar-cave-robot.git
+cd lunar-cave-robot
+python3 tools/p5a_offline/test_chassis_control_path.py
+~~~
+
+For ROS 2 Humble recovery, build and source tzb_ws and Nav2_rea_ws in separate terminals. Install python3-yaml before running tools/p5b_validate_configuration.py. Build chassis_serial_bridge and run the PTY integration steps in docs/p5b/run-offline-validation.md. No firmware is deployed or flashed by these instructions.
