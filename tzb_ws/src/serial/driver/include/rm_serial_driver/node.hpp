@@ -42,8 +42,6 @@ private:
   void updateArmCommandLocked(double dt_sec);
   float angleToSerialUnit(float angle_rad, std::size_t joint_index) const;
   float angleFromSerialUnit(float serial_angle, std::size_t joint_index) const;
-  float serialAngleRadToUnit(float serial_angle_rad) const;
-  float serialAngleRadFromUnit(float serial_angle) const;
 
   // ******************** ROS Subscription ********************
   // Nav Subscription
@@ -63,6 +61,8 @@ private:
   std::array<float, kArmJointCount> arm_target_position_{};
   std::array<float, kArmJointCount> arm_command_position_rad_{};
   std::array<float, kArmJointCount> max_arm_command_velocity_rad_s_{};
+  std::array<float, kArmJointCount> arm_joint_lower_limits_rad_{};
+  std::array<float, kArmJointCount> arm_joint_upper_limits_rad_{};
   std::vector<std::string> arm_joint_names_;
   uint32_t arm_sequence_{0};
   bool arm_serial_enabled_{true};

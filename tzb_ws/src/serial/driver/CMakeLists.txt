@@ -85,6 +85,18 @@ if(BUILD_TESTING)
     src/packet.cpp
   )
   target_include_directories(test_arm_serial_protocol PRIVATE include)
+
+  ament_add_gtest(test_arm_joint_mapping
+    test/test_arm_joint_mapping.cpp
+    src/packet.cpp
+  )
+  target_include_directories(test_arm_joint_mapping PRIVATE include)
+
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(
+    NAME test_tzb_urdf_joint_fk
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tzb_urdf_joint_fk.py
+  )
 endif()
 
 ament_package()

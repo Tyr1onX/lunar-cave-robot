@@ -24,7 +24,11 @@
     # Print the actual gripper_command sent on the serial wire at this interval.
     # Set to 0.0 to print on every serial packet.
     tzb.gripper_command_log_interval_sec: 5.0
+    # This sequence is fixed to the STM32 wire order; incoming JointState names may be shuffled.
     tzb.arm_joint_names: ["J1_joint", "J2_joint", "J3_joint", "J4_joint", "J5_joint", "J6_joint"]
+    # ROS joint-space bounds copied from tzb_description/urdf/tzb_description.urdf.
+    tzb.arm_joint_lower_limits_rad: [-1.5708, -1.1345, -2.618, -2.8798, -1.578, -2.8798]
+    tzb.arm_joint_upper_limits_rad: [3.6652, 1.1345, 2.618, 2.8798, 1.5708, 2.8798]
     # Unit used only on the binary serial wire for arm joint angles.
     # ROS JointState and planner parameters stay in radians unless their own YAML says otherwise.
     tzb.arm_serial_angle_unit: "rad"

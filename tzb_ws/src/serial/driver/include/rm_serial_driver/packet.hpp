@@ -82,13 +82,19 @@ enum class ArmJointCommandError
   kMissingJoint,
   kDuplicateJoint,
   kNonFinitePosition,
+  kOutOfRangePosition,
 };
 
 ArmJointCommandError ParseArmJointCommand(
   const std::vector<std::string>& configured_names,
   const std::vector<std::string>& names,
   const std::vector<double>& positions,
+  const std::array<float, kArmJointCount>& lower_limits_rad,
+  const std::array<float, kArmJointCount>& upper_limits_rad,
   std::array<float, kArmJointCount>& result);
+
+float ArmRosAngleToSerialUnit(float angle_rad, std::size_t joint_index, bool serial_in_degrees);
+float ArmSerialUnitToRosAngle(float serial_angle, std::size_t joint_index, bool serial_in_degrees);
 
 bool HasFiniteArmPosition(const ReceivePacket& packet);
 bool IsValidGripperCommand(int8_t command);

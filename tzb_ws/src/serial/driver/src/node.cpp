@@ -25,8 +25,6 @@ namespace rm::serial
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-
 std::string normalizeAngleUnit(std::string unit)
 {
   std::transform(unit.begin(), unit.end(), unit.begin(), [](unsigned char c) {
@@ -74,7 +72,12 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
   {
     throw std::runtime_error("tzb.arm_serial_angle_unit must be 'rad' or 'deg'");
   }
-  arm_serial_angles_in_degrees_ = isDegreeUnit(arm_serial_angle_unit);
+  if (isDegreeUnit(arm_serial_angle_unit))
+  {
+    throw std::runtime_error(
+      "The current STM32 Host protocol carries encoder radians; degree wire units are incompatible");
+  }
+  arm_serial_angles_in_degrees_ = false;
   arm_command_publish_hz_ =
     std::max(1.0, declare_parameter<double>("tzb.arm_command_publish_hz", 100.0));
   arm_command_speed_scale_ =
@@ -88,9 +91,38 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
     "tzb.arm_joint_names",
     std::vector<std::string>{
       "J1_joint", "J2_joint", "J3_joint", "J4_joint", "J5_joint", "J6_joint"});
-  if (arm_joint_names_.size() != kArmJointCount)
+  const std::vector<std::string> expected_arm_joint_names{
+    "J1_joint", "J2_joint", "J3_joint", "J4_joint", "J5_joint", "J6_joint"};
+  if (arm_joint_names_ != expected_arm_joint_names)
   {
-    throw std::runtime_error("tzb.arm_joint_names must contain exactly 6 joints");
+    throw std::runtime_error(
+      "tzb.arm_joint_names must match the fixed wire order J1_joint through J6_joint");
+  }
+  const auto lower_limits = declare_parameter<std::vector<double>>(
+    "tzb.arm_joint_lower_limits_rad",
+    std::vector<double>{-1.5708, -1.1345, -2.618, -2.8798, -1.578, -2.8798});
+  const auto upper_limits = declare_parameter<std::vector<double>>(
+    "tzb.arm_joint_upper_limits_rad",
+    std::vector<double>{3.6652, 1.1345, 2.618, 2.8798, 1.5708, 2.8798});
+  if (lower_limits.size() != kArmJointCount || upper_limits.size() != kArmJointCount)
+  {
+    throw std::runtime_error("arm joint limit parameters must contain exactly 6 values");
+  }
+  for (std::size_t i = 0; i < kArmJointCount; ++i)
+  {
+    if (!std::isfinite(lower_limits[i]) || !std::isfinite(upper_limits[i]) ||
+        lower_limits[i] >= upper_limits[i])
+    {
+      throw std::runtime_error("arm joint limits must be finite and lower < upper");
+    }
+    arm_joint_lower_limits_rad_[i] = static_cast<float>(lower_limits[i]);
+    arm_joint_upper_limits_rad_[i] = static_cast<float>(upper_limits[i]);
+    if (!std::isfinite(arm_joint_lower_limits_rad_[i]) ||
+        !std::isfinite(arm_joint_upper_limits_rad_[i]) ||
+        arm_joint_lower_limits_rad_[i] >= arm_joint_upper_limits_rad_[i])
+    {
+      throw std::runtime_error("arm joint limits are invalid after float conversion");
+    }
   }
   const auto max_velocities = declare_parameter<std::vector<double>>(
     "tzb.max_arm_command_velocity_rad_s",
@@ -215,7 +247,8 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
   {
     std::array<float, kArmJointCount> parsed_positions{};
     const auto validation = ParseArmJointCommand(
-      arm_joint_names_, msg->name, msg->position, parsed_positions);
+      arm_joint_names_, msg->name, msg->position,
+      arm_joint_lower_limits_rad_, arm_joint_upper_limits_rad_, parsed_positions);
     if (validation != ArmJointCommandError::kNone)
     {
       RCLCPP_WARN_THROTTLE(
@@ -442,6 +475,18 @@ void DriverNode::publishArmState(const ReceivePacket& packet)
     {
       const float measured = angleFromSerialUnit(packet.arm.position[i], i);
       msg.position[i] = measured;
+      if (measured < arm_joint_lower_limits_rad_[i] ||
+          measured > arm_joint_upper_limits_rad_[i])
+      {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Arm feedback for %s is outside the configured URDF range: %.5f rad "
+          "(%.5f..%.5f); publishing the measured value for diagnosis.",
+          arm_joint_names_[i].c_str(),
+          static_cast<double>(measured),
+          static_cast<double>(arm_joint_lower_limits_rad_[i]),
+          static_cast<double>(arm_joint_upper_limits_rad_[i]));
+      }
       if (!have_arm_command_)
       {
         arm_target_position_[i] = measured;
@@ -547,96 +592,12 @@ void DriverNode::updateArmCommandLocked(double dt_sec)
 
 float DriverNode::angleToSerialUnit(float angle_rad, std::size_t joint_index) const
 {
-  // Calibration offsets are expressed in radians.  ROS JointState values are
-  // already radians; serialAngleRadToUnit() converts the calibrated value to
-  // the wire unit (radians or degrees) after this joint-specific mapping.
-  float serial_angle_rad = angle_rad;
-  switch (joint_index)
-  {
-    case 0:
-      // J1: serial = ROS - 0.01965
-      serial_angle_rad = angle_rad - 0.22473F;
-      break;
-    case 1:
-      // J2: serial = 1.55281 - ROS, with reversed rotation direction.
-      serial_angle_rad = - 3.46819F + angle_rad;
-      break;
-    case 2:
-      // J3: serial = ROS + 1.60589
-      serial_angle_rad = - angle_rad - 1.62393F;
-      break;
-    case 3:
-      // J4: serial = ROS + 3.12144
-      serial_angle_rad = angle_rad - 2.7583F;
-      break;
-    case 4:
-      // J5: serial = ROS + 3.15340
-      serial_angle_rad = angle_rad - 0.7566F;
-      break;
-    case 5:
-      // J6: serial = ROS - 1.40514
-      serial_angle_rad = angle_rad - 1.46542F;
-      break;
-    case 6:
-      // J7 calibration retained for a future 7-joint packet.  The current
-      // serial protocol carries kArmJointCount == 6 joints, so this case is
-      // not reached by the current driver.
-      serial_angle_rad = angle_rad - 0.19149F;
-      break;
-    default:
-      serial_angle_rad = angle_rad;
-      break;
-  }
-  return serialAngleRadToUnit(serial_angle_rad);
+  return ArmRosAngleToSerialUnit(angle_rad, joint_index, arm_serial_angles_in_degrees_);
 }
 
 float DriverNode::angleFromSerialUnit(float serial_angle, std::size_t joint_index) const
 {
-  const float serial_angle_rad = serialAngleRadFromUnit(serial_angle);
-  switch (joint_index)
-  {
-    case 0:
-      // Inverse of J1: ROS = serial + 0.01965
-      return serial_angle_rad + 0.22473F;
-    case 1:
-      // Inverse of J2: ROS = 1.55281 - serial
-      return  3.46819F + serial_angle_rad;
-    case 2:
-      // Inverse of J3: ROS = serial - 1.60589
-      return  - serial_angle_rad - 1.62393F;
-    case 3:
-      // Inverse of J4: ROS = serial - 3.12144
-      return serial_angle_rad + 2.7583F;
-    case 4:
-      // Inverse of J5: ROS = serial + 0.7566
-      return serial_angle_rad + 0.7566F;
-    case 5:
-      // Inverse of J6: ROS = serial + 1.40514
-      return serial_angle_rad + 1.46542F;
-    case 6:
-      // Inverse of the retained J7 calibration above.
-      return serial_angle_rad + 0.19149F;
-    default:
-      return serial_angle_rad;
-  }
-}
-
-float DriverNode::serialAngleRadToUnit(float serial_angle_rad) const
-{
-  if (!arm_serial_angles_in_degrees_)
-  {
-    return serial_angle_rad;
-  }
-  return serial_angle_rad * static_cast<float>(180.0 / kPi);
-}
-
-float DriverNode::serialAngleRadFromUnit(float serial_angle) const
-{
-  if (!arm_serial_angles_in_degrees_)
-  {
-    return serial_angle;
-  }
-  return serial_angle * static_cast<float>(kPi / 180.0);
+  return ArmSerialUnitToRosAngle(serial_angle, joint_index, arm_serial_angles_in_degrees_);
 }
 }  // namespace rm::serial
 

@@ -19,6 +19,10 @@ namespace
 {
 constexpr std::array<const char*, kArmJointCount> kJointNames{
   "J1_joint", "J2_joint", "J3_joint", "J4_joint", "J5_joint", "J6_joint"};
+constexpr std::array<float, kArmJointCount> kLowerLimits{
+  -1.5708F, -1.1345F, -2.618F, -2.8798F, -1.578F, -2.8798F};
+constexpr std::array<float, kArmJointCount> kUpperLimits{
+  3.6652F, 1.1345F, 2.618F, 2.8798F, 1.5708F, 2.8798F};
 
 void WriteU32LE(std::vector<uint8_t>& bytes, std::size_t offset, uint32_t value)
 {
@@ -286,15 +290,15 @@ TEST(ArmSerialProtocol, JointStateNamesAreMappedRegardlessOfInputOrder)
   const auto configured = ConfiguredJointNames();
   const std::vector<std::string> names{
     "J3_joint", "J1_joint", "J6_joint", "J2_joint", "J5_joint", "J4_joint"};
-  const std::vector<double> positions{3.0, 1.0, 6.0, 2.0, 5.0, 4.0};
+  const std::vector<double> positions{0.7, 0.3, -1.2, -0.4, 1.1, -0.8};
   std::array<float, kArmJointCount> parsed{};
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kNone);
-  EXPECT_FLOAT_EQ(parsed[0], 1.0F);
-  EXPECT_FLOAT_EQ(parsed[1], 2.0F);
-  EXPECT_FLOAT_EQ(parsed[2], 3.0F);
-  EXPECT_FLOAT_EQ(parsed[3], 4.0F);
-  EXPECT_FLOAT_EQ(parsed[4], 5.0F);
-  EXPECT_FLOAT_EQ(parsed[5], 6.0F);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNone);
+  EXPECT_FLOAT_EQ(parsed[0], 0.3F);
+  EXPECT_FLOAT_EQ(parsed[1], -0.4F);
+  EXPECT_FLOAT_EQ(parsed[2], 0.7F);
+  EXPECT_FLOAT_EQ(parsed[3], -0.8F);
+  EXPECT_FLOAT_EQ(parsed[4], 1.1F);
+  EXPECT_FLOAT_EQ(parsed[5], -1.2F);
 }
 
 TEST(ArmSerialProtocol, IncompleteDuplicateAndNonFiniteJointCommandsAreRejected)
@@ -305,26 +309,49 @@ TEST(ArmSerialProtocol, IncompleteDuplicateAndNonFiniteJointCommandsAreRejected)
   std::vector<double> positions(kArmJointCount, 0.1);
 
   names.pop_back();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kNamePositionSizeMismatch);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNamePositionSizeMismatch);
 
   names = configured;
   names.back() = names.front();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kDuplicateJoint);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kDuplicateJoint);
 
   names = configured;
   names.pop_back();
   positions.pop_back();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kMissingJoint);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kMissingJoint);
 
   names = configured;
   positions.assign(kArmJointCount, 0.1);
   positions[3] = std::numeric_limits<double>::infinity();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kNonFinitePosition);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNonFinitePosition);
 
   positions[3] = std::numeric_limits<double>::quiet_NaN();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kNonFinitePosition);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNonFinitePosition);
 
   positions[3] = std::numeric_limits<double>::max();
-  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, parsed), ArmJointCommandError::kNonFinitePosition);
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNonFinitePosition);
+
+  positions.assign(kArmJointCount, 0.0);
+  for (std::size_t joint = 0; joint < kArmJointCount; ++joint)
+  {
+    positions[joint] = kLowerLimits[joint];
+  }
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNone);
+  for (std::size_t joint = 0; joint < kArmJointCount; ++joint)
+  {
+    positions[joint] = kUpperLimits[joint];
+  }
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kNone);
+
+  positions.assign(kArmJointCount, 0.0);
+  positions[0] = static_cast<double>(kLowerLimits[0]) - 1.0e-4;
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kOutOfRangePosition);
+  positions[0] = 0.0;
+  positions[5] = static_cast<double>(kUpperLimits[5]) + 1.0e-4;
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, kLowerLimits, kUpperLimits, parsed), ArmJointCommandError::kOutOfRangePosition);
+
+  auto invalid_limits = kLowerLimits;
+  invalid_limits[2] = kUpperLimits[2];
+  EXPECT_EQ(ParseArmJointCommand(configured, names, positions, invalid_limits, kUpperLimits, parsed), ArmJointCommandError::kInvalidConfiguredJoints);
 }
 }  // namespace rm::serial

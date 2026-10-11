@@ -16,6 +16,7 @@ constexpr std::size_t kReceiveArmExtensionMinSize =
 constexpr std::size_t kReceiveArmExtensionFullSize =
   kReceiveBytesBeforeGripper + sizeof(ReceivePacket::arm_feedback_gripper) +
   sizeof(ReceivePacket::arm_end_frame);
+constexpr double kPi = 3.14159265358979323846;
 }
 
 ReceivePacket FromVector(const std::vector<uint8_t>& data)
@@ -123,10 +124,49 @@ void ReceiveSequenceTracker::Reset()
   last_sequence_ = 0;
 }
 
+float ArmRosAngleToSerialUnit(
+  float angle_rad, std::size_t joint_index, bool serial_in_degrees)
+{
+  float serial_angle_rad = angle_rad;
+  switch (joint_index)
+  {
+    case 0: serial_angle_rad = angle_rad - 0.22473F; break;
+    case 1: serial_angle_rad = angle_rad - 3.46819F; break;
+    case 2: serial_angle_rad = -angle_rad - 1.62393F; break;
+    case 3: serial_angle_rad = angle_rad - 2.7583F; break;
+    case 4: serial_angle_rad = angle_rad - 0.7566F; break;
+    case 5: serial_angle_rad = angle_rad - 1.46542F; break;
+    case 6: serial_angle_rad = angle_rad - 0.19149F; break;  // legacy, outside current 6-joint packet
+    default: break;
+  }
+  return serial_in_degrees ?
+    serial_angle_rad * static_cast<float>(180.0 / kPi) : serial_angle_rad;
+}
+
+float ArmSerialUnitToRosAngle(
+  float serial_angle, std::size_t joint_index, bool serial_in_degrees)
+{
+  const float serial_angle_rad = serial_in_degrees ?
+    serial_angle * static_cast<float>(kPi / 180.0) : serial_angle;
+  switch (joint_index)
+  {
+    case 0: return serial_angle_rad + 0.22473F;
+    case 1: return serial_angle_rad + 3.46819F;
+    case 2: return -serial_angle_rad - 1.62393F;
+    case 3: return serial_angle_rad + 2.7583F;
+    case 4: return serial_angle_rad + 0.7566F;
+    case 5: return serial_angle_rad + 1.46542F;
+    case 6: return serial_angle_rad + 0.19149F;  // legacy, outside current 6-joint packet
+    default: return serial_angle_rad;
+  }
+}
+
 ArmJointCommandError ParseArmJointCommand(
   const std::vector<std::string>& configured_names,
   const std::vector<std::string>& names,
   const std::vector<double>& positions,
+  const std::array<float, kArmJointCount>& lower_limits_rad,
+  const std::array<float, kArmJointCount>& upper_limits_rad,
   std::array<float, kArmJointCount>& result)
 {
   if (configured_names.size() != kArmJointCount)
@@ -137,7 +177,9 @@ ArmJointCommandError ParseArmJointCommand(
   {
     if (configured_names[i].empty() ||
         std::find(configured_names.begin(), configured_names.begin() + i, configured_names[i]) !=
-        configured_names.begin() + i)
+        configured_names.begin() + i ||
+        !std::isfinite(lower_limits_rad[i]) || !std::isfinite(upper_limits_rad[i]) ||
+        lower_limits_rad[i] >= upper_limits_rad[i])
     {
       return ArmJointCommandError::kInvalidConfiguredJoints;
     }
@@ -174,6 +216,11 @@ ArmJointCommandError ParseArmJointCommand(
     if (!std::isfinite(parsed[joint]))
     {
       return ArmJointCommandError::kNonFinitePosition;
+    }
+    if (parsed[joint] < lower_limits_rad[joint] ||
+        parsed[joint] > upper_limits_rad[joint])
+    {
+      return ArmJointCommandError::kOutOfRangePosition;
     }
   }
   result = parsed;
