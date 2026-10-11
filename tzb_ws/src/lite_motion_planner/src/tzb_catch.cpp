@@ -38,6 +38,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <future>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <memory>
@@ -45,6 +48,7 @@
 #include <string>
 #include <sstream>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace lite_motion_planner {
@@ -65,6 +69,34 @@ bool isDegreeUnit(const std::string& unit) {
 
 bool isRadianUnit(const std::string& unit) {
   return unit == "rad" || unit == "radian" || unit == "radians";
+}
+
+bool parseEpochToken(const std::string& token, uint64_t& epoch) {
+  if (token.empty() || !std::all_of(token.begin(), token.end(), [](unsigned char c) {
+        return std::isdigit(c);
+      })) return false;
+  try {
+    std::size_t used = 0;
+    epoch = std::stoull(token, &used, 10);
+    return used == token.size() && epoch > 0;
+  } catch (const std::exception&) { return false; }
+}
+
+bool persistEpochHighWater(const std::string& path, uint64_t epoch) {
+  try {
+    const std::filesystem::path state_path(path);
+    if (state_path.has_parent_path()) std::filesystem::create_directories(state_path.parent_path());
+    const std::string temporary = path + ".tmp";
+    {
+      std::ofstream stream(temporary, std::ios::trunc);
+      if (!stream.good()) return false;
+      stream << epoch << "\n";
+      stream.flush();
+      if (!stream.good()) return false;
+    }
+    std::filesystem::rename(temporary, path);
+    return true;
+  } catch (const std::exception&) { return false; }
 }
 
 void degreesToRadiansInPlace(std::vector<double>& values) {
@@ -493,6 +525,25 @@ public:
       "tzb.p6_task_cancel_topic", "/p6/arm_task/cancel");
     p6_task_result_topic_ = this->declare_parameter<std::string>(
       "tzb.p6_task_result_topic", "/p6/arm_task/result");
+    p6_task_cancel_ack_topic_ = this->declare_parameter<std::string>(
+      "tzb.p6_task_cancel_ack_topic", "/p6/arm_task/cancel_ack");
+    const char* home = std::getenv("HOME");
+    p6_task_epoch_state_path_ = this->declare_parameter<std::string>(
+      "tzb.p6_task_epoch_state_path", std::string(home ? home : "/tmp") +
+      (home ? "/.ros/lunar_cave_p6_task_epoch" : "/lunar_cave_p6_task_epoch"));
+    try {
+      const std::filesystem::path state_path(p6_task_epoch_state_path_);
+      if (state_path.has_parent_path()) std::filesystem::create_directories(state_path.parent_path());
+      std::ifstream epoch_file(p6_task_epoch_state_path_);
+      if (epoch_file.good()) {
+        std::string token;
+        epoch_file >> token;
+        if (!parseEpochToken(token, p6_task_epoch_high_water_))
+          throw std::runtime_error("malformed P6 task epoch high-water");
+      }
+    } catch (const std::exception& e) {
+      throw std::runtime_error(std::string("cannot load P6 task epoch high-water: ") + e.what());
+    }
     task_start_gate_enabled_ = !task_autostart_ && listen_navigation_goal_status_ && !sentry_mode_;
 
     plan_client_ = this->create_client<lite_motion_msgs::srv::PlanArmMotion>("plan_arm_motion");
@@ -512,10 +563,16 @@ public:
       this->declare_parameter<std::string>("visualization_joint_states_topic", "/joint_states"),
       rclcpp::QoS(10));
     if (arm_command_enabled_) {
+      const auto arm_command_topic = this->declare_parameter<std::string>(
+        "tzb.arm_command_topic", "/tzb_catch/arm_joint_command");
+      const auto p4f_arm_command_topic = this->declare_parameter<std::string>(
+        "tzb.p4f_arm_command_topic", "/tzb_catch/arm_joint_command");
       arm_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-        this->declare_parameter<std::string>(
-          "tzb.arm_command_topic", "/tzb_catch/arm_joint_command"),
-        rclcpp::SensorDataQoS());
+        arm_command_topic, rclcpp::SensorDataQoS());
+      if (p4f_arm_command_topic != arm_command_topic) {
+        p4f_arm_command_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
+          p4f_arm_command_topic, rclcpp::SensorDataQoS());
+      }
     }
     if (arm_feedback_enabled_) {
       arm_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
@@ -531,63 +588,135 @@ public:
       }
       p6_task_result_pub_ = this->create_publisher<std_msgs::msg::String>(
         p6_task_result_topic_, rclcpp::QoS(10).reliable());
+      p6_gripper_command_topic_ = this->declare_parameter<std::string>(
+        "tzb.p6_gripper_command_topic", "/p6/arm_task/gripper_command");
+      p6_gripper_command_pub_ = this->create_publisher<std_msgs::msg::String>(
+        p6_gripper_command_topic_, rclcpp::QoS(10).reliable());
+      p6_task_cancel_ack_pub_ = this->create_publisher<std_msgs::msg::String>(
+        p6_task_cancel_ack_topic_, rclcpp::QoS(10).reliable());
       p6_task_request_sub_ = this->create_subscription<std_msgs::msg::String>(
         p6_task_request_topic_, rclcpp::QoS(10).reliable(),
         [this](const std_msgs::msg::String::SharedPtr msg) {
-          const auto separator = msg->data.find('|');
-          if (separator == std::string::npos || separator == 0) {
-            RCLCPP_WARN(get_logger(), "Rejecting malformed P6 arm task request.");
+          const auto first = msg->data.find('|');
+          const auto second = first == std::string::npos ? first : msg->data.find('|', first + 1);
+          if (first == std::string::npos || first == 0 || second == std::string::npos ||
+              msg->data.find('|', second + 1) != std::string::npos) {
+            RCLCPP_WARN(get_logger(), "Rejecting malformed P6 arm task request; expected task|phase|epoch.");
             return;
           }
-          const std::string task_id = msg->data.substr(0, separator);
-          const std::string phase = msg->data.substr(separator + 1);
+          const std::string task_id = msg->data.substr(0, first);
+          const std::string phase = msg->data.substr(first + 1, second - first - 1);
+          uint64_t epoch = 0;
+          const bool epoch_valid = parseEpochToken(msg->data.substr(second + 1), epoch);
+          const auto wall_epoch = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+          if (!epoch_valid || epoch > wall_epoch + 60000000000ULL) epoch = 0;
           const int8_t mode = phase == "pick" ? 1 : (phase == "unload" ? 2 : 0);
+          if (epoch == 0 || task_id.find(':') != std::string::npos) {
+            RCLCPP_WARN(get_logger(), "Rejecting P6 task with invalid id or trajectory epoch.");
+            return;
+          }
           if (mode == 0) {
             RCLCPP_WARN(get_logger(), "Rejecting unsupported P6 arm phase [%s].", phase.c_str());
             return;
           }
           bool accepted = false;
+          std::string reject_reason;
           {
             std::lock_guard<std::mutex> lock(task_trigger_mutex_);
-            if (!task_trigger_pending_ && !p6_task_active_) {
+            if (epoch <= p6_task_epoch_high_water_) {
+              reject_reason = "task epoch is not newer than persisted high-water";
+            } else if (p6_cancelled_task_epochs_.count(task_id + "|" + std::to_string(epoch))) {
+              reject_reason = "task identity was already cancelled";
+            } else if (task_trigger_pending_ || p6_task_active_) {
+              reject_reason = "another task is pending or active";
+            } else if (!persistEpochHighWater(p6_task_epoch_state_path_, epoch)) {
+              reject_reason = "could not persist task epoch high-water";
+            } else {
+              p6_task_epoch_high_water_ = epoch;
               task_trigger_pending_ = true;
               pending_task_mode_ = mode;
               pending_task_id_ = task_id;
+              pending_task_epoch_ = epoch;
               accepted = true;
             }
           }
           if (!accepted) {
-            RCLCPP_ERROR(get_logger(), "Rejecting overlapping P6 task [%s]; another task is pending or active.",
-              task_id.c_str());
+            RCLCPP_ERROR(get_logger(), "Rejecting P6 task [%s]: %s.",
+              task_id.c_str(), reject_reason.c_str());
             return;
           }
-          RCLCPP_INFO(get_logger(), "Accepted P6 arm task id=%s phase=%s.", task_id.c_str(), phase.c_str());
+          RCLCPP_INFO(get_logger(), "Accepted P6 arm task id=%s phase=%s epoch=%llu.",
+            task_id.c_str(), phase.c_str(), static_cast<unsigned long long>(epoch));
           task_trigger_cv_.notify_all();
         });
       p6_task_cancel_sub_ = this->create_subscription<std_msgs::msg::String>(
         p6_task_cancel_topic_, rclcpp::QoS(10).reliable(),
         [this](const std_msgs::msg::String::SharedPtr msg) {
-          bool cancelled = false;
+          const auto sep = msg->data.rfind('|');
+          const std::string task_id = sep == std::string::npos ? "" : msg->data.substr(0, sep);
+          uint64_t epoch = 0;
+          const bool parsed = sep != std::string::npos && sep > 0 &&
+            task_id.find(':') == std::string::npos &&
+            parseEpochToken(msg->data.substr(sep + 1), epoch);
+          const auto wall_epoch = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+          const bool valid = parsed && epoch <= wall_epoch + 60000000000ULL;
+          bool active_cancel = false;
+          bool pending_cancel = false;
+          bool immediate_ack = false;
+          std::string reject_reason;
           {
             std::lock_guard<std::mutex> lock(task_trigger_mutex_);
-            if (p6_task_active_ && active_task_id_ == msg->data) {
-              active_task_id_.clear();
-              task_cancel_requested_.store(true);
-              stop_requested_.store(true);
-              cancelled = true;
-            } else if (task_trigger_pending_ && pending_task_id_ == msg->data) {
-              task_trigger_pending_ = false;
-              pending_task_id_.clear();
-              cancelled = true;
+            if (!valid) {
+              reject_reason = "malformed cancellation identity";
+            } else if (p6_task_active_) {
+              if (active_task_id_ != task_id || active_task_epoch_ != epoch) {
+                reject_reason = "cancellation does not match the active task";
+              } else {
+                p6_cancelled_task_epochs_.insert(task_id + "|" + std::to_string(epoch));
+                cancelled_task_id_ = active_task_id_;
+                cancelled_task_epoch_ = active_task_epoch_;
+                active_task_id_.clear();
+                active_task_epoch_ = 0;
+                task_cancel_requested_.store(true);
+                active_cancel = true;
+              }
+            } else if (task_trigger_pending_) {
+              if (pending_task_id_ != task_id || pending_task_epoch_ != epoch) {
+                reject_reason = "cancellation does not match the pending task";
+              } else {
+                p6_cancelled_task_epochs_.insert(task_id + "|" + std::to_string(epoch));
+                task_trigger_pending_ = false;
+                pending_task_id_.clear();
+                pending_task_epoch_ = 0;
+                pending_cancel = true;
+                immediate_ack = true;
+              }
+            } else if (epoch < p6_task_epoch_high_water_) {
+              reject_reason = "cancellation epoch is older than the persisted high-water";
+            } else if (epoch > p6_task_epoch_high_water_ &&
+                       !persistEpochHighWater(p6_task_epoch_state_path_, epoch)) {
+              reject_reason = "could not persist cancellation epoch barrier";
+            } else {
+              // A request may be delayed or may never have reached this node.
+              // Install a durable fence so a late request cannot start.
+              p6_task_epoch_high_water_ = std::max(p6_task_epoch_high_water_, epoch);
+              p6_cancelled_task_epochs_.insert(task_id + "|" + std::to_string(epoch));
+              immediate_ack = true;
             }
           }
-          if (cancelled) {
-            RCLCPP_ERROR(get_logger(),
-              "P6 task [%s] cancelled; stopping further task publication and terminating this catch worker.",
-              msg->data.c_str());
+          if (active_cancel || pending_cancel || immediate_ack) {
+            RCLCPP_WARN(get_logger(),
+              "P6 task cancellation barrier accepted for task=%s epoch=%llu.",
+              task_id.c_str(), static_cast<unsigned long long>(epoch));
+            if (immediate_ack) publishP6TaskCancelAck(task_id, epoch, "UPSTREAM_QUIESCED");
             pose_estimator_cv_.notify_all();
             arm_state_cv_.notify_all();
             task_trigger_cv_.notify_all();
+          } else {
+            RCLCPP_WARN(get_logger(), "Ignoring P6 cancellation [%s]: %s.",
+              msg->data.c_str(), reject_reason.c_str());
           }
         });
     }
@@ -1215,7 +1344,7 @@ private:
   bool waitForPoseEstimatorTarget(geometry_msgs::msg::PoseStamped& out) {
     std::unique_lock<std::mutex> lock(pose_estimator_mutex_);
     const auto has_target = [this]() {
-      return stop_requested_.load() || have_pose_estimator_target_;
+      return taskExecutionStopped() || have_pose_estimator_target_;
     };
     if (!has_target()) {
       RCLCPP_INFO(
@@ -1238,7 +1367,7 @@ private:
         return false;
       }
     }
-    if (stop_requested_.load() || !have_pose_estimator_target_) {
+    if (taskExecutionStopped() || !have_pose_estimator_target_) {
       return false;
     }
     out = latest_pose_estimator_target_;
@@ -1418,8 +1547,12 @@ private:
     point.accelerations.assign(target_joints.size(), 0.0);
     point.time_from_start = durationFromSec(std::max(0.02, post_action_wait_sec_));
     trajectory.points.push_back(std::move(point));
+    {
+      std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+      if (!nextCommandContextLocked(trajectory.header.frame_id)) return false;
+      trajectory_pub_->publish(trajectory);
+    }
 
-    trajectory_pub_->publish(trajectory);
     if (record_for_replay) {
       recordReplaySegment(stage_name, trajectory);
     }
@@ -1434,7 +1567,18 @@ private:
       throw std::invalid_argument("gripper command must be 1 (closed) or -1 (open)");
     }
     command_msg.data = serial_command;
-    gripper_command_pub_->publish(command_msg);
+    if (p6_staged_tasks_) {
+      std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+      std::string ignored_context;
+      uint64_t sequence=0;
+      if (!nextCommandContextLocked(ignored_context,&sequence)) return;
+      std_msgs::msg::String tagged;
+      tagged.data=active_task_id_+"|"+std::to_string(active_task_epoch_)+"|"+
+        std::to_string(sequence)+"|"+std::to_string(serial_command);
+      p6_gripper_command_pub_->publish(tagged);
+    } else {
+      gripper_command_pub_->publish(command_msg);
+    }
 
     const bool closing = command_msg.data == 1;
     gripper_state_ = closing ? gripper_close_positions_ : gripper_open_positions_;
@@ -1947,6 +2091,21 @@ private:
     return limited;
   }
 
+  bool taskExecutionStopped() const {
+    return stop_requested_.load() || task_cancel_requested_.load();
+  }
+
+  bool nextCommandContextLocked(std::string& frame_id, uint64_t* sequence = nullptr) {
+    if (!p6_staged_tasks_) { frame_id.clear(); return true; }
+    if (!p6_task_active_ || active_task_id_.empty() || active_task_epoch_ == 0 ||
+        task_cancel_requested_.load()) return false;
+    ++next_arm_command_sequence_;
+    if (sequence) *sequence=next_arm_command_sequence_;
+    frame_id = "p4f:" + active_task_id_ + ":" + std::to_string(active_task_epoch_) +
+      ":" + std::to_string(next_arm_command_sequence_);
+    return true;
+  }
+
   void publishArmCommand(
     const std::vector<std::string>& joint_names,
     const std::vector<double>& positions) {
@@ -1958,7 +2117,10 @@ private:
     msg.header.stamp = this->now();
     msg.name = joint_names;
     msg.position = positions;
+    std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+    if (!nextCommandContextLocked(msg.header.frame_id)) return;
     arm_command_pub_->publish(msg);
+    if (p6_staged_tasks_ && p4f_arm_command_pub_) p4f_arm_command_pub_->publish(msg);
   }
 
   void publishArmCommandCurrentState(const std::string& stage_name) {
@@ -1998,7 +2160,7 @@ private:
 
     publishArmCommand(trajectory.joint_names, previous_command);
 
-    while (!stop_requested_.load()) {
+    while (!taskExecutionStopped()) {
       const auto now_tp = std::chrono::steady_clock::now();
       const double wall_elapsed = std::chrono::duration<double>(now_tp - started_at).count();
       const double dt_sec = std::max(1e-3, std::chrono::duration<double>(now_tp - previous_tick).count());
@@ -2022,7 +2184,7 @@ private:
     }
 
     publishArmCommand(trajectory.joint_names, final_positions);
-    return !stop_requested_.load();
+    return !taskExecutionStopped();
   }
 
   bool executeArmJointPlan(
@@ -2355,7 +2517,7 @@ private:
         arm_state_wait_timeout_sec_,
         arm_state_topic_.c_str());
       const auto ready = [this, &is_recent]() {
-        return stop_requested_.load() || is_recent();
+        return taskExecutionStopped() || is_recent();
       };
       if (arm_state_wait_timeout_sec_ <= 0.0) {
         arm_state_cv_.wait(lock, ready);
@@ -2364,7 +2526,7 @@ private:
           lock, std::chrono::duration<double>(arm_state_wait_timeout_sec_), ready);
       }
     }
-    if (!stop_requested_.load() && is_recent()) {
+    if (!taskExecutionStopped() && is_recent()) {
       const auto measured = latest_measured_arm_positions_;
       lock.unlock();
       logArmJointState("serial_initial_state", measured);
@@ -2438,7 +2600,7 @@ private:
       return false;
     };
 
-    while (!stop_requested_.load()) {
+    while (!taskExecutionStopped()) {
       if (evaluate_latest_feedback()) {
         return true;
       }
@@ -2447,9 +2609,9 @@ private:
         break;
       }
       arm_state_cv_.wait_until(lock, deadline, [this, &observed_sequence]() {
-        return stop_requested_.load() || arm_state_sequence_ != observed_sequence;
+        return taskExecutionStopped() || arm_state_sequence_ != observed_sequence;
       });
-      if (stop_requested_.load()) {
+      if (taskExecutionStopped()) {
         return false;
       }
       if (arm_state_sequence_ == observed_sequence) {
@@ -2556,14 +2718,14 @@ private:
         // for every retry, so a candidate is only accepted after the estimator
         // has been publishing it continuously for the configured duration.
         bool grasp_target_reached = false;
-        while (!stop_requested_.load()) {
+        while (!taskExecutionStopped()) {
           if (!enablePoseEstimatorCaptureAtCurrentReferencePose()) {
             return false;
           }
 
           geometry_msgs::msg::PoseStamped locked_pose;
           if (!waitForPoseEstimatorTarget(locked_pose)) {
-            if (stop_requested_.load()) {
+            if (taskExecutionStopped()) {
               return false;
             }
             RCLCPP_WARN(
@@ -2720,9 +2882,10 @@ private:
     return true;
   }
 
-  bool waitForTaskStart(int8_t& task_mode, std::string& task_id) {
+  bool waitForTaskStart(int8_t& task_mode, std::string& task_id, uint64_t& task_epoch) {
     task_mode = 0;
     task_id.clear();
+    task_epoch = 0;
     if (!task_start_gate_enabled_ && !p6_staged_tasks_) {
       return true;
     }
@@ -2732,22 +2895,26 @@ private:
       p6_staged_tasks_ ? " on the P6 request topic" : " from the navigation gate");
     std::unique_lock<std::mutex> lock(task_trigger_mutex_);
     task_trigger_cv_.wait(lock, [this]() {
-      return stop_requested_.load() || task_trigger_pending_;
+      return taskExecutionStopped() || task_trigger_pending_;
     });
-    if (stop_requested_.load()) {
+    if (taskExecutionStopped()) {
       return false;
     }
     task_trigger_pending_ = false;
     if (p6_staged_tasks_) {
       task_mode = pending_task_mode_;
       task_id = pending_task_id_;
+      task_epoch = pending_task_epoch_;
       pending_task_mode_ = 0;
       pending_task_id_.clear();
-      if (task_mode < 1 || task_mode > 2 || task_id.empty()) {
+      pending_task_epoch_ = 0;
+      if (task_mode < 1 || task_mode > 2 || task_id.empty() || task_epoch == 0) {
         RCLCPP_ERROR(get_logger(), "P6 task request lost its phase or id.");
         return false;
       }
       active_task_id_ = task_id;
+      active_task_epoch_ = task_epoch;
+      next_arm_command_sequence_ = 0;
       p6_task_active_ = true;
     }
     return true;
@@ -2816,13 +2983,13 @@ private:
       "Sentry mode ready at sentry_joint_positions; waiting for arm2nav arm_trigger.");
 
     int completed_count = 0;
-    while (!stop_requested_.load()) {
+    while (!taskExecutionStopped()) {
       {
         std::unique_lock<std::mutex> lock(sentry_mutex_);
         sentry_cv_.wait(lock, [this]() {
-          return stop_requested_.load() || sentry_trigger_pending_;
+          return taskExecutionStopped() || sentry_trigger_pending_;
         });
-        if (stop_requested_.load()) {
+        if (taskExecutionStopped()) {
           return false;
         }
         sentry_trigger_pending_ = false;
@@ -2889,15 +3056,45 @@ private:
       task_result_topic_.c_str());
   }
 
-  void publishP6TaskResult(const std::string& task_id, int8_t task_mode, bool success) {
-    if (!p6_task_result_pub_ || task_id.empty()) {
+  void publishP6TaskResult(const std::string& task_id, uint64_t task_epoch, int8_t task_mode, bool success) {
+    if (!p6_task_result_pub_ || task_id.empty() || task_epoch == 0) {
       return;
     }
     const std::string phase = task_mode == 1 ? "pick" : "unload";
     std_msgs::msg::String msg;
-    msg.data = task_id + "|" + phase + "|" + (success ? "success" : "failure");
+    msg.data = task_id + "|" + phase + "|" + (success ? "success" : "failure") +
+      "|" + std::to_string(task_epoch);
     p6_task_result_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "Published P6 result [%s].", msg.data.c_str());
+  }
+
+  void clearCancelledTaskCaches() {
+    replay_segments_.clear();
+    {
+      std::lock_guard<std::mutex> lock(tcp_trajectory_mutex_);
+      planned_tcp_trajectory_.clear();
+      measured_tcp_trajectory_.clear();
+    }
+    {
+      std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+      have_pose_estimator_target_ = false;
+      pose_estimator_capture_enabled_ = false;
+      pose_estimator_stream_active_ = false;
+      have_frozen_pose_estimator_reference_ = false;
+      pose_estimator_stream_start_time_ = std::chrono::steady_clock::time_point{};
+      pose_estimator_last_msg_time_ = std::chrono::steady_clock::time_point{};
+    }
+    RCLCPP_WARN(get_logger(),
+      "Cancelled P6 task caches cleared: replay segments, TCP traces, and frozen target capture.");
+  }
+
+  void publishP6TaskCancelAck(const std::string& task_id, uint64_t epoch, const std::string& status) {
+    if (!p6_task_cancel_ack_pub_ || task_id.empty() || epoch == 0) return;
+    std_msgs::msg::String msg;
+    msg.data = task_id + "|" + std::to_string(epoch) + "|" + status;
+    p6_task_cancel_ack_pub_->publish(msg);
+    RCLCPP_WARN(get_logger(), "P6 cancel ack task=%s epoch=%llu status=%s (ROS publisher quiescent only).",
+      task_id.c_str(), static_cast<unsigned long long>(epoch), status.c_str());
   }
 
   void runSequence() {
@@ -2924,18 +3121,30 @@ private:
     do {
       int8_t task_mode = 0;
       std::string task_id;
-      if (!waitForTaskStart(task_mode, task_id)) {
+      uint64_t task_epoch = 0;
+      if (!waitForTaskStart(task_mode, task_id, task_epoch)) {
         return;
       }
-      const bool success = runSequenceOnce(task_mode);
+      bool success = runSequenceOnce(task_mode);
+      const bool cancelled = p6_staged_tasks_ && task_cancel_requested_.load();
+      if (cancelled) {
+        success = false;
+        clearCancelledTaskCaches();
+      }
       record_tcp_trajectory_.store(false);
       publishReferenceMarkers("tcp_trajectory_complete");
+      if (cancelled) publishP6TaskCancelAck(task_id, task_epoch, "UPSTREAM_QUIESCED");
       publishTaskResult(success);
-      publishP6TaskResult(task_id, task_mode, success);
+      publishP6TaskResult(task_id, task_epoch, task_mode, success);
       if (p6_staged_tasks_) {
         std::lock_guard<std::mutex> lock(task_trigger_mutex_);
         p6_task_active_ = false;
         active_task_id_.clear();
+        active_task_epoch_ = 0;
+        cancelled_task_id_.clear();
+        cancelled_task_epoch_ = 0;
+        task_cancel_requested_.store(false);
+        next_arm_command_sequence_ = 0;
       }
       if (!success) {
         if (task_start_gate_enabled_ || p6_staged_tasks_) {
@@ -2944,11 +3153,11 @@ private:
         return;
       }
       if ((sequence_loop_ || task_start_gate_enabled_ || p6_staged_tasks_) &&
-          !stop_requested_.load()) {
+          !taskExecutionStopped()) {
         sleepAfterAction(loop_pause_sec_);
       }
     } while ((sequence_loop_ || task_start_gate_enabled_ || p6_staged_tasks_) &&
-             !stop_requested_.load());
+             !taskExecutionStopped());
   }
 
   void replayRecordedSequence() {
@@ -2968,7 +3177,7 @@ private:
       publishCurrentTheoreticalJointState("replay_reset");
 
       for (const auto& segment : replay_segments_) {
-        if (stop_requested_.load()) {
+        if (taskExecutionStopped()) {
           return;
         }
 
@@ -2978,16 +3187,19 @@ private:
 
         const auto scaled_traj = scaledTrajectoryForReplay(segment.trajectory);
         if (trajectory_pub_) {
-          trajectory_pub_->publish(scaled_traj);
+          auto contextual = scaled_traj;
+          std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+          if (!nextCommandContextLocked(contextual.header.frame_id)) return;
+          trajectory_pub_->publish(contextual);
         }
         replayTrajectorySegment(segment);
         sleepAfterAction(replay_segment_pause_sec_);
       }
 
-      if (replay_loop_ && !stop_requested_.load()) {
+      if (replay_loop_ && !taskExecutionStopped()) {
         sleepAfterAction(loop_pause_sec_);
       }
-    } while (replay_loop_ && !stop_requested_.load());
+    } while (replay_loop_ && !taskExecutionStopped());
   }
 
   void replayTrajectorySegment(const ReplaySegment& segment) {
@@ -3008,7 +3220,7 @@ private:
       duration,
       duration / replay_speed_scale_);
 
-    while (!stop_requested_.load()) {
+    while (!taskExecutionStopped()) {
       const double wall_elapsed =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
       const double trajectory_elapsed = std::min(duration, wall_elapsed * replay_speed_scale_);
@@ -3044,7 +3256,7 @@ private:
 
   void sleepAfterAction(double seconds) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
-    while (!stop_requested_.load() && std::chrono::steady_clock::now() < deadline) {
+    while (!taskExecutionStopped() && std::chrono::steady_clock::now() < deadline) {
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
   }
@@ -3283,6 +3495,7 @@ private:
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr arm_command_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr p4f_arm_command_pub_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr gripper_command_pub_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr task_result_pub_;
   rclcpp::Publisher<arm2nav_msgs::msg::Arm2Nav>::SharedPtr arm2nav_arm_state_pub_;
@@ -3290,6 +3503,9 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_state_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr task_start_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr p6_task_result_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr p6_gripper_command_pub_;
+  std::string p6_gripper_command_topic_{"/p6/arm_task/gripper_command"};
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr p6_task_cancel_ack_pub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr p6_task_request_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr p6_task_cancel_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr navigation_goal_status_sub_;
@@ -3439,6 +3655,10 @@ private:
   std::string p6_task_request_topic_{"/p6/arm_task/request"};
   std::string p6_task_cancel_topic_{"/p6/arm_task/cancel"};
   std::string p6_task_result_topic_{"/p6/arm_task/result"};
+  std::string p6_task_cancel_ack_topic_{"/p6/arm_task/cancel_ack"};
+  std::string p6_task_epoch_state_path_;
+  uint64_t p6_task_epoch_high_water_{0};
+  std::unordered_set<std::string> p6_cancelled_task_epochs_;
   std::vector<double> sentry_joint_positions_;
   std::mutex task_trigger_mutex_;
   std::condition_variable task_trigger_cv_;
@@ -3448,6 +3668,11 @@ private:
   int8_t pending_task_mode_{0};
   std::string pending_task_id_;
   std::string active_task_id_;
+  std::string cancelled_task_id_;
+  uint64_t pending_task_epoch_{0};
+  uint64_t active_task_epoch_{0};
+  uint64_t cancelled_task_epoch_{0};
+  uint64_t next_arm_command_sequence_{0};
   std::atomic_bool task_cancel_requested_{false};
   arm2nav_msgs::msg::Arm2Nav latest_arm2nav_state_;
   std::mutex sentry_mutex_;

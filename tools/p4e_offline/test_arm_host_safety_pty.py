@@ -172,10 +172,14 @@ class PtyFirmwarePeer:
 
 
 class CommandStream:
-    def __init__(self, test_node: Node, publisher, positions: list[float], period_sec: float):
+    def __init__(self, test_node: Node, publisher, positions: list[float], period_sec: float,
+                 task_id: str, epoch: int):
         self.publisher = publisher
         self.test_node = test_node
         self.positions = positions
+        self.task_id = task_id
+        self.epoch = epoch
+        self.sequence = 0
         self.count = 0
         self.times: list[float] = []
         self.timer = test_node.create_timer(period_sec, self.publish)
@@ -183,6 +187,8 @@ class CommandStream:
     def publish(self) -> None:
         msg = JointState()
         msg.header.stamp = self.test_node.get_clock().now().to_msg()
+        self.sequence += 1
+        msg.header.frame_id = f"p4f:{self.task_id}:{self.epoch}:{self.sequence}"
         msg.name = list(JOINTS)
         msg.position = list(self.positions)
         self.publisher.publish(msg)
@@ -190,7 +196,10 @@ class CommandStream:
         self.times.append(time.monotonic())
 
     def stop(self) -> None:
-        self.test_node.destroy_timer(self.timer)
+        self.timer.cancel()
+
+    def resume(self) -> None:
+        self.timer.reset()
 
 
 class IntegrationTest:
@@ -202,7 +211,14 @@ class IntegrationTest:
         self.command_pub = self.test_node.create_publisher(
             JointState, "/p4e/arm_joint_command", qos_profile_sensor_data)
         self.gripper_pub = self.test_node.create_publisher(Int8, "/p4e/gripper", 1)
+        self.tagged_gripper_pub = self.test_node.create_publisher(String, "/p4e/tagged_gripper", 10)
         self.status = ""
+        self.cancel_ack = ""
+        self.epoch_counter = time.time_ns()
+        self.last_command_context = None
+        self.cancel_pub = self.test_node.create_publisher(String, "/p4e/cancel", 10)
+        self.cancel_ack_sub = self.test_node.create_subscription(
+            String, "/p4e/cancel_ack", self._on_cancel_ack, 10)
         self.status_sub = self.test_node.create_subscription(String, "/p4e/status", self._on_status, 10)
         self.reset_client = self.test_node.create_client(Trigger, "/p4e/reset")
         self.enable_client = self.test_node.create_client(Trigger, "/p4e/enable")
@@ -214,6 +230,13 @@ class IntegrationTest:
 
     def _on_status(self, msg: String) -> None:
         self.status = msg.data
+
+    def _on_cancel_ack(self, msg: String) -> None:
+        self.cancel_ack = msg.data
+
+    def _new_context(self) -> tuple[str, int]:
+        self.epoch_counter = max(self.epoch_counter + 1, time.time_ns())
+        return f"ptytask{self.epoch_counter}", self.epoch_counter
 
     def start_driver(self) -> None:
         env = os.environ.copy()
@@ -232,10 +255,14 @@ class IntegrationTest:
     stop_bits: "1"
     tzb.arm_command_topic: "/p4e/arm_joint_command"
     tzb.gripper_command_topic: "/p4e/gripper"
+    tzb.trajectory_gripper_topic: "/p4e/tagged_gripper"
     tzb.arm_state_topic: "/p4e/arm_state"
     tzb.arm_safety_status_topic: "/p4e/status"
     tzb.arm_safety_reset_service: "/p4e/reset"
     tzb.arm_safety_enable_service: "/p4e/enable"
+    tzb.trajectory_cancel_topic: "/p4e/cancel"
+    tzb.trajectory_cancel_ack_topic: "/p4e/cancel_ack"
+    tzb.trajectory_epoch_state_path: "{self.temp}/trajectory_epoch_highwater"
     tzb.arm_command_publish_hz: 100.0
     tzb.arm_command_lease_sec: 0.1
     tzb.arm_command_max_age_sec: 0.1
@@ -294,15 +321,23 @@ class IntegrationTest:
                 f"{response.message}; observed_status={self.status}")
         return response.message
 
-    def send_command(self, positions: list[float], stamp=None, names=None) -> None:
+    def send_command(self, positions: list[float], stamp=None, names=None,
+                     context=None) -> tuple[str, int, int]:
+        task_id, epoch = context[:2] if context is not None else self._new_context()
+        sequence = context[2] if context is not None else 1
         msg = JointState()
         msg.header.stamp = stamp if stamp is not None else self.test_node.get_clock().now().to_msg()
+        msg.header.frame_id = f"p4f:{task_id}:{epoch}:{sequence}"
         msg.name = list(JOINTS if names is None else names)
         msg.position = list(positions)
         self.command_pub.publish(msg)
+        self.last_command_context = (task_id, epoch, sequence)
+        return self.last_command_context
 
     def start_stream(self, positions: list[float], rate_hz: float = 25.0) -> CommandStream:
-        stream = CommandStream(self.test_node, self.command_pub, positions, 1.0 / rate_hz)
+        task_id, epoch = self._new_context()
+        stream = CommandStream(self.test_node, self.command_pub, positions, 1.0 / rate_hz,
+                               task_id, epoch)
         self._spin(0.18)
         return stream
 
@@ -320,12 +355,13 @@ class IntegrationTest:
         raise AssertionError("timed out waiting for expected command frame")
 
     def ensure_disarmed_and_quiet(self) -> None:
+        self._wait(lambda: "state=DISARMED" in self.status or "state=FAULT_LATCHED" in self.status,
+                   6.0, "safe disarmed/fault state")
         if "state=FAULT_LATCHED" in self.status:
             self._spin(0.16)
             self.call(self.reset_client, "manual reset")
             self.wait_state("DISARMED")
         else:
-            self._wait(lambda: "state=DISARMED" in self.status, 4.0, "DISARMED state")
             self._spin(0.16)
 
     def ensure_fault(self) -> None:
@@ -337,7 +373,8 @@ class IntegrationTest:
                 "startup must send disabled arm frames and cleared gripper")
         print("PASS startup is DISARMED; PTY receives protocol-compatible 46-byte frames with arm bit/gripper zero")
 
-        stream = CommandStream(self.test_node, self.command_pub, [0.05] * 6, 0.01)
+        task_id, epoch = self._new_context()
+        stream = CommandStream(self.test_node, self.command_pub, [0.05] * 6, 0.01, task_id, epoch)
         end = time.monotonic() + 5.0
         while time.monotonic() < end:
             rclpy.spin_once(self.test_node, timeout_sec=0.01)
@@ -379,13 +416,18 @@ class IntegrationTest:
         expected = [ROS_TO_SERIAL_SIGN[i] * target[i] + ROS_TO_SERIAL[i] for i in range(6)]
         require(all(abs(values[i] - expected[i]) < 0.003 for i in range(6)),
                 f"wire joint conversion mismatch: got {values}, expected {expected}")
-        self.gripper_pub.publish(Int8(data=-1))
+        stream.stop()
+        gripper_sequence = stream.sequence + 100
+        self.tagged_gripper_pub.publish(String(
+            data=f"{stream.task_id}|{stream.epoch}|{gripper_sequence}|-1"))
+        self._wait(lambda: f"trajectory_sequence={gripper_sequence}" in self.status,
+                   2.0, "task-scoped initial gripper command")
+        self.send_command(target, context=(stream.task_id, stream.epoch, gripper_sequence + 1))
         self._wait(lambda: any(row[2][44] == 0xFF and row[2][15] == 1
                               for row in self.peer.snapshot(self.node_index)[mark:]),
-                   2.0, "active gripper command")
-        print("PASS fresh six-joint target maps to the 46-byte frame; active gripper command is transmitted")
+                   2.0, "active tagged gripper command")
+        print("PASS fresh six-joint target and task-scoped gripper map to the 46-byte frame")
 
-        stream.stop()
         self.ensure_fault()
         self._spin(0.15)
         after_command = [row[2] for row in self.peer.snapshot(self.node_index)[mark:]]
@@ -497,11 +539,85 @@ class IntegrationTest:
         print("PASS PTY disconnect/reconnect stays fault-latched with disabled frames")
         return new_index
 
+    def test_trajectory_replay_and_cancel(self) -> None:
+        self.ensure_disarmed_and_quiet()
+        self.call(self.enable_client, "enable before trajectory lifecycle")
+        self.wait_state("ARMED_WAIT_COMMAND")
+        stream = self.start_stream([0.10] * 6, rate_hz=50.0)
+        self._wait(lambda: "state=ACTIVE_HOST" in self.status, 3.0, "active trajectory stream")
+        task_id, epoch = stream.task_id, stream.epoch
+        mark = len(self.peer.snapshot(self.node_index))
+        self.gripper_pub.publish(Int8(data=-1))
+        self._wait(lambda: "rejected untagged legacy gripper" in self.status,
+                   2.0, "untagged gripper replay rejection")
+        deadline = time.monotonic() + 1.0
+        while "duplicate/backward trajectory sequence" not in self.status and time.monotonic() < deadline:
+            self.send_command([0.25] * 6, context=(task_id, epoch, 1))
+            self._spin(0.01)
+        latest_wire = struct.unpack("<6f", self.peer.snapshot(self.node_index)[-1][2][20:44])
+        expected = [ROS_TO_SERIAL_SIGN[i] * 0.10 + ROS_TO_SERIAL[i] for i in range(6)]
+        require(all(abs(a-b) < 0.003 for a,b in zip(latest_wire, expected)),
+                "duplicate sequence changed the trajectory target")
+        require("duplicate/backward trajectory sequence" in self.status,
+                f"duplicate sequence rejection was not reported: {self.status}")
+        print("PASS repeated command sequence is rejected while later monotonic samples continue")
+
+        stream.stop()
+        tagged_gripper_sequence = stream.sequence + 1
+        self.tagged_gripper_pub.publish(String(
+            data=f"{task_id}|{epoch}|{tagged_gripper_sequence}|1"))
+        self._wait(lambda: f"trajectory_sequence={tagged_gripper_sequence}" in self.status,
+                   2.0, "task-scoped gripper sequence acceptance")
+        self._wait(lambda: any(row[2][44] == 1 and row[2][15] == 1
+                              for row in self.peer.snapshot(self.node_index)[mark:]),
+                   2.0, "tagged gripper output")
+        stream.sequence = tagged_gripper_sequence
+        stream.resume()
+        self._spin(0.12)
+        cancel = String(data=f"{task_id}|{epoch}")
+        self.cancel_pub.publish(cancel)
+        stream.stop()
+        self._wait(lambda: f"{task_id}|{epoch}|ROS_HOST_CANCELLED_STM32_UNCONFIRMED" in self.cancel_ack,
+                   2.0, "host cancellation acknowledgement")
+        stopped_frame = self.wait_new_frame(mark, lambda frame: frame[15] == 0, timeout=1.0)
+        require(stopped_frame[44] == 0, "cancel did not clear the host gripper target")
+        print("PASS cancellation clears the host target and reports STM32 stop as unconfirmed")
+
+        new_stream = self.start_stream([0.04] * 6, rate_hz=25.0)
+        self._wait(lambda: "state=ACTIVE_HOST" in self.status, 2.0, "higher epoch task takeover")
+        mismatched_cancel = String(data=f"wrongtask{new_stream.epoch}|{new_stream.epoch + 1}")
+        self.cancel_pub.publish(mismatched_cancel)
+        self._wait(lambda: mismatched_cancel.data + "|REJECTED_STALE_OR_MALFORMED" in self.cancel_ack,
+                   2.0, "mismatched cancellation rejection")
+        require("state=ACTIVE_HOST" in self.status and
+                f"trajectory_epoch={new_stream.epoch}" in self.status,
+                "a mismatched future cancellation disrupted the active higher epoch task")
+        print("PASS mismatched future cancellation cannot clear another active task")
+
+        self.send_command([0.28] * 6, context=(task_id, epoch, stream.sequence + 2))
+        self._wait(lambda: "rejected old epoch or cancelled task" in self.status,
+                   2.0, "cancelled epoch replay rejection")
+        require(f"trajectory_epoch={new_stream.epoch}" in self.status,
+                f"higher epoch did not own the active command gate: {self.status}")
+        print("PASS higher epoch task takes over and old epoch replay is rejected")
+
+        self.tagged_gripper_pub.publish(String(
+            data=f"{task_id}|{epoch}|{tagged_gripper_sequence + 200}|-1"))
+        self._wait(lambda: "rejected stale/cancelled tagged gripper" in self.status,
+                   2.0, "cancelled task gripper replay rejection")
+        print("PASS cancelled task gripper replay is rejected after higher epoch takeover")
+
+        self.send_command([0.30] * 6, context=(task_id, epoch - 1, 999))
+        self._wait(lambda: "rejected old epoch or cancelled task" in self.status,
+                   2.0, "backward epoch rejection")
+        new_stream.stop()
+
     def test_restart_and_manual_recovery(self, channel_index: int) -> None:
         self.ensure_disarmed_and_quiet()
         self.call(self.enable_client, "enable before restart probe")
         stream = self.start_stream([0.06] * 6)
         self._wait(lambda: "state=ACTIVE_HOST" in self.status, 2.0, "active before node restart")
+        stale_context = (stream.task_id, stream.epoch, stream.sequence)
         stream.stop()
         old = self.driver
         os.killpg(old.pid, signal.SIGKILL)
@@ -523,6 +639,12 @@ class IntegrationTest:
         self._spin(0.14)
         print(f"INFO post-restart pre-enable status: {self.status}")
         self.call(self.enable_client, "manual enable after restart")
+        self._spin(0.02)
+        self.send_command([0.20] * 6, context=(stale_context[0], stale_context[1], stale_context[2] + 1))
+        self._spin(0.08)
+        self.wait_state("ARMED_WAIT_COMMAND")
+        require("epoch replay" in self.status or "trajectory_epoch_high_water" in self.status,
+                f"stale pre-restart epoch was not rejected after manual recovery: {self.status}")
         mark = len(self.peer.snapshot(channel_index))
         self.send_command([0.04] * 6)
         self.wait_state("ACTIVE_HOST")
@@ -535,6 +657,7 @@ class IntegrationTest:
         self.test_invalid_commands()
         self.test_feedback_timeout()
         self.test_controller_restart()
+        self.test_trajectory_replay_and_cancel()
         channel = self.test_serial_reconnect()
         self.test_restart_and_manual_recovery(channel)
         print("RESULT: real ROS 2 Humble rm_serial_driver node passed PTY integration/fault injection")

@@ -69,7 +69,7 @@ P6 launch 支持 `scenario:=nav_failure|target_loss|grasp_failure|communication_
 
 仿真入口固定 synthetic arm backend、localhost ROS graph 和 P3b 的串口关闭参数；它不能连接真实设备。协调器订阅 P4e `/serial/arm_safety/status`，任意观测到 `FAULT_LATCHED` 即中止，不自动调用 reset 或 enable。当前 P3b 反馈模拟并未启动 P4e 串口主机节点，所以此项是接口监视与故障门控，不是 P4e PTY 验收，也不模拟下位机安全响应。
 
-P4f 的在途轨迹 epoch、下游旧消息清空/取消确认仍未解决。P6 取消只停止 `tzb_catch` 后续任务发布并把离线任务置失败；`JointState` 本身没有 task UUID，不能证明真实串口桥或 STM32 已排空在途命令。P6 也没有处理真实机械臂安全复位授权、单轴反馈健康、制动/保持和实体急停。
+P4f 已在 ROS 侧为机械臂命令增加任务 ID、epoch 和序号，并验证 catch 取消、P4e 主机拒绝重放与 PTY 串口帧。46 字节协议仍不包含这些标识或 STM32 队列取消/停止确认，因此不能证明真实下游已停止。P6 也没有处理真实机械臂安全复位授权、单轴反馈健康、制动/保持和实体急停。
 
 仓库基线的 P5b 串口桥仍是单向发送，没有底盘里程计或诊断闭环；本轮模拟器里程计由运动学模型生成。P6 离线结果不能作为真实机器人执行许可。
 
@@ -77,4 +77,4 @@ P4f 的在途轨迹 epoch、下游旧消息清空/取消确认仍未解决。P6 
 
 Nav2 工作空间 `p6_autonomous_mission` 和机械臂工作空间 6 个依赖包已分别构建通过；P6 自动化单元测试 8/8 通过。六场景运行使用 ROS_DOMAIN_ID=97、`ROS_LOCALHOST_ONLY=1`，P6 与 P3b launch 默认域号一致。运行命令、完整任务耗时、各场景原因和关键日志见 [实际验收记录](ros2-runtime-acceptance.md)。
 
-本次验收仅证明离线 ROS 2 软件闭环在仿真数据上通过。它不是连接真实底盘、相机、雷达或机械臂的硬件验收，也不解除本文件所列 P4e/P4f 安全限制。
+本次验收仅证明离线 ROS 2 软件闭环在仿真数据上通过。它不是连接真实底盘、相机、雷达或机械臂的硬件验收，也不解除本文件所列 P4e 主机恢复互锁及 P4f STM32 下游停止确认限制。

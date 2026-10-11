@@ -18,6 +18,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('domain_id', default_value='97'),
         DeclareLaunchArgument('scenario', default_value='normal'),
+        DeclareLaunchArgument('test_cancel_delay_sec', default_value='0.5'),
         DeclareLaunchArgument('event_log_path', default_value='/tmp/p6_autonomous_mission_events.jsonl'),
         SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('domain_id')),
         SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '1'),
@@ -46,6 +47,7 @@ def generate_launch_description():
             parameters=[{
                 'arm_backend': 'synthetic',
                 'scenario': LaunchConfiguration('scenario'),
+                'test_cancel_delay_sec': LaunchConfiguration('test_cancel_delay_sec'),
                 'auto_start': True,
                 'p4e_status_required': False,
                 'event_log_path': LaunchConfiguration('event_log_path'),

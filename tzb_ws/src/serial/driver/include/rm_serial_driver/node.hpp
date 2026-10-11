@@ -13,6 +13,8 @@
 #include <std_srvs/srv/trigger.hpp>
 
 #include <array>
+#include <cstdint>
+#include <unordered_set>
 #include <atomic>
 #include <chrono>
 #include <vector>
@@ -37,6 +39,8 @@ private:
   void navCallback(geometry_msgs::msg::Twist::ConstSharedPtr msg);
   void armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr msg);
   void gripperCommandCallback(std_msgs::msg::Int8::ConstSharedPtr msg);
+  void trajectoryGripperCommandCallback(std_msgs::msg::String::ConstSharedPtr msg);
+  void trajectoryCancelCallback(std_msgs::msg::String::ConstSharedPtr msg);
   void timerCallback();
   void statusTimerCallback();
   void resetSafetyCallback(
@@ -53,6 +57,7 @@ private:
   void reopenPort();
   void updateArmCommandLocked(double dt_sec);
   void latchFaultLocked(const std::string& reason);
+  bool persistTrajectoryEpochLocked(uint64_t epoch);
   bool commandSourceQuietLocked(std::chrono::steady_clock::time_point now) const;
   bool feedbackFreshLocked(std::chrono::steady_clock::time_point now) const;
   static const char* safetyStateName(ArmSafetyState state);
@@ -64,10 +69,13 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_command_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr gripper_command_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr trajectory_gripper_command_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr trajectory_cancel_sub_;
 
   // ******************** ROS Publisher ********************
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr arm_state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr safety_status_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr trajectory_cancel_ack_pub_;
 
   // ******************** ROS Timer ********************
   rclcpp::TimerBase::SharedPtr timer_;
@@ -108,6 +116,15 @@ private:
   double arm_feedback_timeout_sec_{0.5};
   double arm_rearm_quiet_sec_{0.1};
   double safety_status_publish_hz_{2.0};
+  std::string trajectory_epoch_state_path_;
+  std::string trajectory_gripper_topic_{"/p6/arm_task/gripper_command"};
+  std::string trajectory_cancel_topic_{"/p6/arm_task/cancel"};
+  std::string trajectory_cancel_ack_topic_{"/serial/arm_task/cancel_ack"};
+  uint64_t trajectory_epoch_high_water_{0};
+  uint64_t accepted_trajectory_epoch_{0};
+  uint64_t last_trajectory_sequence_{0};
+  std::string accepted_trajectory_task_id_;
+  std::unordered_set<std::string> cancelled_trajectory_tasks_;
   int64_t arm_enable_epoch_stamp_ns_{0};
   int64_t last_accepted_command_stamp_ns_{0};
   std::chrono::steady_clock::time_point last_command_rx_time_{};

@@ -121,6 +121,7 @@ setsid bash -c '
   source "$P6_NAV_WS/install/p6/setup.bash"
   exec ros2 launch p6_autonomous_mission p6_autonomous_mission.launch.py \
     domain_id:="$P6_DOMAIN" scenario:="$P6_SCENARIO" \
+    test_cancel_delay_sec:="${P6_TEST_CANCEL_DELAY_SEC:-0.5}" \
     event_log_path:="$P6_EVENT_LOG_PATH"
 ' >"$LOG_DIR/nav2-mission.log" 2>&1 &
 nav_pid=$!

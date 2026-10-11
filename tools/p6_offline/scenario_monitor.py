@@ -5,10 +5,13 @@ import json
 import os
 import sys
 import time
+import uuid
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, String
 
 
@@ -20,7 +23,14 @@ class ScenarioMonitor(Node):
         self.state = None
         self._duplicate_count = 0
         self._duplicate_timer = None
+        self._arm_results = []
+        self._cancel_acks = []
+        self._tagged_arm_command_times = {}
         self._start_pub = self.create_publisher(Bool, '/p6/start', 10)
+        self._arm_request_pub = self.create_publisher(String, '/p6/arm_task/request', 10)
+        self.create_subscription(String, '/p6/arm_task/result', self._on_arm_result, 10)
+        self.create_subscription(String, '/p6/arm_task/cancel_ack', self._on_cancel_ack, 10)
+        self.create_subscription(JointState, '/tzb_catch/arm_joint_command', self._on_arm_command, qos_profile_sensor_data)
         self.create_subscription(String, '/p6/mission_state', self._on_state, 10)
         self.create_subscription(String, '/p6/mission_events', self._on_event, 20)
         self._duplicate_probe = self.create_timer(0.1, self._probe_duplicate_trigger)
@@ -43,6 +53,59 @@ class ScenarioMonitor(Node):
         msg.data = True
         self._start_pub.publish(msg)
         self._duplicate_count += 1
+
+    def _on_arm_result(self, msg):
+        self._arm_results.append(msg.data)
+
+    def _on_cancel_ack(self, msg):
+        self._cancel_acks.append(msg.data)
+
+    def _on_arm_command(self, msg):
+        fields = msg.header.frame_id.split(':')
+        if len(fields) == 4 and fields[0] == 'p4f':
+            key = (fields[1], fields[2])
+            self._tagged_arm_command_times.setdefault(key, []).append(time.monotonic())
+
+    def verify_cancelled_task_quiet(self, task_id, epoch, quiet_sec=0.5):
+        key = (task_id, str(epoch))
+        prefix = task_id + '|' + str(epoch) + '|UPSTREAM_QUIESCED'
+        if not any(ack.startswith(prefix) for ack in self._cancel_acks):
+            print('FAIL missing upstream cancel acknowledgement for %s/%s' % key, file=sys.stderr)
+            return False
+        before = len(self._tagged_arm_command_times.get(key, []))
+        if before == 0:
+            print('FAIL no tagged arm command reached the P4e driver input for %s/%s' % key,
+                  file=sys.stderr)
+            return False
+        deadline = time.monotonic() + quiet_sec
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+        after = len(self._tagged_arm_command_times.get(key, []))
+        if after != before:
+            print('FAIL cancelled task published %d late command(s)' % (after-before), file=sys.stderr)
+            return False
+        print('PASS P4e input observed %d tagged arm commands; stream stayed quiet for %.2fs after acknowledgement' % (before, quiet_sec))
+        return True
+
+    def verify_new_task_takeover(self, timeout_sec=30.0):
+        task_id = uuid.uuid4().hex
+        epoch = time.time_ns()
+        request = String()
+        request.data = task_id + '|pick|' + str(epoch)
+        self._arm_request_pub.publish(request)
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            for result in self._arm_results:
+                fields = result.split('|')
+                if len(fields) == 4 and fields[0] == task_id and fields[3] == str(epoch):
+                    if fields[2] == 'success':
+                        print('PASS cancelled worker accepted and completed a higher epoch follow-up task')
+                        return True
+                    print('FAIL follow-up task returned %s' % fields[2], file=sys.stderr)
+                    return False
+        print('FAIL no result for higher epoch follow-up task %s' % task_id, file=sys.stderr)
+        return False
 
     def _on_event(self, _msg):
         # State is consumed live; authoritative event assertions use the flushed JSONL log.
@@ -115,8 +178,11 @@ def _validate(scenario, expected, events):
 
     if scenario == 'grasp_failure':
         aborted = matching('MISSION_ABORTED')
-        require(bool(matching('ARM_CANCEL_SENT_FOR_TEST')),
+        require(bool(matching('ARM_CANCEL_SENT',
+                              lambda event: event.get('reason') == 'grasp failure injection')),
                 'grasp failure cancellation was not issued')
+        require(bool(matching('ARM_CANCEL_CONFIRMED')),
+                'upstream ROS task did not confirm quiescence after cancellation')
         require(bool(matching('ARM_RESULT_RECEIVED',
                               lambda event: event.get('stage') == 'pick'
                               and event.get('outcome') == 'failure')),
@@ -128,12 +194,21 @@ def _validate(scenario, expected, events):
 
     if scenario == 'communication_loss':
         aborted = matching('MISSION_ABORTED')
-        require(bool(matching('ARM_REQUEST_DROPPED_FOR_TEST')),
-                'communication-loss request was not dropped')
+        require(bool(matching('ARM_REQUEST_SENT', lambda event: event.get('stage') == 'pick')),
+                'pick request did not reach the arm node before result-channel loss')
+        require(bool(matching('ARM_RESULT_DROPPED_FOR_TEST')),
+                'the test did not drop the result-channel response')
+        require(bool(matching('ARM_CANCEL_SENT',
+                              lambda event: event.get('reason') == 'stage timeout in ARM_PICK')),
+                'coordinator did not cancel the active pick after result timeout')
         require(bool(aborted) and 'stage timeout in ARM_PICK' in aborted[-1].get('reason', ''),
                 'missing arm result must abort on communication timeout')
+        require(bool(matching('ARM_CANCEL_CONFIRMED')),
+                'active arm task did not confirm upstream quiescence after result loss')
         require(not matching('SAMPLE_PICK_CONFIRMED'),
                 'sample pick must not be confirmed after communication loss')
+        require(not matching('NAV_GOAL_SENT', lambda event: event.get('destination') == 'home'),
+                'return navigation must not start after communication loss')
 
     if scenario == 'duplicate_trigger':
         accepted = len(matching('TRIGGER_ACCEPTED'))
@@ -171,6 +246,14 @@ def main():
                     for error in errors:
                         print('FAIL %s' % error, file=sys.stderr)
                     return 1
+                if scenario in ('grasp_failure', 'communication_loss'):
+                    cancel = next((event for event in _read_events(event_log_path)
+                                   if event.get('event') == 'ARM_CANCEL_CONFIRMED'), None)
+                    if cancel is None or not node.verify_cancelled_task_quiet(
+                            cancel['task_id'], cancel['trajectory_epoch']):
+                        return 1
+                    if not node.verify_new_task_takeover():
+                        return 1
                 print('PASS scenario=%s terminal=%s events=%s' %
                       (scenario, node.state, event_log_path))
                 return 0

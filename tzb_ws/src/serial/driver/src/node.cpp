@@ -10,6 +10,9 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <cstdint>
 #include <cmath>
 #include <functional>
@@ -44,6 +47,25 @@ bool isRadianUnit(const std::string& unit)
 {
   return unit == "rad" || unit == "radian" || unit == "radians";
 }
+struct TrajectoryCommandContext { std::string task_id; uint64_t epoch{0}; uint64_t sequence{0}; };
+bool parseUnsigned(const std::string& text, uint64_t& value)
+{
+  if (text.empty() || !std::all_of(text.begin(), text.end(), [](unsigned char c) {
+        return std::isdigit(c);
+      })) return false;
+  try { std::size_t used=0; auto n=std::stoull(text,&used,10); if (used!=text.size()) return false; value=static_cast<uint64_t>(n); return true; }
+  catch (const std::exception&) { return false; }
+}
+bool parseTrajectoryContext(const std::string& frame_id, TrajectoryCommandContext& out)
+{
+  if (frame_id.rfind("p4f:",0)!=0) return false;
+  const auto a=frame_id.find(':',4), b=(a==std::string::npos ? a : frame_id.find(':',a+1));
+  if (a==std::string::npos || b==std::string::npos || frame_id.find(':',b+1)!=std::string::npos) return false;
+  out.task_id=frame_id.substr(4,a-4);
+  return !out.task_id.empty() && parseUnsigned(frame_id.substr(a+1,b-a-1),out.epoch) &&
+    parseUnsigned(frame_id.substr(b+1),out.sequence) && out.epoch>0 && out.sequence>0;
+}
+std::string trajectoryKey(const std::string& id, uint64_t epoch) { return id+"|"+std::to_string(epoch); }
 }  // namespace
 
 DriverNode::DriverNode(const rclcpp::NodeOptions& options)
@@ -109,6 +131,19 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
   gripper_command_log_interval_sec_ = std::max(
     0.0,
     declare_parameter<double>("tzb.gripper_command_log_interval_sec", 1.0));
+  const char* home = std::getenv("HOME");
+  trajectory_epoch_state_path_ = declare_parameter<std::string>(
+    "tzb.trajectory_epoch_state_path", std::string(home ? home : "/tmp") +
+    (home ? "/.ros/lunar_cave_arm_trajectory_epoch" : "/lunar_cave_arm_trajectory_epoch"));
+  trajectory_gripper_topic_ = declare_parameter<std::string>("tzb.trajectory_gripper_topic", "/p6/arm_task/gripper_command");
+  trajectory_cancel_topic_ = declare_parameter<std::string>("tzb.trajectory_cancel_topic", "/p6/arm_task/cancel");
+  trajectory_cancel_ack_topic_ = declare_parameter<std::string>("tzb.trajectory_cancel_ack_topic", "/serial/arm_task/cancel_ack");
+  try {
+    const std::filesystem::path path(trajectory_epoch_state_path_);
+    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+    std::ifstream file(trajectory_epoch_state_path_);
+    if (file.good()) { std::string value; file >> value; if (!parseUnsigned(value,trajectory_epoch_high_water_)) throw std::runtime_error("malformed epoch high-water"); }
+  } catch (const std::exception& e) { throw std::runtime_error(std::string("cannot load epoch high-water: ")+e.what()); }
   arm_joint_names_ = declare_parameter<std::vector<std::string>>(
     "tzb.arm_joint_names",
     std::vector<std::string>{
@@ -181,6 +216,14 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
       "tzb.gripper_command_topic", "/tzb_catch/gripper_command"),
     rclcpp::QoS(1).reliable().durability_volatile(),
     std::bind(&DriverNode::gripperCommandCallback, this, _1));
+  trajectory_gripper_command_sub_ = create_subscription<std_msgs::msg::String>(
+    trajectory_gripper_topic_, rclcpp::QoS(10).reliable().durability_volatile(),
+    std::bind(&DriverNode::trajectoryGripperCommandCallback, this, _1));
+  trajectory_cancel_sub_ = create_subscription<std_msgs::msg::String>(
+    trajectory_cancel_topic_, rclcpp::QoS(10).reliable().durability_volatile(),
+    std::bind(&DriverNode::trajectoryCancelCallback, this, _1));
+  trajectory_cancel_ack_pub_ = create_publisher<std_msgs::msg::String>(
+    trajectory_cancel_ack_topic_, rclcpp::QoS(10).reliable().durability_volatile());
   arm_state_pub_ = create_publisher<sensor_msgs::msg::JointState>(
     declare_parameter<std::string>("tzb.arm_state_topic", "/serial/arm_joint_state"),
     rclcpp::SensorDataQoS());
@@ -318,6 +361,12 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
     const auto steady_now = std::chrono::steady_clock::now();
     std::array<float, kArmJointCount> parsed_positions{};
     std::string rejection_reason;
+    TrajectoryCommandContext context;
+    if (!parseTrajectoryContext(msg->header.frame_id, context)) rejection_reason="missing/malformed p4f context";
+    const auto now_epoch = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count());
+    if (rejection_reason.empty() && context.epoch > now_epoch + 60000000000ULL)
+      rejection_reason="trajectory epoch is implausibly far in the future";
     const auto stamp = msg->header.stamp;
     int64_t stamp_ns = 0;
     if (stamp.sec < 0 || stamp.nanosec >= 1000000000U ||
@@ -379,18 +428,51 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
       return;
     }
     if (stamp_ns <= arm_enable_epoch_stamp_ns_ ||
-        (last_accepted_command_stamp_ns_ != 0 && stamp_ns <= last_accepted_command_stamp_ns_))
-    {
-      rejection_reason = "command timestamp is not newer than this enable epoch/previous command";
+        (last_accepted_command_stamp_ns_ != 0 && stamp_ns <= last_accepted_command_stamp_ns_)) {
+      rejection_reason="command timestamp is not newer than this enable epoch/previous command";
       latchFaultLocked(rejection_reason);
-      RCLCPP_ERROR(get_logger(), "Arm command rejected; safety fault latched: %s", rejection_reason.c_str());
+      RCLCPP_ERROR(get_logger(),"Arm command rejected; safety fault latched: %s",rejection_reason.c_str());
       return;
+    }
+    if (context.epoch < trajectory_epoch_high_water_ ||
+        cancelled_trajectory_tasks_.count(trajectoryKey(context.task_id,context.epoch))) {
+      last_safety_event_="rejected old epoch or cancelled task";
+      RCLCPP_WARN(get_logger(),"Rejected replay task=%s epoch=%llu seq=%llu",context.task_id.c_str(),
+        (unsigned long long)context.epoch,(unsigned long long)context.sequence);
+      return;
+    }
+    if (context.epoch == trajectory_epoch_high_water_ &&
+        (accepted_trajectory_epoch_ != context.epoch || accepted_trajectory_task_id_ != context.task_id)) {
+      last_safety_event_="rejected epoch replay after lifecycle barrier";
+      RCLCPP_WARN(get_logger(),"Rejected inactive epoch replay %llu",(unsigned long long)context.epoch);
+      return;
+    }
+    if (context.epoch == accepted_trajectory_epoch_ &&
+        (accepted_trajectory_task_id_ != context.task_id || context.sequence <= last_trajectory_sequence_)) {
+      last_safety_event_="rejected duplicate/backward trajectory sequence";
+      RCLCPP_WARN(get_logger(),"Rejected duplicate/backward seq task=%s epoch=%llu seq=%llu last=%llu",
+        context.task_id.c_str(),(unsigned long long)context.epoch,(unsigned long long)context.sequence,
+        (unsigned long long)last_trajectory_sequence_);
+      return;
+    }
+    if (context.epoch > trajectory_epoch_high_water_) {
+      if (!persistTrajectoryEpochLocked(context.epoch)) {
+        rejection_reason="cannot persist epoch high-water"; latchFaultLocked(rejection_reason);
+        RCLCPP_ERROR(get_logger(),"Rejected arm command: %s",rejection_reason.c_str()); return;
+      }
+      trajectory_epoch_high_water_=context.epoch;
+      accepted_trajectory_epoch_=context.epoch;
+      accepted_trajectory_task_id_=context.task_id;
+      last_trajectory_sequence_=0;
+      RCLCPP_INFO(get_logger(),"Accepted trajectory task=%s epoch=%llu",context.task_id.c_str(),
+        (unsigned long long)context.epoch);
     }
     for (std::size_t i = 0; i < kArmJointCount; ++i)
     {
       arm_target_position_[i] = parsed_positions[i];
     }
     last_accepted_command_stamp_ns_ = stamp_ns;
+    last_trajectory_sequence_ = context.sequence;
     last_valid_command_time_ = steady_now;
     have_arm_command_ = true;
     if (arm_safety_state_ == ArmSafetyState::kArmedWaitCommand)
@@ -418,6 +500,11 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
 void DriverNode::gripperCommandCallback(std_msgs::msg::Int8::ConstSharedPtr msg)
 {
   std::scoped_lock lock{arm_mutex_};
+  if (trajectory_epoch_high_water_ > 0) {
+    last_safety_event_ = "rejected untagged legacy gripper command after P4f lifecycle activation";
+    RCLCPP_WARN(get_logger(), "Rejected untagged gripper command after P4f lifecycle activation.");
+    return;
+  }
   if (arm_safety_state_ != ArmSafetyState::kActive)
   {
     last_safety_event_ = "ignored gripper command outside ACTIVE state";
@@ -436,6 +523,151 @@ void DriverNode::gripperCommandCallback(std_msgs::msg::Int8::ConstSharedPtr msg)
     get_logger(),
     "Gripper serial command updated: %d (%s)",
     static_cast<int>(gripper_command_), state);
+}
+
+void DriverNode::trajectoryGripperCommandCallback(std_msgs::msg::String::ConstSharedPtr msg)
+{
+  const auto first=msg->data.find('|');
+  const auto second=first==std::string::npos ? first : msg->data.find('|',first+1);
+  const auto third=second==std::string::npos ? second : msg->data.find('|',second+1);
+  TrajectoryCommandContext context;
+  int value=0;
+  bool parsed=first!=std::string::npos && first>0 && second!=std::string::npos &&
+    third!=std::string::npos && msg->data.find('|',third+1)==std::string::npos;
+  if (parsed) {
+    context.task_id=msg->data.substr(0,first);
+    parsed=context.task_id.find(':')==std::string::npos &&
+      parseUnsigned(msg->data.substr(first+1,second-first-1),context.epoch) &&
+      parseUnsigned(msg->data.substr(second+1,third-second-1),context.sequence);
+    try {
+      std::size_t used=0;
+      value=std::stoi(msg->data.substr(third+1),&used,10);
+      parsed=parsed && used==msg->data.size()-third-1;
+    } catch (const std::exception&) { parsed=false; }
+  }
+  std::scoped_lock lock{arm_mutex_};
+  if (arm_safety_state_ != ArmSafetyState::kActive) {
+    last_safety_event_="ignored tagged gripper command outside ACTIVE state";
+    return;
+  }
+  if (!parsed || context.epoch==0 || context.sequence==0 ||
+      (value != -1 && value != 1)) {
+    last_safety_event_="rejected malformed tagged gripper command";
+    RCLCPP_WARN(get_logger(),"Rejected malformed P4f gripper command.");
+    return;
+  }
+  const auto now_epoch=static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count());
+  if (context.epoch > now_epoch + 60000000000ULL ||
+      context.epoch < trajectory_epoch_high_water_ ||
+      cancelled_trajectory_tasks_.count(trajectoryKey(context.task_id,context.epoch))) {
+    last_safety_event_="rejected stale/cancelled tagged gripper command";
+    RCLCPP_WARN(get_logger(),"Rejected stale/cancelled P4f gripper task=%s epoch=%llu seq=%llu",
+      context.task_id.c_str(),(unsigned long long)context.epoch,(unsigned long long)context.sequence);
+    return;
+  }
+  if (context.epoch == trajectory_epoch_high_water_ &&
+      (accepted_trajectory_epoch_ != context.epoch || accepted_trajectory_task_id_ != context.task_id)) {
+    last_safety_event_="rejected inactive tagged gripper epoch";
+    RCLCPP_WARN(get_logger(),"Rejected inactive P4f gripper epoch %llu",
+      (unsigned long long)context.epoch);
+    return;
+  }
+  if (context.epoch == accepted_trajectory_epoch_ &&
+      (accepted_trajectory_task_id_ != context.task_id || context.sequence <= last_trajectory_sequence_)) {
+    last_safety_event_="rejected duplicate/backward tagged gripper sequence";
+    RCLCPP_WARN(get_logger(),"Rejected duplicate/backward P4f gripper sequence task=%s epoch=%llu seq=%llu",
+      context.task_id.c_str(),(unsigned long long)context.epoch,(unsigned long long)context.sequence);
+    return;
+  }
+  if (context.epoch > trajectory_epoch_high_water_) {
+    if (!persistTrajectoryEpochLocked(context.epoch)) {
+      latchFaultLocked("cannot persist gripper trajectory epoch high-water");
+      return;
+    }
+    trajectory_epoch_high_water_=context.epoch;
+    accepted_trajectory_epoch_=context.epoch;
+    accepted_trajectory_task_id_=context.task_id;
+    last_trajectory_sequence_=0;
+  }
+  if (context.epoch != accepted_trajectory_epoch_ || context.task_id != accepted_trajectory_task_id_ ||
+      context.sequence <= last_trajectory_sequence_) {
+    last_safety_event_="rejected unmatched tagged gripper command";
+    return;
+  }
+  last_trajectory_sequence_=context.sequence;
+  gripper_command_=static_cast<int8_t>(value);
+  last_safety_event_="accepted P4f task-scoped gripper command";
+  const char* state=gripper_command_>0 ? "closed" : (gripper_command_<0 ? "open" : "hold");
+  RCLCPP_INFO(get_logger(),"P4f gripper task=%s epoch=%llu seq=%llu command=%d (%s)",
+    context.task_id.c_str(),(unsigned long long)context.epoch,
+    (unsigned long long)context.sequence,static_cast<int>(gripper_command_),state);
+}
+
+void DriverNode::trajectoryCancelCallback(std_msgs::msg::String::ConstSharedPtr msg)
+{
+  const auto sep=msg->data.rfind('|');
+  const std::string id=sep==std::string::npos ? "" : msg->data.substr(0,sep);
+  uint64_t epoch=0;
+  const bool valid=sep!=std::string::npos && sep>0 &&
+    parseUnsigned(msg->data.substr(sep+1),epoch) && epoch>0 &&
+    id.find(':')==std::string::npos && id.find('|')==std::string::npos;
+  const auto now_epoch = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count());
+  const bool plausible = valid && epoch <= now_epoch + 60000000000ULL;
+  bool applied=false;
+  {
+    std::scoped_lock lock{arm_mutex_};
+    const bool identity_matches_active = accepted_trajectory_epoch_ == 0 ||
+      (accepted_trajectory_epoch_ == epoch && accepted_trajectory_task_id_ == id);
+    if (plausible && identity_matches_active && epoch >= trajectory_epoch_high_water_) {
+      if (epoch > trajectory_epoch_high_water_) {
+        applied=persistTrajectoryEpochLocked(epoch);
+        if (applied) trajectory_epoch_high_water_=epoch;
+      } else {
+        applied=true;
+      }
+      if (applied) {
+        cancelled_trajectory_tasks_.insert(trajectoryKey(id,epoch));
+        if (accepted_trajectory_epoch_ > 0 && accepted_trajectory_epoch_ <= epoch) {
+          cancelled_trajectory_tasks_.insert(trajectoryKey(
+            accepted_trajectory_task_id_, accepted_trajectory_epoch_));
+          accepted_trajectory_epoch_=0;
+          accepted_trajectory_task_id_.clear();
+          last_trajectory_sequence_=0;
+          have_arm_command_=false;
+          gripper_command_=0;
+          if (have_arm_feedback_) for (std::size_t i=0;i<kArmJointCount;++i) {
+            arm_target_position_[i]=arm_measured_position_rad_[i];
+            arm_command_position_rad_[i]=arm_measured_position_rad_[i];
+          }
+        }
+        last_safety_event_="ROS host cancelled trajectory; STM32 stop is unconfirmed";
+      }
+    } else {
+      last_safety_event_=identity_matches_active ?
+        "rejected stale or malformed trajectory cancellation" :
+        "rejected cancellation identity mismatch for active trajectory";
+    }
+  }
+  std_msgs::msg::String ack;
+  ack.data=id+"|"+std::to_string(epoch)+"|"+
+    (applied ? "ROS_HOST_CANCELLED_STM32_UNCONFIRMED" : "REJECTED_STALE_OR_MALFORMED");
+  if (trajectory_cancel_ack_pub_) trajectory_cancel_ack_pub_->publish(ack);
+  RCLCPP_WARN(get_logger(), applied ?
+    "ROS host cancellation barrier applied for task=%s epoch=%llu; STM32 stop remains unconfirmed." :
+    "Cancellation rejected as stale/malformed [%s].",
+    id.c_str(),(unsigned long long)epoch);
+}
+
+bool DriverNode::persistTrajectoryEpochLocked(uint64_t epoch)
+{
+  try {
+    const std::string tmp=trajectory_epoch_state_path_+".tmp";
+    { std::ofstream file(tmp,std::ios::trunc); if (!file.good()) return false; file<<epoch<<"\n"; file.flush(); if (!file.good()) return false; }
+    std::filesystem::rename(tmp,trajectory_epoch_state_path_);
+    return true;
+  } catch (const std::exception&) { return false; }
 }
 
 void DriverNode::resetSafetyCallback(
@@ -532,6 +764,9 @@ void DriverNode::enableSafetyCallback(
   }
   have_arm_command_ = false;
   gripper_command_ = 0;
+  accepted_trajectory_epoch_ = 0;
+  accepted_trajectory_task_id_.clear();
+  last_trajectory_sequence_ = 0;
   arm_enable_epoch_stamp_ns_ = get_clock()->now().nanoseconds();
   last_accepted_command_stamp_ns_ = 0;
   arm_safety_state_ = ArmSafetyState::kArmedWaitCommand;
@@ -553,6 +788,9 @@ void DriverNode::latchFaultLocked(const std::string& reason)
   gripper_command_ = 0;
   last_accepted_command_stamp_ns_ = 0;
   last_valid_command_time_ = std::chrono::steady_clock::time_point{};
+  accepted_trajectory_epoch_=0;
+  accepted_trajectory_task_id_.clear();
+  last_trajectory_sequence_=0;
   for (std::size_t i = 0; i < kArmJointCount; ++i)
   {
     if (have_arm_feedback_)
@@ -621,6 +859,10 @@ void DriverNode::statusTimerCallback()
            << " rearm_quiet_s=" << arm_rearm_quiet_sec_
            << " invalid_feedback_frames=" << invalid_feedback_count_
            << " feedback_sequence_gaps=" << feedback_sequence_gap_count_
+           << " trajectory_epoch_high_water=" << trajectory_epoch_high_water_
+           << " trajectory_epoch=" << accepted_trajectory_epoch_
+           << " trajectory_sequence=" << last_trajectory_sequence_
+           << " trajectory_task=" << (accepted_trajectory_task_id_.empty() ? "none" : accepted_trajectory_task_id_)
            << " per_joint_feedback_health=unavailable_in_46B_response";
   }
   bool port_open = false;

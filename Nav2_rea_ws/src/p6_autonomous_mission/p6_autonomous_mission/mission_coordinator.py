@@ -26,6 +26,7 @@ class MissionCoordinator(Node):
         super().__init__('p6_mission_coordinator')
         self.declare_parameter('arm_backend', 'synthetic')
         self.declare_parameter('scenario', 'normal')
+        self.declare_parameter('test_cancel_delay_sec', 0.5)
         self.declare_parameter('auto_start', True)
         self.declare_parameter('target_x', 10.0)
         self.declare_parameter('target_y', 6.5)
@@ -45,6 +46,7 @@ class MissionCoordinator(Node):
         self.declare_parameter('target_topic', '/p2_offline/pose_estimator/object_pose')
         self.declare_parameter('arm_request_topic', '/p6/arm_task/request')
         self.declare_parameter('arm_cancel_topic', '/p6/arm_task/cancel')
+        self.declare_parameter('arm_cancel_ack_topic', '/p6/arm_task/cancel_ack')
         self.declare_parameter('arm_result_topic', '/p6/arm_task/result')
         self.declare_parameter('arm_safety_topic', '/serial/arm_safety/status')
         self.declare_parameter('p4e_status_required', False)
@@ -54,6 +56,7 @@ class MissionCoordinator(Node):
         if self.backend != 'synthetic':
             raise RuntimeError('P6 offline launch only accepts arm_backend=synthetic; hardware mode is disabled')
         self.scenario = str(self.get_parameter('scenario').value)
+        self._test_cancel_delay_sec = max(0.0, float(self.get_parameter('test_cancel_delay_sec').value))
         self.model = MissionModel()
         self._start_requested = bool(self.get_parameter('auto_start').value)
         self._odom = None
@@ -73,8 +76,16 @@ class MissionCoordinator(Node):
         self._nav_goal_handle = None
         self._arm_task_id = None
         self._arm_stage = None
+        self._arm_epoch = None
+        self._arm_epoch_counter = time.time_ns()
+        self._arm_cancel_pending = False
+        self._arm_cancel_sent_at = None
+        self._arm_cancel_timeout_logged = False
+        self._cancel_task_id = None
+        self._cancel_epoch = None
         self._arm_result = None
         self._arm_cancel_sent = False
+        self._communication_result_dropped = False
         self._test_cancel_at = None
         self._safety_state = None
         self._safety_rx = 0.0
@@ -97,7 +108,10 @@ class MissionCoordinator(Node):
             for name in self._nav_lifecycle_names
         }
         self._nav_state_futures = None
+        self._nav_state_probe_started_at = None
+        self._nav_probe_timeout_sec = 2.0
         self._nav_check_retry_at = 0.0
+        self._nav_wait_diagnostic_at = 0.0
         self._nav_lifecycle_states = None
         self.create_subscription(
             Odometry, str(self.get_parameter('odom_topic').value), self._on_odom, 10)
@@ -105,6 +119,8 @@ class MissionCoordinator(Node):
             PoseStamped, str(self.get_parameter('target_topic').value), self._on_target, 10)
         self.create_subscription(String, str(self.get_parameter('arm_result_topic').value),
                                  self._on_arm_result, 10)
+        self.create_subscription(String, str(self.get_parameter('arm_cancel_ack_topic').value),
+                                 self._on_arm_cancel_ack, 10)
         self.create_subscription(String, str(self.get_parameter('arm_safety_topic').value),
                                  self._on_arm_safety, 10)
         self.create_subscription(Bool, '/p6/start', self._on_start, 10)
@@ -157,19 +173,54 @@ class MissionCoordinator(Node):
 
     def _on_arm_result(self, msg):
         fields = msg.data.split('|')
-        if len(fields) != 3:
-            self._record('ARM_RESULT_REJECTED', reason='malformed result')
+        if len(fields) != 4:
+            self._record('ARM_RESULT_REJECTED', reason='malformed result or missing epoch')
             return
-        task_id, stage, outcome = fields
-        if task_id != self._arm_task_id or stage != self._arm_stage:
-            self._record('ARM_RESULT_REJECTED', reason='task id or stage mismatch',
-                         received_task_id=task_id, received_stage=stage)
+        task_id, stage, outcome, epoch_text = fields
+        try:
+            epoch = int(epoch_text)
+        except ValueError:
+            epoch = -1
+        if task_id != self._arm_task_id or stage != self._arm_stage or epoch != self._arm_epoch:
+            self._record('ARM_RESULT_REJECTED', reason='task id, stage, or epoch mismatch',
+                         received_task_id=task_id, received_stage=stage,
+                         received_epoch=epoch_text, expected_epoch=self._arm_epoch)
+            return
+        if (self.scenario == 'communication_loss' and stage == 'pick'
+                and not self._communication_result_dropped):
+            self._communication_result_dropped = True
+            self._record('ARM_RESULT_DROPPED_FOR_TEST', task_id=task_id, stage=stage,
+                         outcome=outcome, trajectory_epoch=epoch,
+                         reason='simulated result-channel interruption')
             return
         if self.state not in (MissionState.ARM_PICK, MissionState.ARM_UNLOAD):
             self._record('ARM_RESULT_REJECTED', reason='result received outside arm stage')
             return
         self._arm_result = (outcome == 'success')
-        self._record('ARM_RESULT_RECEIVED', stage=stage, outcome=outcome, task_id=task_id)
+        self._record('ARM_RESULT_RECEIVED', stage=stage, outcome=outcome, task_id=task_id,
+                     trajectory_epoch=epoch)
+
+    def _on_arm_cancel_ack(self, msg):
+        fields = msg.data.split('|')
+        if len(fields) != 3:
+            self._record('ARM_CANCEL_ACK_REJECTED', reason='malformed acknowledgement')
+            return
+        task_id, epoch_text, status = fields
+        try:
+            epoch = int(epoch_text)
+        except ValueError:
+            epoch = -1
+        if (not self._arm_cancel_pending or task_id != self._cancel_task_id
+                or epoch != self._cancel_epoch or status != 'UPSTREAM_QUIESCED'):
+            self._record('ARM_CANCEL_ACK_REJECTED', task_id=task_id,
+                         received_epoch=epoch_text, status=status)
+            return
+        self._arm_cancel_pending = False
+        self._arm_cancel_timeout_logged = False
+        self._cancel_task_id = None
+        self._cancel_epoch = None
+        self._record('ARM_CANCEL_CONFIRMED', task_id=task_id, trajectory_epoch=epoch,
+                     confirmation='ROS upstream publisher quiescent; STM32 stop not implied')
 
     def _on_arm_safety(self, msg):
         text = str(msg.data)
@@ -208,7 +259,16 @@ class MissionCoordinator(Node):
             self._accept_trigger()
         if self._is_stopping_state():
             self._publish_zero()
-        if self.state in (MissionState.IDLE, MissionState.SUCCEEDED, MissionState.ABORTED):
+        if self.state in (MissionState.SUCCEEDED, MissionState.ABORTED):
+            if (self._arm_cancel_pending and not self._arm_cancel_timeout_logged
+                    and self._arm_cancel_sent_at is not None
+                    and now - self._arm_cancel_sent_at > 5.0):
+                self._arm_cancel_timeout_logged = True
+                self._record('ARM_CANCEL_UNCONFIRMED', task_id=self._cancel_task_id,
+                             trajectory_epoch=self._cancel_epoch,
+                             reason='no ROS upstream quiescence acknowledgement within 5 seconds')
+            return
+        if self.state == MissionState.IDLE:
             return
         if self._deadline is not None and now > self._deadline:
             if self.state in (MissionState.NAVIGATING_TO_TARGET, MissionState.NAVIGATING_HOME):
@@ -225,9 +285,11 @@ class MissionCoordinator(Node):
                 return
 
         if self.state == MissionState.WAITING_FOR_STACK:
-            if (self._odom is not None and now - self._odom_rx < 0.5
-                    and self._nav_client.server_is_ready()
-                    and self._navigation_lifecycle_active(now)):
+            odom_ready = self._odom is not None and now - self._odom_rx < 0.5
+            action_ready = self._nav_client.server_is_ready()
+            lifecycle_ready = (
+                self._navigation_lifecycle_active(now) if odom_ready and action_ready else False)
+            if odom_ready and action_ready and lifecycle_ready:
                 self._record('NAV2_READY', action='/navigate_to_pose', odom_topic='/odom')
                 target_x = float(self.get_parameter('target_x').value)
                 target_y = float(self.get_parameter('target_y').value)
@@ -237,6 +299,12 @@ class MissionCoordinator(Node):
                 self._nav_destination = ('target', target_x, target_y)
                 self._transition(MissionState.NAVIGATING_TO_TARGET, 'start target navigation')
                 self._begin_navigation_attempt()
+            elif now >= self._nav_wait_diagnostic_at:
+                self._nav_wait_diagnostic_at = now + 5.0
+                self._record('NAV2_READINESS_WAIT', odom_ready=odom_ready,
+                             odom_age_sec=(now - self._odom_rx if self._odom is not None else None),
+                             navigate_action_ready=action_ready,
+                             lifecycle_probe_pending=self._nav_state_futures is not None)
         elif self.state in (MissionState.NAVIGATING_TO_TARGET, MissionState.NAVIGATING_HOME):
             self._poll_navigation(now)
         elif self.state in (MissionState.CONFIRMING_TARGET_STOP, MissionState.CONFIRMING_HOME_STOP):
@@ -261,13 +329,8 @@ class MissionCoordinator(Node):
             if (self._test_cancel_at is not None and now >= self._test_cancel_at
                     and self.state == MissionState.ARM_PICK
                     and self._arm_stage == 'pick' and self._arm_task_id is not None):
-                cancel = String()
-                cancel.data = self._arm_task_id
-                self._arm_cancel_pub.publish(cancel)
-                self._arm_cancel_sent = True
+                self._send_arm_cancel('grasp failure injection')
                 self._test_cancel_at = None
-                self._record('ARM_CANCEL_SENT_FOR_TEST', stage=self._arm_stage,
-                             task_id=cancel.data)
         if self._nav_retry_at is not None and now >= self._nav_retry_at:
             self._nav_retry_at = None
             self._dispatch_navigation()
@@ -283,15 +346,34 @@ class MissionCoordinator(Node):
     def _navigation_lifecycle_active(self, now):
         if now < self._nav_check_retry_at:
             return False
-        if not all(client.service_is_ready() for client in self._nav_lifecycle_clients.values()):
+        unavailable = [
+            name for name, client in self._nav_lifecycle_clients.items()
+            if not client.service_is_ready()
+        ]
+        if unavailable:
+            if now >= self._nav_wait_diagnostic_at:
+                self._nav_wait_diagnostic_at = now + 5.0
+                self._record('NAV2_LIFECYCLE_SERVICES_WAIT', unavailable=unavailable)
             return False
         if self._nav_state_futures is None:
             self._nav_state_futures = {
                 name: client.call_async(GetState.Request())
                 for name, client in self._nav_lifecycle_clients.items()
             }
+            self._nav_state_probe_started_at = now
             return False
         if not all(future.done() for future in self._nav_state_futures.values()):
+            started = self._nav_state_probe_started_at
+            if started is not None and now - started > self._nav_probe_timeout_sec:
+                pending = [
+                    name for name, future in self._nav_state_futures.items()
+                    if not future.done()
+                ]
+                self._record('NAV2_LIFECYCLE_PROBE_TIMEOUT', pending=pending,
+                             timeout_sec=self._nav_probe_timeout_sec)
+                self._nav_state_futures = None
+                self._nav_state_probe_started_at = None
+                self._nav_check_retry_at = now + 0.25
             return False
         states = {}
         for name, future in self._nav_state_futures.items():
@@ -308,6 +390,7 @@ class MissionCoordinator(Node):
             for state in states.values()
         )
         self._nav_state_futures = None
+        self._nav_state_probe_started_at = None
         self._nav_check_retry_at = now + (0.0 if active else 0.5)
         return active
 
@@ -406,20 +489,20 @@ class MissionCoordinator(Node):
             self._abort('P4e safety must be freshly ACTIVE_HOST before arm execution')
             return
         task_id = uuid.uuid4().hex
+        self._arm_epoch_counter = max(self._arm_epoch_counter + 1, time.time_ns())
+        self._arm_epoch = self._arm_epoch_counter
         self._arm_task_id = task_id
         self._arm_stage = stage
         self._arm_result = None
         self._arm_cancel_sent = False
-        if self.scenario == 'communication_loss':
-            self._record('ARM_REQUEST_DROPPED_FOR_TEST', stage=stage, task_id=task_id)
-        else:
-            msg = String()
-            msg.data = task_id + '|' + stage
-            self._arm_request_pub.publish(msg)
-            self._record('ARM_REQUEST_SENT', stage=stage, task_id=task_id,
-                         result_topic='/p6/arm_task/result')
+        msg = String()
+        msg.data = task_id + '|' + stage + '|' + str(self._arm_epoch)
+        self._arm_request_pub.publish(msg)
+        self._record('ARM_REQUEST_SENT', stage=stage, task_id=task_id,
+                     trajectory_epoch=self._arm_epoch,
+                     result_topic='/p6/arm_task/result')
         if self.scenario == 'grasp_failure' and stage == 'pick':
-            self._test_cancel_at = time.monotonic() + 0.5
+            self._test_cancel_at = time.monotonic() + self._test_cancel_delay_sec
 
     def _poll_arm_task(self, now):
         if self._arm_result is None:
@@ -428,6 +511,7 @@ class MissionCoordinator(Node):
         task_id, stage = self._arm_task_id, self._arm_stage
         self._arm_task_id = None
         self._arm_stage = None
+        self._arm_epoch = None
         self._arm_result = None
         if not success:
             self._abort('%s stage returned failure' % stage)
@@ -445,15 +529,26 @@ class MissionCoordinator(Node):
                          evidence='P3b staged unload plan completed with synthetic joint feedback')
             self._transition(MissionState.SUCCEEDED, 'base unload result confirmed')
 
+    def _send_arm_cancel(self, reason):
+        if not self._arm_task_id or self._arm_epoch is None or self._arm_cancel_sent:
+            return
+        cancel = String()
+        cancel.data = self._arm_task_id + '|' + str(self._arm_epoch)
+        self._arm_cancel_pub.publish(cancel)
+        self._arm_cancel_sent = True
+        self._arm_cancel_pending = True
+        self._arm_cancel_sent_at = time.monotonic()
+        self._cancel_task_id = self._arm_task_id
+        self._cancel_epoch = self._arm_epoch
+        self._arm_cancel_timeout_logged = False
+        self._record('ARM_CANCEL_SENT', task_id=self._arm_task_id,
+                     trajectory_epoch=self._arm_epoch, reason=reason,
+                     acknowledgement_required=True)
+
     def _abort(self, reason):
         if self.state in (MissionState.SUCCEEDED, MissionState.ABORTED):
             return
-        if self._arm_task_id and not self._arm_cancel_sent:
-            cancel = String()
-            cancel.data = self._arm_task_id
-            self._arm_cancel_pub.publish(cancel)
-            self._arm_cancel_sent = True
-            self._record('ARM_CANCEL_SENT', task_id=self._arm_task_id, reason=reason)
+        self._send_arm_cancel(reason)
         if self._nav_goal_handle is not None and self._nav_goal_handle.accepted:
             self._nav_goal_handle.cancel_goal_async()
         self._nav_goal_handle = None
