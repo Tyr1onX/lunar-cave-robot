@@ -9,6 +9,7 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
 
     pck_bringup_path   = get_package_share_directory('bringup')
+    chassis_bridge_share = get_package_share_directory('chassis_serial_bridge')
     pck_livox_path     = get_package_share_directory('livox_ros_driver2')
     pck_nav2_path      = get_package_share_directory('rm_navigation')
     pck_pointlio_path  = get_package_share_directory('point_lio')
@@ -27,11 +28,17 @@ def generate_launch_description():
 
 
     use_sim_time = LaunchConfiguration('use_sim_time')
+    chassis_device = LaunchConfiguration('chassis_device')
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time',
         default_value = 'False',
         description   = 'Use simulation (Gazebo) clock if true'
+    )
+
+    declare_chassis_device_cmd = DeclareLaunchArgument(
+        'chassis_device',
+        description='Explicit STM32 USART1 serial device path; use a PTY for offline tests.'
     )
 
     ############################## Drivers ##############################
@@ -68,15 +75,10 @@ def generate_launch_description():
             'nav_rviz': 'True'}.items()
     )
 
-    cmd_fake_vel_transform = Node(
-        package    = 'fake_vel_transform',
-        executable = 'fake_vel_transform_node',
-        output     = 'screen',
-        parameters = [{
-            'use_sim_time': use_sim_time,
-            'spin_speed': 0.0 # rad/s
-        }],
-        respawn = True
+    cmd_chassis_bridge = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            chassis_bridge_share, 'launch', 'serial.launch.py')),
+        launch_arguments={'device_name': chassis_device}.items()
     )
 
     cmd_terrain_analysis = Node(
@@ -169,6 +171,7 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     ld.add_action(declare_use_sim_time_cmd)
+    ld.add_action(declare_chassis_device_cmd)
 
     # ld.add_action(cmd_livox_ros_driver2)
     
@@ -186,9 +189,9 @@ def generate_launch_description():
     ld.add_action(cmd_point_lio)
 
     ld.add_action(cmd_navigation2)
+    ld.add_action(cmd_chassis_bridge)
     # ld.add_action(cmd_terrain_analysis)
     ld.add_action(cmd_terrain)
-    ld.add_action(cmd_fake_vel_transform)
     ld.add_action(cmd_map_server)
 
     # ld.add_action(cmd_pointcloud_to_laserscan)
