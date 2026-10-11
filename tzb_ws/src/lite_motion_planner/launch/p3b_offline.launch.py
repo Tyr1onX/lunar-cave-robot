@@ -140,7 +140,7 @@ def _make_nodes(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('offline_domain_id', default_value='187'),
+        DeclareLaunchArgument('offline_domain_id', default_value='97'),
         DeclareLaunchArgument('autostart', default_value='false'),
         DeclareLaunchArgument('p6_staged_tasks', default_value='false'),
         DeclareLaunchArgument('publish_synthetic_target', default_value='false'),

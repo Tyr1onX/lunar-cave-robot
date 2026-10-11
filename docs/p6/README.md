@@ -12,7 +12,7 @@
 
 脚本分别构建 `Nav2_rea_ws` 与 `tzb_ws` 到各自的 `install/p6`，再由两个独立子进程分别 source 对应工作空间。它设置 `ROS_LOCALHOST_ONLY=1` 与专用 `ROS_DOMAIN_ID`，启动 P3b 时固定 `use_serial_driver=false`，没有串口、雷达、相机或电机驱动节点。脚本在其他平台不会尝试接触设备，但 ROS 2 / Nav2 验证需要 Ubuntu Humble。
 
-任务状态和 JSONL 事件记录在 `/tmp/p6_autonomous_mission_events.jsonl`。Nav2 与机械臂启动日志分别写入 `/tmp/p6-autonomous-mission/nav2-mission.log` 和 `arm.log`。正常流程是：
+任务状态和 JSONL 事件记录在 `/tmp/p6-autonomous-mission/mission-events.jsonl`。Nav2 与机械臂启动日志分别写入 `/tmp/p6-autonomous-mission/nav2-mission.log` 和 `arm.log`。正常流程是：
 
 ```text
 WAITING_FOR_STACK → NAVIGATING_TO_TARGET → CONFIRMING_TARGET_STOP
@@ -33,25 +33,23 @@ WAITING_FOR_STACK → NAVIGATING_TO_TARGET → CONFIRMING_TARGET_STOP
 
 P6 launch 支持 `scenario:=nav_failure|target_loss|grasp_failure|communication_loss|duplicate_trigger|normal`：
 
-- `nav_failure` 将目标放到地图之外，期望 Nav2 返回失败、重试一次后任务中止。
+- `nav_failure` 将目标放入地图内的占用区，期望 Nav2 返回失败、重试一次后任务中止。
 - `target_loss` 丢弃视觉位姿，期望检测超时中止且不触发机械臂。
 - `grasp_failure` 发出匹配 task id 的取消请求，期望机械臂报告失败、机器人不返航并且任务不成功。
 - `communication_loss` 丢弃 arm task 请求，期望等待结果超时并中止。
 - `duplicate_trigger` 走正常任务路径，由验证监视器重复发布任务触发并确认只接受一次。
 - `normal` 执行完整目标采样、返航和卸载流程。
 
-当前交付环境不是 Ubuntu / ROS 2，因此上述六个 ROS 场景均为“已实现、未执行”；不得把预期终态当作实测结果。
+2026-10-11 已在 ThinkBook Ubuntu 22.04 / ROS 2 Humble 上执行完整构建、正常整机任务和六个实际 ROS 场景。最终结果、日志位置、topic/TF/action 证据和未解决项见 [ROS 2 实际运行验收记录](ros2-runtime-acceptance.md)。
 
-| 场景 | 预期终态 | 当前实测记录 |
+| 场景 | 预期终态 | 实测结果 |
 | --- | --- | --- |
-| `normal` | `SUCCEEDED` | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-| `nav_failure` | `ABORTED`，导航最多重试一次 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-| `target_loss` | `ABORTED`，不启动机械臂 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-| `grasp_failure` | `ABORTED`，不返航 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-| `communication_loss` | `ABORTED`，机械臂结果超时 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-| `duplicate_trigger` | `SUCCEEDED`，重复触发被忽略并记录 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
-
-已执行的验证是 ROS 无关的状态机与静态隔离测试，共 8 项通过；Python 语法编译、shell 语法检查和 Nav2 YAML 解析也通过。它们不能替代 Ubuntu 上的 colcon 构建或 ROS action / topic 集成运行。
+| `normal` | `SUCCEEDED` | 通过：Nav2 往返、目标确认、P3b 抓取与卸载均有结果确认 |
+| `nav_failure` | `ABORTED`，导航最多重试一次 | 通过：Nav2 两次返回失败，重试耗尽后中止 |
+| `target_loss` | `ABORTED`，不启动机械臂 | 通过：到站停车后目标检测超时中止 |
+| `grasp_failure` | `ABORTED`，不返航 | 通过：取消后的机械臂失败结果导致任务中止 |
+| `communication_loss` | `ABORTED`，机械臂结果超时 | 通过：请求丢弃后超时中止 |
+| `duplicate_trigger` | `SUCCEEDED`，重复触发被忽略并记录 | 通过：接受 1 次、忽略 3 次，随后正常完成闭环 |
 
 重复触发可向 `/p6/start` 发布多条 `std_msgs/Bool(data=true)`；首次之外均记录 `TRIGGER_IGNORED`。单元测试运行：
 
@@ -77,4 +75,6 @@ P4f 的在途轨迹 epoch、下游旧消息清空/取消确认仍未解决。P6 
 
 ## 当前验证记录
 
-本实现环境是 macOS，不包含 ROS 2 Humble、`colcon` 或 Nav2。因此没有声称完整 ROS 节点、规划器、机械臂 C++ 包或 ROS 故障注入已经在 ThinkBook 上跑通。P6 单元逻辑与静态隔离检查可在当前环境运行；完整构建及 ROS runtime 验收须由 ThinkBook Ubuntu 22.04 按上述命令记录结果后确认。
+Nav2 工作空间 `p6_autonomous_mission` 和机械臂工作空间 6 个依赖包已分别构建通过；P6 自动化单元测试 8/8 通过。六场景运行使用 ROS_DOMAIN_ID=97、`ROS_LOCALHOST_ONLY=1`，P6 与 P3b launch 默认域号一致。运行命令、完整任务耗时、各场景原因和关键日志见 [实际验收记录](ros2-runtime-acceptance.md)。
+
+本次验收仅证明离线 ROS 2 软件闭环在仿真数据上通过。它不是连接真实底盘、相机、雷达或机械臂的硬件验收，也不解除本文件所列 P4e/P4f 安全限制。

@@ -5,6 +5,7 @@ import math
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from rclpy.duration import Duration
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.time import Time
 from tf2_geometry_msgs import do_transform_pose_stamped
@@ -78,7 +79,7 @@ def main():
     node = SyntheticVision()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

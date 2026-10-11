@@ -9,9 +9,12 @@ import uuid
 import rclpy
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
+from lifecycle_msgs.msg import State as LifecycleState
+from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
@@ -85,6 +88,17 @@ class MissionCoordinator(Node):
         self._arm_cancel_pub = self.create_publisher(
             String, str(self.get_parameter('arm_cancel_topic').value), 10)
         self._nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+        self._nav_lifecycle_names = (
+            'controller_server', 'planner_server', 'behavior_server', 'bt_navigator',
+            'smoother_server', 'waypoint_follower', 'velocity_smoother',
+        )
+        self._nav_lifecycle_clients = {
+            name: self.create_client(GetState, '/' + name + '/get_state')
+            for name in self._nav_lifecycle_names
+        }
+        self._nav_state_futures = None
+        self._nav_check_retry_at = 0.0
+        self._nav_lifecycle_states = None
         self.create_subscription(
             Odometry, str(self.get_parameter('odom_topic').value), self._on_odom, 10)
         self.create_subscription(
@@ -211,12 +225,15 @@ class MissionCoordinator(Node):
                 return
 
         if self.state == MissionState.WAITING_FOR_STACK:
-            if self._odom is not None and now - self._odom_rx < 0.5 and self._nav_client.server_is_ready():
+            if (self._odom is not None and now - self._odom_rx < 0.5
+                    and self._nav_client.server_is_ready()
+                    and self._navigation_lifecycle_active(now)):
                 self._record('NAV2_READY', action='/navigate_to_pose', odom_topic='/odom')
                 target_x = float(self.get_parameter('target_x').value)
                 target_y = float(self.get_parameter('target_y').value)
                 if self.scenario == 'nav_failure':
-                    target_x = 14.0
+                    # Place the goal inside a mapped occupied block so real Nav2 planning fails.
+                    target_x, target_y = 7.75, 2.9
                 self._nav_destination = ('target', target_x, target_y)
                 self._transition(MissionState.NAVIGATING_TO_TARGET, 'start target navigation')
                 self._begin_navigation_attempt()
@@ -262,6 +279,37 @@ class MissionCoordinator(Node):
         self._deadline = self._state_started + timeout if timeout else None
         self._record('STATE', state=next_state.value, reason=reason)
         self._publish_state()
+
+    def _navigation_lifecycle_active(self, now):
+        if now < self._nav_check_retry_at:
+            return False
+        if not all(client.service_is_ready() for client in self._nav_lifecycle_clients.values()):
+            return False
+        if self._nav_state_futures is None:
+            self._nav_state_futures = {
+                name: client.call_async(GetState.Request())
+                for name, client in self._nav_lifecycle_clients.items()
+            }
+            return False
+        if not all(future.done() for future in self._nav_state_futures.values()):
+            return False
+        states = {}
+        for name, future in self._nav_state_futures.items():
+            try:
+                current = future.result().current_state
+                states[name] = {'id': int(current.id), 'label': current.label}
+            except Exception as exc:
+                states[name] = {'id': -1, 'label': str(exc)}
+        if states != self._nav_lifecycle_states:
+            self._record('NAV2_LIFECYCLE_STATUS', nodes=states)
+            self._nav_lifecycle_states = states
+        active = all(
+            state['id'] == LifecycleState.PRIMARY_STATE_ACTIVE
+            for state in states.values()
+        )
+        self._nav_state_futures = None
+        self._nav_check_retry_at = now + (0.0 if active else 0.5)
+        return active
 
     def _begin_navigation_attempt(self):
         self._nav_attempt = 0
@@ -460,13 +508,14 @@ def main(args=None):
     node = MissionCoordinator()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        if node.state not in (MissionState.SUCCEEDED, MissionState.ABORTED):
+        if rclpy.ok() and node.state not in (MissionState.SUCCEEDED, MissionState.ABORTED):
             node._abort('coordinator shutdown')
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

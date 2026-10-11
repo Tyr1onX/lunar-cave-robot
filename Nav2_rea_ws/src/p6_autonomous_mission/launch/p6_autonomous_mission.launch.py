@@ -16,8 +16,9 @@ def generate_launch_description():
     params = os.path.join(package_share, 'config', 'nav2_offline.yaml')
     nav2_launch = os.path.join(nav2_share, 'launch', 'navigation_launch.py')
     return LaunchDescription([
-        DeclareLaunchArgument('domain_id', default_value='196'),
+        DeclareLaunchArgument('domain_id', default_value='97'),
         DeclareLaunchArgument('scenario', default_value='normal'),
+        DeclareLaunchArgument('event_log_path', default_value='/tmp/p6_autonomous_mission_events.jsonl'),
         SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('domain_id')),
         SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '1'),
         Node(
@@ -47,6 +48,7 @@ def generate_launch_description():
                 'scenario': LaunchConfiguration('scenario'),
                 'auto_start': True,
                 'p4e_status_required': False,
+                'event_log_path': LaunchConfiguration('event_log_path'),
             }],
         ),
     ])
