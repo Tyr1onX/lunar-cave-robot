@@ -1,4 +1,5 @@
 #include "lite_motion_planner/robot_model.hpp"
+#include "lite_motion_planner/pose_transform.hpp"
 
 #include <lite_motion_msgs/srv/add_scene_object.hpp>
 #include <lite_motion_msgs/srv/attach_scene_object.hpp>
@@ -17,7 +18,9 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/int8.hpp>
+#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -138,6 +141,9 @@ class TzbCatchNode : public rclcpp::Node {
 public:
   TzbCatchNode()
   : Node("tzb_catch") {
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_unique<tf2_ros::TransformListener>(
+      *tf_buffer_, this, true);
     const auto urdf_path = this->declare_parameter<std::string>("urdf_path", "");
     const auto srdf_path = this->declare_parameter<std::string>("srdf_path", "");
     const auto mesh_package_dirs = this->declare_parameter<std::vector<std::string>>(
@@ -211,6 +217,18 @@ public:
     pose_estimator_continuous_max_gap_sec_ = std::max(
       1e-3,
       this->declare_parameter<double>("tzb.pose_estimator_continuous_max_gap_sec", 0.75));
+    pose_estimator_target_max_age_sec_ = this->declare_parameter<double>(
+      "tzb.pose_estimator_target_max_age_sec", 0.5);
+    pose_estimator_future_tolerance_sec_ = this->declare_parameter<double>(
+      "tzb.pose_estimator_future_tolerance_sec", 0.05);
+    pose_estimator_tf_lookup_timeout_sec_ = this->declare_parameter<double>(
+      "tzb.pose_estimator_tf_lookup_timeout_sec", 0.15);
+    if (pose_estimator_target_max_age_sec_ <= 0.0 ||
+        pose_estimator_future_tolerance_sec_ < 0.0 ||
+        pose_estimator_tf_lookup_timeout_sec_ < 0.0) {
+      throw std::runtime_error(
+        "pose estimator max age must be positive and future tolerance/TF timeout nonnegative");
+    }
     pose_estimator_reference_frame_ = this->declare_parameter<std::string>(
       "tzb.pose_estimator_reference_frame", "");
     pose_estimator_reference_transform_ = declareMat4Param(
@@ -234,11 +252,6 @@ public:
     frozen_camera_pointcloud_log_throttle_sec_ = std::max(
       0.1,
       this->declare_parameter<double>("tzb.frozen_camera_pointcloud_log_throttle_sec", 2.0));
-    pose_estimator_axis_conversion_ = declareMat3Param(
-      "tzb.pose_estimator_axis_conversion_matrix",
-      {1.0, 0.0, 0.0,
-       0.0, 1.0, 0.0,
-       0.0, 0.0, 1.0});
     gripper_joint_names_ = this->declare_parameter<std::vector<std::string>>(
       "tzb.gripper_joint_names",
       std::vector<std::string>{"Claw_left_joint"});
@@ -665,34 +678,6 @@ private:
     return {values[0], values[1], values[2]};
   }
 
-  Eigen::Matrix3d declareMat3Param(
-    const std::string& name,
-    const std::array<double, 9>& default_value) {
-    auto values = this->declare_parameter<std::vector<double>>(
-      name,
-      std::vector<double>(default_value.begin(), default_value.end()));
-    if (values.size() != 9) {
-      throw std::runtime_error(name + " must contain exactly 9 values");
-    }
-
-    Eigen::Matrix3d out;
-    out << values[0], values[1], values[2],
-           values[3], values[4], values[5],
-           values[6], values[7], values[8];
-    const double orthogonality_error =
-      (out.transpose() * out - Eigen::Matrix3d::Identity()).norm();
-    const double det = out.determinant();
-    if (orthogonality_error > 1e-3 || std::abs(det - 1.0) > 1e-3) {
-      RCLCPP_WARN(
-        this->get_logger(),
-        "%s is not a proper rotation matrix: det=%.6f orthogonality_error=%.6f",
-        name.c_str(),
-        det,
-        orthogonality_error);
-    }
-    return out;
-  }
-
   Eigen::Matrix4d declareMat4Param(
     const std::string& name,
     const std::array<double, 16>& default_value) {
@@ -1016,7 +1001,11 @@ private:
       }
     }
 
-    if (!isValidPoseEstimatorTarget(msg)) {
+    std::string invalid_reason;
+    if (!isValidPoseEstimatorTarget(msg, &invalid_reason)) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "Rejecting pose estimator target: %s", invalid_reason.c_str());
       std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
       resetPoseEstimatorContinuityLocked();
       return;
@@ -1102,14 +1091,24 @@ private:
     }
   }
 
-  bool isValidPoseEstimatorTarget(const geometry_msgs::msg::PoseStamped& msg) const {
+  bool isValidPoseEstimatorTarget(
+    const geometry_msgs::msg::PoseStamped& msg,
+    std::string* reason = nullptr) const {
     const auto& p = msg.pose.position;
     const auto& q = msg.pose.orientation;
     const double q_norm_sq = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
-    return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
-           std::isfinite(q.x) && std::isfinite(q.y) &&
-           std::isfinite(q.z) && std::isfinite(q.w) &&
-           q_norm_sq > 1e-12;
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) ||
+        !std::isfinite(q.x) || !std::isfinite(q.y) ||
+        !std::isfinite(q.z) || !std::isfinite(q.w) ||
+        q_norm_sq < 0.9801 || q_norm_sq > 1.0201) {
+      if (reason != nullptr) {
+        *reason = "pose contains non-finite coordinates or a non-unit quaternion";
+      }
+      return false;
+    }
+    return validatePoseEstimatorTimestamp(
+      msg, this->now(), pose_estimator_target_max_age_sec_,
+      pose_estimator_future_tolerance_sec_, reason);
   }
 
   void resetPoseEstimatorContinuityLocked() {
@@ -1124,43 +1123,19 @@ private:
     pose_estimator_stream_active_ = false;
   }
 
-  geometry_msgs::msg::PoseStamped applyPoseEstimatorAxisConversion(
-    const geometry_msgs::msg::PoseStamped& in) const {
-    geometry_msgs::msg::PoseStamped out = in;
-    const Eigen::Matrix3d converted_rotation =
-      quaternionEigenFromMsg(in.pose.orientation).toRotationMatrix() *
-      pose_estimator_axis_conversion_;
-    Eigen::Quaterniond q(converted_rotation);
-    q.normalize();
-    out.pose.orientation.x = q.x();
-    out.pose.orientation.y = q.y();
-    out.pose.orientation.z = q.z();
-    out.pose.orientation.w = q.w();
-    return out;
-  }
-
-  geometry_msgs::msg::PoseStamped applyPoseEstimatorReferenceTransform(
-    const geometry_msgs::msg::PoseStamped& in) const {
-    if (pose_estimator_reference_frame_.empty()) {
-      return in;
+  bool transformPoseEstimatorTargetToPlanningFrame(
+    const geometry_msgs::msg::PoseStamped& sensed_pose,
+    geometry_msgs::msg::PoseStamped& out,
+    std::string* reason = nullptr) {
+    if (!validatePoseEstimatorTimestamp(
+          sensed_pose, this->now(), pose_estimator_target_max_age_sec_,
+          pose_estimator_future_tolerance_sec_, reason)) {
+      return false;
     }
-    if (apply_reference_transform_to_frozen_frame_) {
-      geometry_msgs::msg::PoseStamped out = in;
-      out.header.frame_id = frozen_camera_frame_id_;
-      return out;
-    }
-
-    const pinocchio::SE3 reference_from_estimator = poseEstimatorReferenceTransformSE3();
-    geometry_msgs::msg::PoseStamped out;
-    out.header = in.header;
-    out.header.frame_id = pose_estimator_reference_frame_;
-    out.pose = poseMsgFromSE3(reference_from_estimator * poseMsgToSE3(in.pose));
-    return out;
-  }
-
-  geometry_msgs::msg::PoseStamped preparePoseEstimatorTarget(
-    const geometry_msgs::msg::PoseStamped& in) const {
-    return applyPoseEstimatorAxisConversion(applyPoseEstimatorReferenceTransform(in));
+    return transformPoseAtTimestamp(
+      *tf_buffer_, sensed_pose, planning_frame_,
+      this->get_clock()->get_clock_type(),
+      pose_estimator_tf_lookup_timeout_sec_, out, reason);
   }
 
   bool waitForPoseEstimatorTarget(geometry_msgs::msg::PoseStamped& out) {
@@ -1206,18 +1181,12 @@ private:
       sensed_pose = latest_pose_estimator_target_;
     }
 
-    geometry_msgs::msg::PoseStamped prepared_pose;
-    try {
-      prepared_pose = preparePoseEstimatorTarget(sensed_pose);
-      out = transformPoseToPlanningFrame(prepared_pose);
-    } catch (const std::exception& e) {
-      RCLCPP_ERROR(
+    std::string reason;
+    if (!transformPoseEstimatorTargetToPlanningFrame(sensed_pose, out, &reason)) {
+      RCLCPP_WARN(
         this->get_logger(),
-        "Failed to transform locked pose estimator target from source_frame [%s] prepared_frame [%s] to [%s] for visualization: %s",
-        sensed_pose.header.frame_id.c_str(),
-        prepared_pose.header.frame_id.c_str(),
-        planning_frame_.c_str(),
-        e.what());
+        "Cannot visualize locked pose estimator target from [%s] in [%s]: %s",
+        sensed_pose.header.frame_id.c_str(), planning_frame_.c_str(), reason.c_str());
       return false;
     }
     return true;
@@ -1245,28 +1214,27 @@ private:
       if (!waitForPoseEstimatorTarget(sensed_pose)) {
         return false;
       }
-      geometry_msgs::msg::PoseStamped prepared_pose;
-      try {
-        prepared_pose = preparePoseEstimatorTarget(sensed_pose);
-        out = transformPoseToPlanningFrame(prepared_pose);
-      } catch (const std::exception& e) {
+      std::string reason;
+      if (!transformPoseEstimatorTargetToPlanningFrame(sensed_pose, out, &reason)) {
         RCLCPP_ERROR(
           this->get_logger(),
-          "Failed to transform pose estimator target from source_frame [%s] prepared_frame [%s] to [%s]: %s",
+          "Rejecting pose estimator target from [%s] at stamp %d.%09u for planning frame [%s]: %s",
           sensed_pose.header.frame_id.c_str(),
-          prepared_pose.header.frame_id.c_str(),
+          sensed_pose.header.stamp.sec,
+          sensed_pose.header.stamp.nanosec,
           planning_frame_.c_str(),
-          e.what());
+          reason.c_str());
         return false;
       }
       RCLCPP_INFO(
         this->get_logger(),
-        "Pose estimator target transform: source_frame=[%s] source_xyz=(%.4f, %.4f, %.4f) -> prepared_frame=[%s] -> %s_xyz=(%.4f, %.4f, %.4f).",
+        "Pose estimator target transformed at observation stamp %d.%09u: [%s] xyz=(%.4f, %.4f, %.4f) -> [%s] xyz=(%.4f, %.4f, %.4f).",
+        sensed_pose.header.stamp.sec,
+        sensed_pose.header.stamp.nanosec,
         sensed_pose.header.frame_id.c_str(),
         sensed_pose.pose.position.x,
         sensed_pose.pose.position.y,
         sensed_pose.pose.position.z,
-        prepared_pose.header.frame_id.c_str(),
         planning_frame_.c_str(),
         out.pose.position.x,
         out.pose.position.y,
@@ -3139,6 +3107,8 @@ private:
   }
 
   std::unique_ptr<RobotModel> robot_model_;
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Client<lite_motion_msgs::srv::PlanArmMotion>::SharedPtr plan_client_;
   rclcpp::Client<lite_motion_msgs::srv::AddSceneObject>::SharedPtr add_object_client_;
   rclcpp::Client<lite_motion_msgs::srv::AttachSceneObject>::SharedPtr attach_object_client_;
@@ -3195,6 +3165,9 @@ private:
   double pose_estimator_wait_timeout_sec_{3.0};
   double pose_estimator_continuous_required_sec_{2.0};
   double pose_estimator_continuous_max_gap_sec_{0.75};
+  double pose_estimator_target_max_age_sec_{0.5};
+  double pose_estimator_future_tolerance_sec_{0.05};
+  double pose_estimator_tf_lookup_timeout_sec_{0.15};
   std::string pose_estimator_reference_frame_;
   Eigen::Matrix4d pose_estimator_reference_transform_{Eigen::Matrix4d::Identity()};
   bool freeze_camera_pointcloud_enabled_{true};
@@ -3207,7 +3180,6 @@ private:
   bool pointcloud_transform_error_logged_{false};
   bool shadow_camera_pose_error_logged_{false};
   std::chrono::steady_clock::time_point last_frozen_pointcloud_log_time_{};
-  Eigen::Matrix3d pose_estimator_axis_conversion_{Eigen::Matrix3d::Identity()};
   std::vector<std::string> gripper_joint_names_;
   std::vector<double> gripper_home_positions_;
   std::vector<double> gripper_open_positions_;
