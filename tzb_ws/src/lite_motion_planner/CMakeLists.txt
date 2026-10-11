@@ -194,4 +194,6 @@ if(BUILD_TESTING)
   )
 endif()
 
+install(PROGRAMS scripts/p3b_joint_state_relay.py scripts/p3b_synthetic_vision.py scripts/p3b_urdf_tf_test.py DESTINATION lib/lite_motion_planner)
+
 ament_package()
