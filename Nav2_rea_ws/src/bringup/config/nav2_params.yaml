@@ -2,7 +2,7 @@
 #   ros__parameters:
 #     use_sim_time: True
 #     global_frame: map
-#     robot_base_frame: base_frame_fake
+#     robot_base_frame: base_frame
 #     odom_topic: /odometry
 #     bt_loop_duration: 10
 #     default_server_timeout: 20
@@ -67,22 +67,22 @@ controller_server:
       vx_std: 0.3
       vy_std: 0.3
       wz_std: 0.2
-      vx_max: 5.0
-      vx_min: -1.5
-      vy_max: 5.0
-      vy_min: -1.5
+      vx_max: 0.6
+      vx_min: -0.6
+      vy_max: 0.0
+      vy_min: 0.0
       wz_max: 1.5
-      ax_max: 1.5
-      ax_min: -5.0
+      ax_max: 2.0
+      ax_min: -2.0
       ay_max: 1.5
       ay_min: -5.0
-      az_max: 1.0
+      az_max: 3.0
       iteration_count: 1
       prune_distance: 1.7
       transform_tolerance: 0.1
       temperature: 0.25
       gamma: 0.02
-      motion_model: "Omni"
+      motion_model: "DiffDrive"
       visualize: true
       reset_period: 0.08
       regenerate_noises: false
@@ -305,7 +305,7 @@ local_costmap:
       update_frequency: 20.0
       publish_frequency: 15.0
       global_frame: map
-      robot_base_frame: base_frame_fake
+      robot_base_frame: base_frame
       use_sim_time: True
       rolling_window: true
       width: 5
@@ -378,7 +378,7 @@ global_costmap:
       update_frequency: 20.0
       publish_frequency: 15.0
       global_frame: map
-      robot_base_frame: base_frame_fake
+      robot_base_frame: base_frame
       use_sim_time: True
       robot_radius: 0.2
       resolution: 0.04
@@ -567,7 +567,7 @@ planner_server:
 #     backup:
 #       plugin: "nav2_recoveries/BackUp"
 #     global_frame: odom_init
-#     robot_base_frame: base_frame_fake
+#     robot_base_frame: base_frame
 #     transform_timeout: 0.1
 #     use_sim_time: False
 #     simulate_ahead_time: 1.0
@@ -579,7 +579,7 @@ bt_navigator:
   ros__parameters:
     use_sim_time: false
     global_frame: map
-    robot_base_frame: base_frame_fake
+    robot_base_frame: base_frame
     odom_topic: /odometry
     bt_loop_duration: 10
     default_server_timeout: 100
@@ -653,7 +653,7 @@ behavior_server:
     assisted_teleop:
       plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: map
-    robot_base_frame: base_frame_fake
+    robot_base_frame: base_frame
     transform_timeout: 0.1
     use_sim_time: True
     simulate_ahead_time: 10.0
@@ -677,11 +677,11 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [6.0, 6.0, 6.28]
-    min_velocity: [-6.0, -6.0, -6.28]
+    max_velocity: [0.6, 0.0, 1.5]
+    min_velocity: [-0.6, 0.0, -1.5]
     deadband_velocity: [0.0, 0.0, 0.0]
-    velocity_timeout: 1.0
-    max_accel: [6.0, 6.0, 6.0]
-    max_decel: [-6.0, -6.0, -6.0]
+    velocity_timeout: 0.1
+    max_accel: [2.0, 0.0, 3.0]
+    max_decel: [-2.0, 0.0, -3.0]
     odom_topic: "odometry"
     odom_duration: 0.1
