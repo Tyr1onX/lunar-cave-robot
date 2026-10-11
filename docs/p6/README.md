@@ -40,6 +40,19 @@ P6 launch 支持 `scenario:=nav_failure|target_loss|grasp_failure|communication_
 - `duplicate_trigger` 走正常任务路径，由验证监视器重复发布任务触发并确认只接受一次。
 - `normal` 执行完整目标采样、返航和卸载流程。
 
+当前交付环境不是 Ubuntu / ROS 2，因此上述六个 ROS 场景均为“已实现、未执行”；不得把预期终态当作实测结果。
+
+| 场景 | 预期终态 | 当前实测记录 |
+| --- | --- | --- |
+| `normal` | `SUCCEEDED` | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+| `nav_failure` | `ABORTED`，导航最多重试一次 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+| `target_loss` | `ABORTED`，不启动机械臂 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+| `grasp_failure` | `ABORTED`，不返航 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+| `communication_loss` | `ABORTED`，机械臂结果超时 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+| `duplicate_trigger` | `SUCCEEDED`，重复触发被忽略并记录 | 未执行：当前主机没有 ROS 2 Humble / Nav2 |
+
+已执行的验证是 ROS 无关的状态机与静态隔离测试，共 8 项通过；Python 语法编译、shell 语法检查和 Nav2 YAML 解析也通过。它们不能替代 Ubuntu 上的 colcon 构建或 ROS action / topic 集成运行。
+
 重复触发可向 `/p6/start` 发布多条 `std_msgs/Bool(data=true)`；首次之外均记录 `TRIGGER_IGNORED`。单元测试运行：
 
 ```bash
