@@ -45,8 +45,13 @@ def _make_nodes(context):
     params['tzb.pose_estimator_target_topic'] = '/p2_offline/pose_estimator/object_pose'
     params['tzb.use_yaml_e3_target'] = False
     auto = LaunchConfiguration('autostart').perform(context).lower() == 'true'
+    p6_staged = LaunchConfiguration('p6_staged_tasks').perform(context).lower() == 'true'
     params['tzb.autostart'] = auto
-    params['tzb.listen_navigation_goal_status'] = not auto
+    params['tzb.p6_staged_tasks'] = p6_staged
+    params['tzb.p6_task_request_topic'] = '/p6/arm_task/request'
+    params['tzb.p6_task_cancel_topic'] = '/p6/arm_task/cancel'
+    params['tzb.p6_task_result_topic'] = '/p6/arm_task/result'
+    params['tzb.listen_navigation_goal_status'] = not auto and not p6_staged
 
     safe_topics = (
         'joint_trajectory_topic', 'visualization_joint_states_topic',
@@ -111,7 +116,7 @@ def _make_nodes(context):
             'params_file': params_file,
             'robot_model': 'tzb_description',
             'autostart': LaunchConfiguration('autostart'),
-            'listen_navigation_goal_status': 'false' if auto else 'true',
+            'listen_navigation_goal_status': 'false' if auto or p6_staged else 'true',
             'use_serial_driver': 'false',
             'use_robot_state_publisher': 'true',
             'use_rviz': LaunchConfiguration('use_rviz'),
@@ -137,6 +142,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('offline_domain_id', default_value='187'),
         DeclareLaunchArgument('autostart', default_value='false'),
+        DeclareLaunchArgument('p6_staged_tasks', default_value='false'),
         DeclareLaunchArgument('publish_synthetic_target', default_value='false'),
         DeclareLaunchArgument('use_rviz', default_value='false'),
         SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('offline_domain_id')),

@@ -18,6 +18,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/int8.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/transform_listener.h>
@@ -485,6 +486,13 @@ public:
       "tzb.navigation_goal_status_topic", "/navigation_goal_status");
     task_result_topic_ = this->declare_parameter<std::string>(
       "tzb.result_topic", "/tzb_catch/result");
+    p6_staged_tasks_ = this->declare_parameter<bool>("tzb.p6_staged_tasks", false);
+    p6_task_request_topic_ = this->declare_parameter<std::string>(
+      "tzb.p6_task_request_topic", "/p6/arm_task/request");
+    p6_task_cancel_topic_ = this->declare_parameter<std::string>(
+      "tzb.p6_task_cancel_topic", "/p6/arm_task/cancel");
+    p6_task_result_topic_ = this->declare_parameter<std::string>(
+      "tzb.p6_task_result_topic", "/p6/arm_task/result");
     task_start_gate_enabled_ = !task_autostart_ && listen_navigation_goal_status_ && !sentry_mode_;
 
     plan_client_ = this->create_client<lite_motion_msgs::srv::PlanArmMotion>("plan_arm_motion");
@@ -515,6 +523,72 @@ public:
         rclcpp::SensorDataQoS(),
         [this](sensor_msgs::msg::JointState::SharedPtr msg) {
           onArmState(*msg);
+        });
+    }
+    if (p6_staged_tasks_) {
+      if (sentry_mode_) {
+        throw std::runtime_error("P6 staged tasks cannot be combined with sentry mode");
+      }
+      p6_task_result_pub_ = this->create_publisher<std_msgs::msg::String>(
+        p6_task_result_topic_, rclcpp::QoS(10).reliable());
+      p6_task_request_sub_ = this->create_subscription<std_msgs::msg::String>(
+        p6_task_request_topic_, rclcpp::QoS(10).reliable(),
+        [this](const std_msgs::msg::String::SharedPtr msg) {
+          const auto separator = msg->data.find('|');
+          if (separator == std::string::npos || separator == 0) {
+            RCLCPP_WARN(get_logger(), "Rejecting malformed P6 arm task request.");
+            return;
+          }
+          const std::string task_id = msg->data.substr(0, separator);
+          const std::string phase = msg->data.substr(separator + 1);
+          const int8_t mode = phase == "pick" ? 1 : (phase == "unload" ? 2 : 0);
+          if (mode == 0) {
+            RCLCPP_WARN(get_logger(), "Rejecting unsupported P6 arm phase [%s].", phase.c_str());
+            return;
+          }
+          bool accepted = false;
+          {
+            std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+            if (!task_trigger_pending_ && !p6_task_active_) {
+              task_trigger_pending_ = true;
+              pending_task_mode_ = mode;
+              pending_task_id_ = task_id;
+              accepted = true;
+            }
+          }
+          if (!accepted) {
+            RCLCPP_ERROR(get_logger(), "Rejecting overlapping P6 task [%s]; another task is pending or active.",
+              task_id.c_str());
+            return;
+          }
+          RCLCPP_INFO(get_logger(), "Accepted P6 arm task id=%s phase=%s.", task_id.c_str(), phase.c_str());
+          task_trigger_cv_.notify_all();
+        });
+      p6_task_cancel_sub_ = this->create_subscription<std_msgs::msg::String>(
+        p6_task_cancel_topic_, rclcpp::QoS(10).reliable(),
+        [this](const std_msgs::msg::String::SharedPtr msg) {
+          bool cancelled = false;
+          {
+            std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+            if (p6_task_active_ && active_task_id_ == msg->data) {
+              active_task_id_.clear();
+              task_cancel_requested_.store(true);
+              stop_requested_.store(true);
+              cancelled = true;
+            } else if (task_trigger_pending_ && pending_task_id_ == msg->data) {
+              task_trigger_pending_ = false;
+              pending_task_id_.clear();
+              cancelled = true;
+            }
+          }
+          if (cancelled) {
+            RCLCPP_ERROR(get_logger(),
+              "P6 task [%s] cancelled; stopping further task publication and terminating this catch worker.",
+              msg->data.c_str());
+            pose_estimator_cv_.notify_all();
+            arm_state_cv_.notify_all();
+            task_trigger_cv_.notify_all();
+          }
         });
     }
     if (task_start_gate_enabled_) {
@@ -2415,13 +2489,30 @@ private:
   }
 
   bool runSequenceOnce() {
+    return runSequenceOnce(0);
+  }
+
+  bool runSequenceOnce(int8_t task_mode) {
     replay_segments_.clear();
-    if (e3_collision_object_enabled_) {
-      removeObject(e3_object_id_, false);
+    if (task_mode < 0 || task_mode > 2) {
+      RCLCPP_ERROR(get_logger(), "Unsupported P6 task mode %d.", static_cast<int>(task_mode));
+      return false;
     }
-    e3_attached_to_tcp_ = false;
-    e3_target_world_pose_ = geometry_msgs::msg::PoseStamped();
-    {
+    const bool p6_unload = task_mode == 2;
+    if (task_mode == 1 && p6_payload_attached_) {
+      RCLCPP_ERROR(get_logger(), "Rejecting P6 pick because a prior payload is still attached.");
+      return false;
+    }
+    if (p6_unload && !p6_payload_attached_) {
+      RCLCPP_ERROR(get_logger(), "Rejecting P6 unload because no payload is attached.");
+      return false;
+    }
+    if (!p6_unload) {
+      if (e3_collision_object_enabled_) {
+        removeObject(e3_object_id_, false);
+      }
+      e3_attached_to_tcp_ = false;
+      e3_target_world_pose_ = geometry_msgs::msg::PoseStamped();
       std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
       resetPoseEstimatorCaptureLocked();
       have_frozen_pose_estimator_reference_ = false;
@@ -2440,58 +2531,101 @@ private:
     publishCurrentTheoreticalJointState("physical_initial_arm_state");
     publishReferenceMarkers("physical_initial_arm_state");
 
-    if (!executeArmJointPlan(initial_arm_positions_, "move_arm_to_ini_joint_positions")) {
-      return false;
-    }
-
-    if (!executeArmJointPlan(
-          observe_joint_positions_, "move_arm_to_observe_before_perception")) {
-      return false;
-    }
-    publishGripperCommand("open_gripper_at_observe_joint_positions", -1);
-
-    if (!use_yaml_e3_target_) {
-      if (!freezePoseEstimatorReferenceAtCurrentArmState()) {
+    if (!p6_unload) {
+      if (!executeArmJointPlan(initial_arm_positions_, "move_arm_to_ini_joint_positions")) {
         return false;
       }
 
-      // A pose can be geometrically valid while still being rejected by the
-      // arm planner.  Keep acquiring fresh estimator poses until one can be
-      // planned and physically reached.  The continuity timer is restarted
-      // for every retry, so a candidate is only accepted after the estimator
-      // has been publishing it continuously for the configured duration.
-      bool grasp_target_reached = false;
-      while (!stop_requested_.load()) {
-        if (!enablePoseEstimatorCaptureAtCurrentReferencePose()) {
+      if (!executeArmJointPlan(
+            observe_joint_positions_, "move_arm_to_observe_before_perception")) {
+        return false;
+      }
+      publishGripperCommand("open_gripper_at_observe_joint_positions", -1);
+
+    }
+
+    if (!p6_unload) {
+      if (!use_yaml_e3_target_) {
+        if (!freezePoseEstimatorReferenceAtCurrentArmState()) {
           return false;
         }
 
-        geometry_msgs::msg::PoseStamped locked_pose;
-        if (!waitForPoseEstimatorTarget(locked_pose)) {
-          if (stop_requested_.load()) {
+        // A pose can be geometrically valid while still being rejected by the
+        // arm planner.  Keep acquiring fresh estimator poses until one can be
+        // planned and physically reached.  The continuity timer is restarted
+        // for every retry, so a candidate is only accepted after the estimator
+        // has been publishing it continuously for the configured duration.
+        bool grasp_target_reached = false;
+        while (!stop_requested_.load()) {
+          if (!enablePoseEstimatorCaptureAtCurrentReferencePose()) {
             return false;
           }
+
+          geometry_msgs::msg::PoseStamped locked_pose;
+          if (!waitForPoseEstimatorTarget(locked_pose)) {
+            if (stop_requested_.load()) {
+              return false;
+            }
+            RCLCPP_WARN(
+              this->get_logger(),
+              "Pose estimator did not provide a continuous target within %.2f s; retrying pose acquisition.",
+              pose_estimator_wait_timeout_sec_);
+            continue;
+          }
+
+          if (!resolveE3TargetPose(e3_target_world_pose_)) {
+            RCLCPP_WARN(
+              this->get_logger(),
+              "Could not transform the pose estimator target; retrying pose acquisition.");
+            continue;
+          }
+          e3_target_world_pose_.header.frame_id = planning_frame_;
+          publishReferenceMarkers("resolved_tcp_target");
+          publishE3Marker();
+
+          if (e3_collision_object_enabled_) {
+            // Remove any object left by a previous rejected candidate before
+            // installing the next candidate in the planning scene.
+            removeObject(e3_object_id_, false);
+            if (!addMeshObject(e3_object_id_, e3_mesh_resource_, e3_target_world_pose_)) {
+              return false;
+            }
+            if (!setGripperE3CollisionAllowance(
+                  grasp_collision_allowed_penetration_m_,
+                  "ignore_e3_collision_with_both_gripper_links")) {
+              return false;
+            }
+          }
+
+          if (executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
+            grasp_target_reached = true;
+            break;
+          }
+
           RCLCPP_WARN(
             this->get_logger(),
-            "Pose estimator did not provide a continuous target within %.2f s; retrying pose acquisition.",
-            pose_estimator_wait_timeout_sec_);
-          continue;
+            "Arm rejected the current pose estimator target; returning to pose acquisition and waiting for a new continuous target.");
+          if (e3_collision_object_enabled_) {
+            removeObject(e3_object_id_, false);
+          }
+          {
+            std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+            resetPoseEstimatorCaptureLocked();
+          }
         }
 
+        if (!grasp_target_reached) {
+          return false;
+        }
+      } else {
         if (!resolveE3TargetPose(e3_target_world_pose_)) {
-          RCLCPP_WARN(
-            this->get_logger(),
-            "Could not transform the pose estimator target; retrying pose acquisition.");
-          continue;
+          return false;
         }
         e3_target_world_pose_.header.frame_id = planning_frame_;
         publishReferenceMarkers("resolved_tcp_target");
         publishE3Marker();
 
         if (e3_collision_object_enabled_) {
-          // Remove any object left by a previous rejected candidate before
-          // installing the next candidate in the planning scene.
-          removeObject(e3_object_id_, false);
           if (!addMeshObject(e3_object_id_, e3_mesh_resource_, e3_target_world_pose_)) {
             return false;
           }
@@ -2502,55 +2636,50 @@ private:
           }
         }
 
-        if (executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
-          grasp_target_reached = true;
-          break;
-        }
-
-        RCLCPP_WARN(
-          this->get_logger(),
-          "Arm rejected the current pose estimator target; returning to pose acquisition and waiting for a new continuous target.");
-        if (e3_collision_object_enabled_) {
-          removeObject(e3_object_id_, false);
-        }
-        {
-          std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-          resetPoseEstimatorCaptureLocked();
-        }
-      }
-
-      if (!grasp_target_reached) {
-        return false;
-      }
-    } else {
-      if (!resolveE3TargetPose(e3_target_world_pose_)) {
-        return false;
-      }
-      e3_target_world_pose_.header.frame_id = planning_frame_;
-      publishReferenceMarkers("resolved_tcp_target");
-      publishE3Marker();
-
-      if (e3_collision_object_enabled_) {
-        if (!addMeshObject(e3_object_id_, e3_mesh_resource_, e3_target_world_pose_)) {
-          return false;
-        }
-        if (!setGripperE3CollisionAllowance(
-              grasp_collision_allowed_penetration_m_,
-              "ignore_e3_collision_with_both_gripper_links")) {
+        if (!executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
           return false;
         }
       }
-
-      if (!executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
+      publishGripperCommand("close_gripper_at_target", 1);
+      if (e3_collision_object_enabled_ &&
+          !setObjectAttached(e3_object_id_, true, tcp_frame_)) {
+        RCLCPP_ERROR(this->get_logger(), "Could not attach E3 to [%s] after grasp.", tcp_frame_.c_str());
         return false;
       }
     }
-    publishGripperCommand("close_gripper_at_target", 1);
-    if (e3_collision_object_enabled_ &&
-        !setObjectAttached(e3_object_id_, true, tcp_frame_)) {
-      RCLCPP_ERROR(this->get_logger(), "Could not attach E3 to [%s] after grasp.", tcp_frame_.c_str());
-      return false;
+
+    if (task_mode == 1) {
+      p6_payload_attached_ = true;
+      if (!executeArmJointPlan(
+            observe_joint_positions_, "p6_return_to_observe_while_carrying")) {
+        RCLCPP_ERROR(get_logger(), "P6 pick succeeded but failed to return to observe with payload.");
+        return false;
+      }
+      RCLCPP_INFO(get_logger(), "P6 pick stage completed; payload remains attached and gripper stays closed.");
+      return true;
     }
+
+    if (p6_unload) {
+      if (!executeArmJointPlan(place_arm_positions_, "p6_move_to_base_unload_pose")) {
+        RCLCPP_ERROR(get_logger(), "P6 unload plan failed; payload remains attached.");
+        return false;
+      }
+      if (e3_collision_object_enabled_ &&
+          !setObjectAttached(e3_object_id_, false, planning_frame_)) {
+        RCLCPP_ERROR(get_logger(), "P6 unload could not detach the sample at base.");
+        return false;
+      }
+      publishGripperCommand("p6_open_gripper_at_base", -1);
+      if (!executeArmJointPlan(
+            observe_joint_positions_, "p6_return_to_observe_after_unload")) {
+        RCLCPP_ERROR(get_logger(), "P6 unload opened the gripper but failed to return to observe.");
+        return false;
+      }
+      p6_payload_attached_ = false;
+      RCLCPP_INFO(get_logger(), "P6 base unload stage completed and payload was released.");
+      return true;
+    }
+
     if (!executeArmJointPlan(place_arm_positions_, "move_arm_to_place_joint_positions")) {
       RCLCPP_WARN(
         this->get_logger(),
@@ -2591,15 +2720,16 @@ private:
     return true;
   }
 
-  bool waitForTaskStart() {
-    if (!task_start_gate_enabled_) {
+  bool waitForTaskStart(int8_t& task_mode, std::string& task_id) {
+    task_mode = 0;
+    task_id.clear();
+    if (!task_start_gate_enabled_ && !p6_staged_tasks_) {
       return true;
     }
     RCLCPP_INFO(
       this->get_logger(),
-      "Autostart disabled; waiting for navigation goal status 1 on [%s] or a task trigger on [%s].",
-      navigation_goal_status_topic_.c_str(),
-      task_start_topic_.c_str());
+      "Waiting for a task trigger%s.",
+      p6_staged_tasks_ ? " on the P6 request topic" : " from the navigation gate");
     std::unique_lock<std::mutex> lock(task_trigger_mutex_);
     task_trigger_cv_.wait(lock, [this]() {
       return stop_requested_.load() || task_trigger_pending_;
@@ -2608,6 +2738,18 @@ private:
       return false;
     }
     task_trigger_pending_ = false;
+    if (p6_staged_tasks_) {
+      task_mode = pending_task_mode_;
+      task_id = pending_task_id_;
+      pending_task_mode_ = 0;
+      pending_task_id_.clear();
+      if (task_mode < 1 || task_mode > 2 || task_id.empty()) {
+        RCLCPP_ERROR(get_logger(), "P6 task request lost its phase or id.");
+        return false;
+      }
+      active_task_id_ = task_id;
+      p6_task_active_ = true;
+    }
     return true;
   }
 
@@ -2747,6 +2889,17 @@ private:
       task_result_topic_.c_str());
   }
 
+  void publishP6TaskResult(const std::string& task_id, int8_t task_mode, bool success) {
+    if (!p6_task_result_pub_ || task_id.empty()) {
+      return;
+    }
+    const std::string phase = task_mode == 1 ? "pick" : "unload";
+    std_msgs::msg::String msg;
+    msg.data = task_id + "|" + phase + "|" + (success ? "success" : "failure");
+    p6_task_result_pub_->publish(msg);
+    RCLCPP_INFO(get_logger(), "Published P6 result [%s].", msg.data.c_str());
+  }
+
   void runSequence() {
     if (!waitForService<lite_motion_msgs::srv::PlanArmMotion>(
           plan_client_, "plan_arm_motion") ||
@@ -2769,23 +2922,33 @@ private:
     }
 
     do {
-      if (!waitForTaskStart()) {
+      int8_t task_mode = 0;
+      std::string task_id;
+      if (!waitForTaskStart(task_mode, task_id)) {
         return;
       }
-      const bool success = runSequenceOnce();
+      const bool success = runSequenceOnce(task_mode);
       record_tcp_trajectory_.store(false);
       publishReferenceMarkers("tcp_trajectory_complete");
       publishTaskResult(success);
+      publishP6TaskResult(task_id, task_mode, success);
+      if (p6_staged_tasks_) {
+        std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+        p6_task_active_ = false;
+        active_task_id_.clear();
+      }
       if (!success) {
-        if (task_start_gate_enabled_) {
+        if (task_start_gate_enabled_ || p6_staged_tasks_) {
           continue;
         }
         return;
       }
-      if ((sequence_loop_ || task_start_gate_enabled_) && !stop_requested_.load()) {
+      if ((sequence_loop_ || task_start_gate_enabled_ || p6_staged_tasks_) &&
+          !stop_requested_.load()) {
         sleepAfterAction(loop_pause_sec_);
       }
-    } while ((sequence_loop_ || task_start_gate_enabled_) && !stop_requested_.load());
+    } while ((sequence_loop_ || task_start_gate_enabled_ || p6_staged_tasks_) &&
+             !stop_requested_.load());
   }
 
   void replayRecordedSequence() {
@@ -3126,6 +3289,9 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frozen_camera_pointcloud_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_state_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr task_start_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr p6_task_result_pub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr p6_task_request_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr p6_task_cancel_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr navigation_goal_status_sub_;
   rclcpp::Subscription<arm2nav_msgs::msg::Arm2Nav>::SharedPtr arm2nav_state_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_estimator_sub_;
@@ -3269,11 +3435,20 @@ private:
   std::string task_start_topic_{"/tzb_catch/start"};
   std::string navigation_goal_status_topic_{"/navigation_goal_status"};
   std::string task_result_topic_{"/tzb_catch/result"};
+  bool p6_staged_tasks_{false};
+  std::string p6_task_request_topic_{"/p6/arm_task/request"};
+  std::string p6_task_cancel_topic_{"/p6/arm_task/cancel"};
+  std::string p6_task_result_topic_{"/p6/arm_task/result"};
   std::vector<double> sentry_joint_positions_;
   std::mutex task_trigger_mutex_;
   std::condition_variable task_trigger_cv_;
   bool task_trigger_pending_{false};
   bool navigation_trigger_armed_{true};
+  bool p6_task_active_{false};
+  int8_t pending_task_mode_{0};
+  std::string pending_task_id_;
+  std::string active_task_id_;
+  std::atomic_bool task_cancel_requested_{false};
   arm2nav_msgs::msg::Arm2Nav latest_arm2nav_state_;
   std::mutex sentry_mutex_;
   std::condition_variable sentry_cv_;
@@ -3293,6 +3468,7 @@ private:
   geometry_msgs::msg::PoseStamped e3_target_world_pose_;
   geometry_msgs::msg::Pose e3_relative_pose_in_tcp_;
   bool e3_attached_to_tcp_{false};
+  bool p6_payload_attached_{false};
   std::vector<ReplaySegment> replay_segments_;
 };
 
