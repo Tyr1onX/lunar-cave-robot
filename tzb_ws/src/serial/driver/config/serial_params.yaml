@@ -6,8 +6,9 @@
     parity: "none"
     stop_bits: "1"
 
-    # Navigation/chassis serial fields are still kept in the packet prefix.
-    # Do not remove the serial parameters above when only the arm is being tested.
+    # The 46-byte arm serial format retains a 14-byte navigation prefix for wire compatibility.
+    # This arm bridge is not a Nav2 command owner; use an isolated legacy topic only if needed.
+    tzb.legacy_chassis_command_topic: "/tzb/legacy_chassis_cmd"
 
     # Upper computer <-> lower computer arm serial bridge.
     # Subscribes to tzb_catch arm command and sends 6 joint angles at 100 Hz.
