@@ -72,7 +72,7 @@ private:
   bool have_arm_command_{false};
   bool logged_first_arm_command_{false};
   bool logged_first_enabled_serial_packet_{false};
-  int8_t gripper_command_{1};
+  int8_t gripper_command_{0};
   double gripper_command_log_interval_sec_{1.0};
   double arm_command_publish_hz_{100.0};
   double arm_command_speed_scale_{1.0};
@@ -86,6 +86,9 @@ private:
   
   // ******************** Serial Port ********************
   std::mutex serial_port_mutex_;
+  std::mutex receive_parser_mutex_;
+  ReceiveFrameDecoder receive_frame_decoder_;
+  ReceiveSequenceTracker receive_sequence_tracker_;
   std::atomic_bool serial_receive_enabled_{false};
   std::atomic_bool serial_reopen_in_progress_{false};
   drivers::common::IoContext owned_ctx_;

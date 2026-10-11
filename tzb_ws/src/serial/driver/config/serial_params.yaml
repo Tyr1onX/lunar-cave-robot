@@ -18,8 +18,8 @@
     tzb.suppress_expected_serial_abort_logs: true
     tzb.arm_command_topic: "/tzb_catch/arm_joint_command"
     tzb.arm_state_topic: "/serial/arm_joint_state"
-    # std_msgs/Int8: 1 closes the gripper; -1 opens it. The current state
-    # is retransmitted with every serial packet until a new command arrives.
+    # std_msgs/Int8: 1 closes, -1 opens, and 0 holds the current gripper state.
+    # Start in hold until an explicit command arrives.
     tzb.gripper_command_topic: "/tzb_catch/gripper_command"
     # Print the actual gripper_command sent on the serial wire at this interval.
     # Set to 0.0 to print on every serial packet.

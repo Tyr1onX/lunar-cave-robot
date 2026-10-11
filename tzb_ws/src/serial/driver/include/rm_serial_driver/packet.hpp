@@ -1,8 +1,10 @@
 #ifndef _RM_SERIAL_DRIVER_PACKET_HPP
 #define _RM_SERIAL_DRIVER_PACKET_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace rm::serial
@@ -13,6 +15,7 @@ constexpr uint8_t kReceiveHeader = 0x5A;
 constexpr uint8_t kLegacyEndFrame = 0x4A;
 constexpr uint8_t kArmExtensionHeader = 0xB5;
 constexpr uint8_t kArmExtensionEndFrame = 0x4B;
+constexpr uint8_t kReceiveProtocolVersion = 1;
 constexpr std::size_t kLegacyReceiveFrameSize = 2;
 constexpr std::size_t kStatusReceiveFrameSize = 3;
 
@@ -29,9 +32,66 @@ struct ReceivePacket
   uint8_t arm_state_valid = 0;
   uint32_t arm_sequence = 0;
   ArmJointPacket arm;
-  uint8_t arm_feedback_reserved = 0;
+  uint8_t arm_feedback_gripper = 0;
   uint8_t arm_end_frame = kArmExtensionEndFrame;
 } __attribute__((packed));
+
+struct ReceivedArmFrame
+{
+  ReceivePacket packet;
+  std::size_t size{0};
+  std::size_t arm_offset{0};
+  uint8_t protocol_version{0};
+};
+
+class ReceiveFrameDecoder
+{
+public:
+  std::vector<ReceivedArmFrame> Feed(const std::vector<uint8_t>& data, std::size_t size);
+  void Reset();
+
+private:
+  std::vector<uint8_t> buffer_;
+};
+
+enum class ReceiveSequenceResult
+{
+  kFirst,
+  kInOrder,
+  kGap,
+  kDuplicate,
+  kControllerRestarted,
+};
+
+class ReceiveSequenceTracker
+{
+public:
+  ReceiveSequenceResult Observe(uint32_t sequence, uint32_t& missed);
+  void Reset();
+
+private:
+  bool initialized_{false};
+  uint32_t last_sequence_{0};
+};
+
+enum class ArmJointCommandError
+{
+  kNone,
+  kInvalidConfiguredJoints,
+  kNamePositionSizeMismatch,
+  kMissingJoint,
+  kDuplicateJoint,
+  kNonFinitePosition,
+};
+
+ArmJointCommandError ParseArmJointCommand(
+  const std::vector<std::string>& configured_names,
+  const std::vector<std::string>& names,
+  const std::vector<double>& positions,
+  std::array<float, kArmJointCount>& result);
+
+bool HasFiniteArmPosition(const ReceivePacket& packet);
+bool IsValidGripperCommand(int8_t command);
 
 struct NavPacket
 {
@@ -49,8 +109,8 @@ struct SendPacket
   uint8_t arm_command_enabled = 0;
   uint32_t arm_sequence = 0;
   ArmJointPacket arm;
-  // Two-state gripper command: 1=closed, -1=open.
-  int8_t gripper_command = 1;
+  // Three-state gripper command: 1=closed, -1=open, 0=hold.
+  int8_t gripper_command = 0;
   uint8_t arm_end_frame = kArmExtensionEndFrame;
 } __attribute__((packed));
 
@@ -64,7 +124,8 @@ std::size_t ReceivePacketSize(std::size_t arm_offset);
 bool HasValidArmReceiveExtension(
   const ReceivePacket& packet,
   std::size_t size,
-  std::size_t arm_offset = kLegacyReceiveFrameSize);
+  std::size_t arm_offset = kLegacyReceiveFrameSize,
+  uint8_t protocol_version = kReceiveProtocolVersion);
 }
 
 #endif

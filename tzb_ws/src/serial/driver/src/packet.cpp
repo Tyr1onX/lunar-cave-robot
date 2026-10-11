@@ -1,6 +1,7 @@
 #include <rm_serial_driver/packet.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace rm::serial
@@ -8,18 +9,192 @@ namespace rm::serial
 namespace
 {
 constexpr std::size_t kPacketArmOffset = offsetof(ReceivePacket, arm_header);
-constexpr std::size_t kReceiveBytesBeforeOptionalReserved =
-  offsetof(ReceivePacket, arm_feedback_reserved) - kPacketArmOffset;
+constexpr std::size_t kReceiveBytesBeforeGripper =
+  offsetof(ReceivePacket, arm_feedback_gripper) - kPacketArmOffset;
 constexpr std::size_t kReceiveArmExtensionMinSize =
-  kReceiveBytesBeforeOptionalReserved + sizeof(ReceivePacket::arm_end_frame);
+  kReceiveBytesBeforeGripper + sizeof(ReceivePacket::arm_end_frame);
 constexpr std::size_t kReceiveArmExtensionFullSize =
-  kReceiveBytesBeforeOptionalReserved + sizeof(ReceivePacket::arm_feedback_reserved) +
+  kReceiveBytesBeforeGripper + sizeof(ReceivePacket::arm_feedback_gripper) +
   sizeof(ReceivePacket::arm_end_frame);
 }
 
 ReceivePacket FromVector(const std::vector<uint8_t>& data)
 {
   return FromVectorWithArmOffset(data, kLegacyReceiveFrameSize);
+}
+
+std::vector<ReceivedArmFrame> ReceiveFrameDecoder::Feed(
+  const std::vector<uint8_t>& data, std::size_t size)
+{
+  const std::size_t bytes_to_append = std::min(size, data.size());
+  buffer_.insert(buffer_.end(), data.begin(), data.begin() + bytes_to_append);
+
+  std::vector<ReceivedArmFrame> frames;
+  while (!buffer_.empty())
+  {
+    if (buffer_.front() != kReceiveHeader)
+    {
+      buffer_.erase(buffer_.begin());
+      continue;
+    }
+    if (buffer_.size() < kLegacyReceiveFrameSize)
+    {
+      break;
+    }
+
+    std::size_t arm_offset = 0;
+    if (buffer_[1] == kLegacyEndFrame)
+    {
+      arm_offset = kLegacyReceiveFrameSize;
+    }
+    else if (buffer_.size() < kStatusReceiveFrameSize)
+    {
+      break;
+    }
+    else if (buffer_[2] == kLegacyEndFrame)
+    {
+      arm_offset = kStatusReceiveFrameSize;
+    }
+    else
+    {
+      buffer_.erase(buffer_.begin());
+      continue;
+    }
+
+    // The paired STM32 firmware sends the complete extension, including the
+    // gripper echo byte, so the full-frame length is unambiguous.
+    const std::size_t frame_size = arm_offset + kReceiveArmExtensionFullSize;
+    if (buffer_.size() < frame_size)
+    {
+      break;
+    }
+    if (buffer_[frame_size - 1] != kArmExtensionEndFrame)
+    {
+      buffer_.erase(buffer_.begin());
+      continue;
+    }
+
+    std::vector<uint8_t> frame_bytes(buffer_.begin(), buffer_.begin() + frame_size);
+    const uint8_t protocol_version =
+      arm_offset == kStatusReceiveFrameSize ? buffer_[1] : 0U;
+    frames.push_back({
+      FromVectorWithArmOffset(frame_bytes, arm_offset), frame_size, arm_offset, protocol_version});
+    buffer_.erase(buffer_.begin(), buffer_.begin() + frame_size);
+  }
+  return frames;
+}
+
+void ReceiveFrameDecoder::Reset()
+{
+  buffer_.clear();
+}
+
+ReceiveSequenceResult ReceiveSequenceTracker::Observe(uint32_t sequence, uint32_t& missed)
+{
+  missed = 0;
+  if (!initialized_)
+  {
+    initialized_ = true;
+    last_sequence_ = sequence;
+    return ReceiveSequenceResult::kFirst;
+  }
+
+  const uint32_t delta = sequence - last_sequence_;
+  if (delta == 0U)
+  {
+    return ReceiveSequenceResult::kDuplicate;
+  }
+  last_sequence_ = sequence;
+  if (delta == 1U)
+  {
+    return ReceiveSequenceResult::kInOrder;
+  }
+  if (delta < 0x80000000U)
+  {
+    missed = delta - 1U;
+    return ReceiveSequenceResult::kGap;
+  }
+  return ReceiveSequenceResult::kControllerRestarted;
+}
+
+void ReceiveSequenceTracker::Reset()
+{
+  initialized_ = false;
+  last_sequence_ = 0;
+}
+
+ArmJointCommandError ParseArmJointCommand(
+  const std::vector<std::string>& configured_names,
+  const std::vector<std::string>& names,
+  const std::vector<double>& positions,
+  std::array<float, kArmJointCount>& result)
+{
+  if (configured_names.size() != kArmJointCount)
+  {
+    return ArmJointCommandError::kInvalidConfiguredJoints;
+  }
+  for (std::size_t i = 0; i < configured_names.size(); ++i)
+  {
+    if (configured_names[i].empty() ||
+        std::find(configured_names.begin(), configured_names.begin() + i, configured_names[i]) !=
+        configured_names.begin() + i)
+    {
+      return ArmJointCommandError::kInvalidConfiguredJoints;
+    }
+  }
+  if (names.size() != positions.size())
+  {
+    return ArmJointCommandError::kNamePositionSizeMismatch;
+  }
+
+  std::array<float, kArmJointCount> parsed{};
+  for (std::size_t joint = 0; joint < kArmJointCount; ++joint)
+  {
+    std::size_t found = names.size();
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+      if (names[i] == configured_names[joint])
+      {
+        if (found != names.size())
+        {
+          return ArmJointCommandError::kDuplicateJoint;
+        }
+        found = i;
+      }
+    }
+    if (found == names.size())
+    {
+      return ArmJointCommandError::kMissingJoint;
+    }
+    if (!std::isfinite(positions[found]))
+    {
+      return ArmJointCommandError::kNonFinitePosition;
+    }
+    parsed[joint] = static_cast<float>(positions[found]);
+    if (!std::isfinite(parsed[joint]))
+    {
+      return ArmJointCommandError::kNonFinitePosition;
+    }
+  }
+  result = parsed;
+  return ArmJointCommandError::kNone;
+}
+
+bool HasFiniteArmPosition(const ReceivePacket& packet)
+{
+  for (float position : packet.arm.position)
+  {
+    if (!std::isfinite(position))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsValidGripperCommand(int8_t command)
+{
+  return command == 1 || command == 0 || command == -1;
 }
 
 ReceivePacket FromVectorWithArmOffset(const std::vector<uint8_t>& data, std::size_t arm_offset)
@@ -44,7 +219,7 @@ ReceivePacket FromVectorWithArmOffset(const std::vector<uint8_t>& data, std::siz
   {
     const std::size_t bytes_to_copy = std::min(
       data.size() - arm_offset,
-      kReceiveBytesBeforeOptionalReserved);
+      kReceiveBytesBeforeGripper);
     std::memcpy(
       reinterpret_cast<uint8_t *>(&packet) + kPacketArmOffset,
       data.data() + arm_offset,
@@ -53,16 +228,16 @@ ReceivePacket FromVectorWithArmOffset(const std::vector<uint8_t>& data, std::siz
     const std::size_t arm_payload_size = data.size() - arm_offset;
     if (arm_payload_size >= kReceiveArmExtensionFullSize)
     {
-      packet.arm_feedback_reserved =
-        data[arm_offset + kReceiveBytesBeforeOptionalReserved];
+      packet.arm_feedback_gripper =
+        data[arm_offset + kReceiveBytesBeforeGripper];
       packet.arm_end_frame =
-        data[arm_offset + kReceiveBytesBeforeOptionalReserved + 1];
+        data[arm_offset + kReceiveBytesBeforeGripper + 1];
     }
     else if (arm_payload_size >= kReceiveArmExtensionMinSize)
     {
-      packet.arm_feedback_reserved = 0;
+      packet.arm_feedback_gripper = 0;
       packet.arm_end_frame =
-        data[arm_offset + kReceiveBytesBeforeOptionalReserved];
+        data[arm_offset + kReceiveBytesBeforeGripper];
     }
   }
   return packet;
@@ -110,9 +285,11 @@ std::size_t ReceivePacketSize(std::size_t arm_offset)
 bool HasValidArmReceiveExtension(
   const ReceivePacket& packet,
   std::size_t size,
-  std::size_t arm_offset)
+  std::size_t arm_offset,
+  uint8_t protocol_version)
 {
-  return size >= ReceivePacketSize(arm_offset) &&
+  return (arm_offset != kStatusReceiveFrameSize || protocol_version == kReceiveProtocolVersion) &&
+         size >= ReceivePacketSize(arm_offset) &&
          packet.header == kReceiveHeader &&
          packet.end_frame == kLegacyEndFrame &&
          packet.arm_header == kArmExtensionHeader &&

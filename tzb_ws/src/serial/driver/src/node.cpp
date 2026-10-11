@@ -143,6 +143,11 @@ DriverNode::DriverNode(const rclcpp::NodeOptions& options)
 
       if (serial_driver_.port()->is_open())
       {
+        {
+          std::scoped_lock parser_lock{receive_parser_mutex_};
+          receive_frame_decoder_.Reset();
+          receive_sequence_tracker_.Reset();
+        }
         serial_receive_enabled_.store(true);
         startSerialReceive();
         break;
@@ -208,26 +213,22 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
 
   try
   {
+    std::array<float, kArmJointCount> parsed_positions{};
+    const auto validation = ParseArmJointCommand(
+      arm_joint_names_, msg->name, msg->position, parsed_positions);
+    if (validation != ArmJointCommandError::kNone)
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Rejecting incomplete or invalid arm JointState command (validation=%d)",
+        static_cast<int>(validation));
+      return;
+    }
+
     std::scoped_lock lock{arm_mutex_};
     for (std::size_t i = 0; i < kArmJointCount; ++i)
     {
-      const auto it = std::find(msg->name.begin(), msg->name.end(), arm_joint_names_[i]);
-      if (it == msg->name.end())
-      {
-        RCLCPP_WARN_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          2000,
-          "Arm command missing joint [%s]",
-          arm_joint_names_[i].c_str());
-        continue;
-      }
-
-      const auto idx = static_cast<std::size_t>(std::distance(msg->name.begin(), it));
-      if (idx < msg->position.size() && std::isfinite(msg->position[idx]))
-      {
-        arm_target_position_[i] = static_cast<float>(msg->position[idx]);
-      }
+      arm_target_position_[i] = parsed_positions[i];
     }
     have_arm_command_ = true;
     if (!logged_first_arm_command_)
@@ -248,17 +249,18 @@ void DriverNode::armCommandCallback(sensor_msgs::msg::JointState::ConstSharedPtr
 void DriverNode::gripperCommandCallback(std_msgs::msg::Int8::ConstSharedPtr msg)
 {
   std::scoped_lock lock{arm_mutex_};
-  if (msg->data != 1 && msg->data != -1)
+  if (!IsValidGripperCommand(msg->data))
   {
     RCLCPP_WARN(get_logger(), "Ignoring invalid gripper command: %d", static_cast<int>(msg->data));
     return;
   }
   gripper_command_ = msg->data;
+  const char* state = gripper_command_ > 0 ? "closed" :
+    (gripper_command_ < 0 ? "open" : "hold");
   RCLCPP_INFO(
     get_logger(),
     "Gripper serial command updated: %d (%s)",
-    static_cast<int>(gripper_command_),
-    gripper_command_ == 1 ? "closed" : "open");
+    static_cast<int>(gripper_command_), state);
 }
 
 void DriverNode::timerCallback()
@@ -292,11 +294,13 @@ void DriverNode::timerCallback()
       if (should_log_gripper_command)
       {
         last_gripper_command_log_time_ = now;
+        const char* gripper_state = send_packet.gripper_command > 0 ? "closed" :
+          (send_packet.gripper_command < 0 ? "open" : "hold");
         RCLCPP_INFO(
           get_logger(),
           "Sending gripper_command to lower controller: %d (%s), arm_sequence=%u, log_interval=%.2f s.",
           static_cast<int>(send_packet.gripper_command),
-          send_packet.gripper_command == 1 ? "closed" : "open",
+          gripper_state,
           send_packet.arm_sequence,
           gripper_command_log_interval_sec_);
       }
@@ -354,72 +358,60 @@ void DriverNode::startSerialReceive()
 
 void DriverNode::serialReceiveCallback(const std::vector<uint8_t>& data, std::size_t size)
 {
-  if (size < kLegacyReceiveFrameSize)
+  std::unique_lock<std::mutex> parser_lock{receive_parser_mutex_};
+  const auto frames = receive_frame_decoder_.Feed(data, size);
+  for (const auto& frame : frames)
   {
-    RCLCPP_WARN(get_logger(), "Serial receive incomplete");
-    startSerialReceive();
-    return;
+    if (!HasValidArmReceiveExtension(
+        frame.packet, frame.size, frame.arm_offset, frame.protocol_version))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Arm feedback extension invalid: size=%zu arm_offset=%zu arm_header=0x%02X valid=%u gripper=0x%02X",
+        frame.size,
+        frame.arm_offset,
+        frame.packet.arm_header,
+        static_cast<unsigned int>(frame.packet.arm_state_valid),
+        static_cast<unsigned int>(frame.packet.arm_feedback_gripper));
+      continue;
+    }
+    if (!HasFiniteArmPosition(frame.packet))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Rejecting arm feedback with non-finite joint position (sequence=%u)",
+        static_cast<unsigned int>(frame.packet.arm_sequence));
+      continue;
+    }
+    uint32_t missed = 0;
+    const auto sequence_result = receive_sequence_tracker_.Observe(
+      frame.packet.arm_sequence, missed);
+    if (sequence_result == ReceiveSequenceResult::kDuplicate)
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Ignoring duplicate arm feedback sequence=%u",
+        static_cast<unsigned int>(frame.packet.arm_sequence));
+      continue;
+    }
+    if (sequence_result == ReceiveSequenceResult::kGap)
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Arm feedback sequence gap: missed=%u latest=%u",
+        missed,
+        static_cast<unsigned int>(frame.packet.arm_sequence));
+    }
+    else if (sequence_result == ReceiveSequenceResult::kControllerRestarted)
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "Arm feedback sequence moved backwards; accepting new controller epoch at %u",
+        static_cast<unsigned int>(frame.packet.arm_sequence));
+    }
+    publishArmState(frame.packet);
   }
-
-  if (data.front() != kReceiveHeader)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      2000,
-      "Invalid header: %02X",
-      data.front());
-    startSerialReceive();
-    return;
-  }
-
-  const std::size_t arm_offset = ReceiveArmExtensionOffset(data, size);
-  if (arm_offset == 0)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      2000,
-      "Invalid receive frame: size=%zu byte1=0x%02X byte2=0x%02X",
-      size,
-      size > 1 ? data[1] : 0,
-      size > 2 ? data[2] : 0);
-    startSerialReceive();
-    return;
-  }
-
-  const ReceivePacket packet = FromVectorWithArmOffset(data, arm_offset);
-  if (packet.end_frame != kLegacyEndFrame)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      2000,
-      "Invalid end frame: %02X",
-      packet.end_frame);
-    startSerialReceive();
-    return;
-  }
-
-  if (HasValidArmReceiveExtension(packet, size, arm_offset))
-  {
-    publishArmState(packet);
-  }
-  else
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      2000,
-      "Arm feedback extension missing or invalid: size=%zu expected>=%zu arm_offset=%zu arm_header=0x%02X valid=%u reserved=0x%02X arm_end=0x%02X",
-      size,
-      ReceivePacketSize(arm_offset),
-      arm_offset,
-      packet.arm_header,
-      static_cast<unsigned int>(packet.arm_state_valid),
-      static_cast<unsigned int>(packet.arm_feedback_reserved),
-      packet.arm_end_frame);
-  }
+  parser_lock.unlock();
   startSerialReceive();
 }
 
@@ -505,6 +497,11 @@ void DriverNode::reopenPort()
         serial_driver_.port()->open();
       }
 
+      {
+        std::scoped_lock parser_lock{receive_parser_mutex_};
+        receive_frame_decoder_.Reset();
+        receive_sequence_tracker_.Reset();
+      }
       serial_receive_enabled_.store(true);
       startSerialReceive();
       serial_reopen_in_progress_.store(false);

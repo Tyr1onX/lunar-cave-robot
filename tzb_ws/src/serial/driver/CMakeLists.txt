@@ -78,4 +78,13 @@ ament_export_dependencies(
   rm_serial_msgs
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_arm_serial_protocol
+    test/test_arm_serial_protocol.cpp
+    src/packet.cpp
+  )
+  target_include_directories(test_arm_serial_protocol PRIVATE include)
+endif()
+
 ament_package()
