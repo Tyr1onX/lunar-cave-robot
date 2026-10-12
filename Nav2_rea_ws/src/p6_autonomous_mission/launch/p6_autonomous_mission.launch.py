@@ -22,6 +22,8 @@ def generate_launch_description():
         DeclareLaunchArgument('arm_backend', default_value='synthetic'),
         DeclareLaunchArgument('auto_start', default_value='true'),
         DeclareLaunchArgument('p4e_status_required', default_value='false'),
+        DeclareLaunchArgument('chassis_link_status_required', default_value='false'),
+        DeclareLaunchArgument('chassis_link_status_timeout_sec', default_value='0.5'),
         DeclareLaunchArgument('chassis_command_topic', default_value='/cmd_vel'),
         DeclareLaunchArgument('navigation_timeout_sec', default_value='90.0'),
         DeclareLaunchArgument('test_cancel_delay_sec', default_value='0.5'),
@@ -57,6 +59,10 @@ def generate_launch_description():
                 'test_cancel_delay_sec': LaunchConfiguration('test_cancel_delay_sec'),
                 'auto_start': ParameterValue(LaunchConfiguration('auto_start'), value_type=bool),
                 'p4e_status_required': ParameterValue(LaunchConfiguration('p4e_status_required'), value_type=bool),
+                'chassis_link_status_required': ParameterValue(
+                    LaunchConfiguration('chassis_link_status_required'), value_type=bool),
+                'chassis_link_status_timeout_sec': ParameterValue(
+                    LaunchConfiguration('chassis_link_status_timeout_sec'), value_type=float),
                 'navigation_timeout_sec': ParameterValue(
                     LaunchConfiguration('navigation_timeout_sec'), value_type=float),
                 'event_log_path': LaunchConfiguration('event_log_path'),

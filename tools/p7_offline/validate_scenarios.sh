@@ -81,5 +81,6 @@ run_case arm_disconnect normal ABORTED arm_disconnect
 run_case driver_restart normal ABORTED driver_restart
 run_case chassis_disconnect normal ABORTED chassis_disconnect 12
 run_case chassis_disconnect_return normal ABORTED chassis_disconnect_return
+run_case chassis_bridge_stop normal ABORTED chassis_bridge_stop
 
 echo "P7_E2E_SCENARIOS=PASS results=$RESULTS cases=$case_index"

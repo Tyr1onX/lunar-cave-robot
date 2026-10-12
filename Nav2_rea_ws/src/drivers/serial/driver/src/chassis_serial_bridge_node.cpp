@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <array>
 #include <cerrno>
@@ -59,6 +60,8 @@ public:
     device_name_ = declare_parameter<std::string>("device_name", "");
     const int baud_rate = declare_parameter<int>("baud_rate", 115200);
     command_topic_ = declare_parameter<std::string>("command_topic", "/cmd_vel");
+    link_status_topic_ = declare_parameter<std::string>(
+      "link_status_topic", "/chassis/serial_link_status");
     const int tx_period_ms = declare_parameter<int>("tx_period_ms", 20);
     command_timeout_ms_ = declare_parameter<int>("command_timeout_ms", 100);
     max_linear_x_ = declare_parameter<double>("max_linear_x", 0.6);
@@ -83,6 +86,7 @@ public:
     command_sub_ = create_subscription<geometry_msgs::msg::Twist>(
       command_topic_, rclcpp::QoS(10),
       std::bind(&ChassisSerialBridge::commandCallback, this, std::placeholders::_1));
+    link_status_pub_ = create_publisher<std_msgs::msg::String>(link_status_topic_, rclcpp::QoS(10));
     timer_ = create_wall_timer(
       std::chrono::milliseconds(tx_period_ms),
       std::bind(&ChassisSerialBridge::timerCallback, this));
@@ -154,10 +158,12 @@ private:
     const auto now = Clock::now();
     if (serial_fd_ < 0) {
       if (device_name_.empty() || now < next_open_attempt_) {
+        publishLinkStatus("DISCONNECTED");
         return;
       }
       next_open_attempt_ = now + std::chrono::seconds(1);
       if (!openPort()) {
+        publishLinkStatus("DISCONNECTED");
         return;
       }
     }
@@ -175,6 +181,23 @@ private:
       latest_vx_ = 0.0F;
       latest_wz_ = 0.0F;
       closePort();
+      publishLinkStatus("DISCONNECTED");
+      return;
+    }
+    // This confirms only that the host OS accepted the complete frame on the
+    // local TTY. The 14-byte protocol has no STM32 acknowledgement.
+    publishLinkStatus("HOST_WRITE_OK");
+  }
+
+  void publishLinkStatus(const char * status)
+  {
+    std_msgs::msg::String message;
+    message.data = status;
+    link_status_pub_->publish(message);
+    if (last_link_status_ != status) {
+      RCLCPP_INFO(
+        get_logger(), "Host serial link status: %s (no STM32 acknowledgement semantics)", status);
+      last_link_status_ = status;
     }
   }
 
@@ -253,6 +276,8 @@ private:
 
   std::string device_name_;
   std::string command_topic_;
+  std::string link_status_topic_;
+  std::string last_link_status_;
   int command_timeout_ms_{100};
   double max_linear_x_{0.6};
   double max_angular_z_{1.5};
@@ -265,6 +290,7 @@ private:
   float latest_wz_{0.0F};
   bool command_valid_{false};
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr link_status_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 }  // namespace

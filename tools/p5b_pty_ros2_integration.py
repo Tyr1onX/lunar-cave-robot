@@ -18,6 +18,7 @@ from pathlib import Path
 
 import rclpy
 from geometry_msgs.msg import Twist
+from std_msgs.msg import String
 
 
 FRAME_SIZE = 14
@@ -91,6 +92,8 @@ def run_for(node, publisher, collector, duration, command=None, publish_period=0
     captured = []
     while time.monotonic() < end:
         now = time.monotonic()
+        if node is not None:
+            rclpy.spin_once(node, timeout_sec=0.0)
         if publisher is not None and command is not None and now >= next_publish:
             publisher.publish(command)
             rclpy.spin_once(node, timeout_sec=0.0)
@@ -176,6 +179,10 @@ def main():
 
     rclpy.init(args=None)
     node = rclpy.create_node("p5b_pty_ros2_integration_test")
+    link_status = []
+    node.create_subscription(
+        String, "/chassis/serial_link_status",
+        lambda message: link_status.append((time.monotonic(), message.data.strip())), 10)
     bridge_out = open(bridge_log, "w")
     smoother_out = open(smoother_log, "w")
     bridge = subprocess.Popen(
@@ -195,7 +202,12 @@ def main():
         time.sleep(1.0)
         check(bridge.poll() is None, f"bridge launch exited: {bridge_log.read_text(errors='replace')}")
         start_frames = run_for(None, None, collector, 0.25)
-        rclpy.spin_once(node, timeout_sec=0.2)
+        status_deadline = time.monotonic() + 2.0
+        while time.monotonic() < status_deadline and not any(
+                status == "HOST_WRITE_OK" for _, status in link_status):
+            rclpy.spin_once(node, timeout_sec=0.05)
+        check(any(status == "HOST_WRITE_OK" for _, status in link_status),
+              "bridge did not publish host-side serial write health")
         ambient = node.get_publishers_info_by_topic(test_output_topic)
         check(not ambient, f"ambient bridge-topic publishers in isolated domain: {[p.node_name for p in ambient]}")
         assert_frame_set(start_frames, "startup safe zeros")
@@ -307,10 +319,21 @@ def main():
         slave_path2 = os.ttyname(slave2)
         os.close(slave2)
         replace_link(serial_link, slave_path2)
+        disconnect_started = time.monotonic()
+        status_mark = len(link_status)
         os.close(master1)
         master1 = None
         collector2 = FrameCollector(master2)
         reconnect_frames = run_for(node, None, collector2, 3.5)
+        reconnect_statuses = link_status[status_mark:]
+        failed_statuses = [stamp for stamp, status in reconnect_statuses if status == "DISCONNECTED"]
+        recovered_statuses = [stamp for stamp, status in reconnect_statuses if status == "HOST_WRITE_OK"]
+        check(failed_statuses, "bridge did not publish DISCONNECTED after PTY peer loss")
+        check(failed_statuses[0] - disconnect_started < 1.0,
+              "bridge did not expose host-side PTY loss promptly")
+        check(recovered_statuses and recovered_statuses[0] > failed_statuses[0],
+              "bridge did not publish recovery after opening the replacement PTY")
+        print("PASS chassis link health: PTY loss detected under 1s; reconnect reports host write recovery")
         assert_frame_set(reconnect_frames, "PTY reconnect")
         check(all(max(abs(v) for v in item[2]) < 1e-7 for item in reconnect_frames),
               "bridge replayed a pre-disconnect nonzero command after reconnect")

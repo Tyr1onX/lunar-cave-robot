@@ -53,6 +53,9 @@ class MissionCoordinator(Node):
         self.declare_parameter('arm_safety_topic', '/serial/arm_safety/status')
         self.declare_parameter('arm_feedback_topic', '/p2_offline/arm_joint_state')
         self.declare_parameter('p4e_status_required', False)
+        self.declare_parameter('chassis_link_status_topic', '/chassis/serial_link_status')
+        self.declare_parameter('chassis_link_status_required', False)
+        self.declare_parameter('chassis_link_status_timeout_sec', 0.5)
         self.declare_parameter('event_log_path', '/tmp/p6_autonomous_mission_events.jsonl')
 
         self.backend = str(self.get_parameter('arm_backend').value)
@@ -94,8 +97,12 @@ class MissionCoordinator(Node):
         self._test_cancel_at = None
         self._safety_state = None
         self._safety_rx = 0.0
+        self._chassis_link_state = None
+        self._chassis_link_rx = 0.0
         self._p4e_status_required = (
             bool(self.get_parameter('p4e_status_required').value) or self.backend == 'p4e_pty')
+        self._chassis_link_status_required = bool(
+            self.get_parameter('chassis_link_status_required').value)
         self._arm_feedback_rx = 0.0
         self._arm_feedback_count = 0
         self._arm_feedback_count_at_start = 0
@@ -136,10 +143,14 @@ class MissionCoordinator(Node):
                                  self._on_arm_cancel_ack, 10)
         self.create_subscription(String, str(self.get_parameter('arm_safety_topic').value),
                                  self._on_arm_safety, 10)
+        self.create_subscription(
+            String, str(self.get_parameter('chassis_link_status_topic').value),
+            self._on_chassis_link_status, 10)
         self.create_subscription(Bool, '/p6/start', self._on_start, 10)
         self.create_timer(0.05, self._tick)
         self._record('READY', backend=self.backend, scenario=self.scenario,
-                     p4e_status_required=self._p4e_status_required)
+                     p4e_status_required=self._p4e_status_required,
+                     chassis_link_status_required=self._chassis_link_status_required)
         self._publish_state()
         self.get_logger().warning(
             'P6 OFFLINE ONLY: arm_backend=%s; physical hardware mode is disabled. '
@@ -187,6 +198,16 @@ class MissionCoordinator(Node):
     def _on_arm_feedback(self, msg):
         self._arm_feedback_rx = time.monotonic()
         self._arm_feedback_count += 1
+
+    def _on_chassis_link_status(self, msg):
+        self._chassis_link_state = msg.data.strip()
+        self._chassis_link_rx = time.monotonic()
+        if self.state in (MissionState.IDLE, MissionState.SUCCEEDED, MissionState.ABORTED):
+            return
+        if self._chassis_link_state != 'HOST_WRITE_OK':
+            self._record('CHASSIS_LINK_UNHEALTHY', host_status=self._chassis_link_state,
+                         physical_controller_acknowledged=False)
+            self._abort('P5b host-side serial link is not writable')
 
     def _on_arm_result(self, msg):
         fields = msg.data.split('|')
@@ -304,6 +325,15 @@ class MissionCoordinator(Node):
                 self._safety_state is None or now - self._safety_rx > 2.0):
             self._abort('required P4e arm safety status is missing or stale')
             return
+        if self._chassis_link_status_required:
+            status_age = now - self._chassis_link_rx if self._chassis_link_rx else float('inf')
+            timeout = float(self.get_parameter('chassis_link_status_timeout_sec').value)
+            if self._chassis_link_state != 'HOST_WRITE_OK' or status_age > timeout:
+                self._record('CHASSIS_LINK_UNHEALTHY', host_status=self._chassis_link_state,
+                             status_age_sec=status_age, timeout_sec=timeout,
+                             physical_controller_acknowledged=False)
+                self._abort('P5b host-side serial link status is missing, stale, or disconnected')
+                return
 
         if self.state == MissionState.WAITING_FOR_STACK:
             odom_ready = self._odom is not None and now - self._odom_rx < 0.5

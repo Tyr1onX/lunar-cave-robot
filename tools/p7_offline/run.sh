@@ -50,6 +50,7 @@ export P7_PTY_DIR="$LOG_DIR/runtime/pty"
 export P7_CONTROLLER_LOG="$LOG_DIR/controller-events.jsonl"
 export P7_ARM_DRIVER_PARAMS="$LOG_DIR/arm-driver.yaml"
 export P7_ARM_DRIVER_PID_FILE="$LOG_DIR/arm-driver.pid"
+export P7_CHASSIS_BRIDGE_PID_FILE="$LOG_DIR/chassis-bridge.pid"
 export P7_ARM_RESTART_LOG="$LOG_DIR/arm-driver-restarted.log"
 export P7_MISSION_TIMEOUT_SEC="${P7_MISSION_TIMEOUT_SEC:-260}"
 export P7_NAV_TIMEOUT_SEC="${P7_NAV_TIMEOUT_SEC:-90}"
@@ -187,6 +188,7 @@ setsid bash -c '
     device_name:="$P7_PTY_DIR/chassis-device" command_topic:=/cmd_vel
 ' >"$LOG_DIR/chassis-bridge.log" 2>&1 &
 BRIDGE_PID=$!; pids+=("$BRIDGE_PID")
+echo "$BRIDGE_PID" > "$P7_CHASSIS_BRIDGE_PID_FILE"
 
 setsid bash -c '
   set -e
@@ -214,7 +216,7 @@ setsid bash -c '
   exec ros2 launch p6_autonomous_mission p6_autonomous_mission.launch.py \
     domain_id:="$P7_ROS_DOMAIN_ID" scenario:="$P7_SCENARIO" \
     arm_backend:=p4e_pty auto_start:=false p4e_status_required:=true \
-    chassis_command_topic:=/p7/chassis/decoded_command \
+    chassis_command_topic:=/p7/chassis/decoded_command chassis_link_status_required:=true \
     navigation_timeout_sec:="$P7_NAV_TIMEOUT_SEC" \
     event_log_path:="$P7_LOG_DIR/mission-events.jsonl"
 ' >"$LOG_DIR/nav2-mission.log" 2>&1 &
@@ -224,7 +226,7 @@ sleep 3
 {
   echo '=== /navigate_to_pose ==='
   (set +u; source /opt/ros/humble/setup.bash; source "$NAV_WS/install/p7/setup.bash"; set -u; ros2 action info /navigate_to_pose) 2>&1 || true
-  for topic in /cmd_vel /p7/chassis/decoded_command /p7/sim/wire_status /p2_offline/arm_joint_state /tzb_catch/arm_joint_command /serial/arm_safety/status /p6/mission_state; do
+  for topic in /cmd_vel /p7/chassis/decoded_command /p7/sim/wire_status /chassis/serial_link_status /p2_offline/arm_joint_state /tzb_catch/arm_joint_command /serial/arm_safety/status /p6/mission_state; do
     echo "=== $topic ==="
     (set +u; source /opt/ros/humble/setup.bash; source "$NAV_WS/install/p7/setup.bash"; set -u; ros2 topic info "$topic" --verbose) 2>&1 || true
   done

@@ -34,11 +34,13 @@ class MissionControl(Node):
         self.started_at = time.monotonic()
         self.mission_state = ''
         self.safety = ''
+        self.chassis_link_status = ''
         self.peer = {}
         self.arm_feedback_count = 0
         self.odom_count = 0
         self.events = []
         self.fault_sent = False
+        self.fault_injection_time_unix = None
         self.driver_restarted = False
         self.last_state_rx = 0.0
         self.start_pub = self.create_publisher(Bool, '/p6/start', 10)
@@ -46,6 +48,8 @@ class MissionControl(Node):
         self.create_subscription(String, '/p6/mission_state', self._on_state, 10)
         self.create_subscription(String, '/p6/mission_events', self._on_event, 20)
         self.create_subscription(String, '/serial/arm_safety/status', self._on_safety, 10)
+        self.create_subscription(String, '/chassis/serial_link_status',
+                                 self._on_chassis_link_status, 10)
         self.create_subscription(String, '/p7/sim/wire_status', self._on_peer, 10)
         self.create_subscription(JointState, '/p2_offline/arm_joint_state',
                                  self._on_arm_feedback, qos_profile_sensor_data)
@@ -55,6 +59,8 @@ class MissionControl(Node):
     def _write(self, event, **fields):
         item = {'time_unix': time.time(), 'event': event, 'mission_state': self.mission_state}
         item.update(fields)
+        if event == 'FAULT_INJECTION':
+            self.fault_injection_time_unix = item['time_unix']
         with self.log_path.open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(item, sort_keys=True) + '\n')
         print('P7_EVENT ' + json.dumps(item, sort_keys=True), flush=True)
@@ -72,6 +78,9 @@ class MissionControl(Node):
 
     def _on_safety(self, msg):
         self.safety = msg.data
+
+    def _on_chassis_link_status(self, msg):
+        self.chassis_link_status = msg.data.strip()
 
     def _on_peer(self, msg):
         parsed = {}
@@ -177,6 +186,14 @@ class MissionControl(Node):
                 self._write('FAULT_INJECTION', fault=self.fault, decoded_motion_frames=motion,
                             prior_pick_confirmed=any(event.get('event') == 'SAMPLE_PICK_CONFIRMED'
                                                      for event in self.events))
+            elif (self.fault == 'chassis_bridge_stop' and
+                  self.mission_state in ('NAVIGATING_TO_TARGET', 'NAVIGATING_HOME') and motion >= 20):
+                pid_file = Path(os.environ['P7_CHASSIS_BRIDGE_PID_FILE'])
+                bridge_pid = int(pid_file.read_text().strip())
+                os.killpg(bridge_pid, signal.SIGINT)
+                self.fault_sent = True
+                self._write('FAULT_INJECTION', fault=self.fault, decoded_motion_frames=motion,
+                            action='stop P5b bridge; P6 must detect stale host-status heartbeat')
             elif self.fault in ('arm_feedback_stop', 'arm_disconnect', 'driver_restart') and \
                     self.mission_state == 'ARM_PICK' and arm_enabled >= 5:
                 if self.fault == 'driver_restart':
@@ -229,8 +246,16 @@ class MissionControl(Node):
             'arm_feedback_samples': self.arm_feedback_count,
             'odom_samples': self.odom_count,
             'wire_status': self.peer,
+            'chassis_link_status': self.chassis_link_status,
             'mission_event_names': [event.get('event') for event in self.events],
         }
+        if (self.fault in ('chassis_disconnect', 'chassis_disconnect_return')
+                and self.fault_injection_time_unix is not None):
+            health_events = [event for event in self.events
+                             if event.get('event') == 'CHASSIS_LINK_UNHEALTHY']
+            if health_events:
+                summary['chassis_fault_detection_latency_sec'] = round(
+                    health_events[0].get('time_unix', 0.0) - self.fault_injection_time_unix, 3)
         self._write('P7_RUN_SUMMARY', **summary)
         if self.mission_state == 'SUCCEEDED':
             required = ('SAMPLE_PICK_CONFIRMED', 'BASE_UNLOAD_CONFIRMED',
@@ -288,6 +313,17 @@ class MissionControl(Node):
                 raise RuntimeError('restarted P4e emitted an enabled frame or no post-restart frame')
         if self.fault == 'chassis_disconnect' and 'ARM_REQUEST_SENT' in summary['mission_event_names']:
             raise RuntimeError('P6 requested arm operation after chassis communication failure')
+        if self.fault in ('chassis_disconnect', 'chassis_disconnect_return', 'chassis_bridge_stop'):
+            if 'CHASSIS_LINK_UNHEALTHY' not in summary['mission_event_names']:
+                raise RuntimeError('P6 did not consume the P5b host-side serial link health status')
+            health_events = [event for event in self.events
+                             if event.get('event') == 'CHASSIS_LINK_UNHEALTHY']
+            if self.fault_injection_time_unix is None:
+                raise RuntimeError('chassis fault injection timestamp was not recorded')
+            detection_latency = summary.get('chassis_fault_detection_latency_sec', -1.0)
+            if not 0.0 <= detection_latency < 2.0:
+                raise RuntimeError(
+                    'P6 did not abort promptly after host-side PTY loss: %.3fs' % detection_latency)
         if self.fault == 'chassis_disconnect_return':
             if 'SAMPLE_PICK_CONFIRMED' not in summary['mission_event_names']:
                 raise RuntimeError('return-navigation disconnect was injected before confirmed pick')

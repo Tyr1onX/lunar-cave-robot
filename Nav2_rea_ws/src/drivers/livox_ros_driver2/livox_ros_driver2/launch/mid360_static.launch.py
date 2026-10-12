@@ -1,22 +1,17 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    default_config = PathJoinSubstitution([
-        FindPackageShare("livox_ros_driver2"),
-        "config",
-        "MID360_config.json",
-    ])
-
     return LaunchDescription([
         DeclareLaunchArgument(
             "config_file",
-            default_value=default_config,
-            description="MID-360 JSON config; select only after confirming the sensor IP.",
+            description=(
+                "Required MID-360 JSON config. Confirm sensor/host addresses and route "
+                "before selecting a device-specific file."
+            ),
         ),
         Node(
             package="livox_ros_driver2",
