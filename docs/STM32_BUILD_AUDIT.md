@@ -1,6 +1,6 @@
 # P9-B STM32 构建审计
 
-更新日期：2026-10-12。目标分支：`p9b/stm32-build-and-safety-audit`，基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`。构建发生在 ThinkBook 的仓库外临时副本和缓存目录；没有更改其统一 `main` 工作树，没有触碰 NUC，也没有连接调试器、串口或实体控制器。
+更新日期：2026-10-12。目标分支：`p9b/stm32-build-and-safety-audit`，基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，验证源码 SHA 为 `732f78545d1701a89870699827cb4e55b0ac9d8c`。构建发生在 ThinkBook 的隔离分支工作树和用户缓存目录；没有更改其统一 `main` 工作树，没有触碰 NUC，也没有连接调试器、串口或实体控制器。
 
 ## ThinkBook 工具环境
 
@@ -11,11 +11,11 @@ ThinkBook 为 Ubuntu 22.04 x86_64，CMake 3.22.1、GNU Make 4.3；本次没有 N
 - 输入归档：`DM-car-six-wheel.zip`，SHA-256 `823ff6981859dbce1d05a3d4864b921bd0f9aa5165335d0caec7d12852701d2e`。工程配置目标为 STM32H723VGTx / `CtrlBoard-H7_IMU`，含 CubeMX IOC、HAL/CMSIS、FreeRTOS、CMake、Keil、启动文件和链接脚本。
 - 结果：ThinkBook 的隔离 Linux 构建 **PASS**。GNU Arm Embedded GCC 10.3.1、CMake 3.22.1、Unix Makefiles。ELF、HEX、BIN 和 MAP 均由完整构建产生。
 - 本次修复：Linux 大小写敏感时 `User/APP/INS_task.c` 引用的小写 `ins_task.h` 不存在；归档实际头文件为 `INS_task.h`。此外将原有 200 ms unsigned tick 差值判断提取成纯函数供任务调用，阈值和分支行为保持不变，并对 `command_ok=0` 时此前仍读取未初始化时间戳的情况消除了无用读取。
-- ELF SHA-256：`2a6c9dc9fb5ace374738ab1e6bb5806cbe7007c44a328cc1b6c5315415278673`。
-- MAP SHA-256：`2fb9c9ec1ede6f1fe9267a277e7744a1e0b7626796febbfe78489ea5ab8fbc6e`。
+- ELF SHA-256：`53f7c8d22d37c4750c3e0f56b8200a49a8ef2c9f1ef945991c3f1f81e9a89bfd`。
+- MAP SHA-256：`7ee8a4bdf7d2a7f7d80c4a1d21b6e2587bb85446c2f489c7584c4694d9d70e0e`。
 - HEX SHA-256：`a0579407d21bd8335cc326d2bb056cb8167171178183e64d3a229e2576582507`。
 - BIN SHA-256：`d501b3fac056201e4356acbc9fa46033f81832969689af18a33d899ce4556440`。
-- 完整日志：ThinkBook `~/.cache/lunar-cave-robot/p9b-build/chassis-build.log`。构建报告 FLASH 使用 49,344 B / 1 MiB，RAM_D1 使用 35,816 B / 320 KiB。GCC 仍报告 BMI088 校准局部变量可能未初始化、若干 packed 属性被忽略及初始化括号警告；这些需要固件负责人结合工具链和运行边界复核。
+- 完整日志：ThinkBook `~/.cache/lunar-cave-robot/stm32/logs/chassis-build.log`；构建产物位于 `~/.cache/lunar-cave-robot/stm32/chassis/`。本次复建报告 FLASH 使用 49,372 B / 1 MiB，RAM_D1 使用 35,816 B / 320 KiB。GCC 仍报告 BMI088 校准局部变量可能未初始化、若干 packed 属性被忽略、CAN 发送分支缩进及初始化括号警告；这些需要固件负责人结合工具链和运行边界复核。
 
 ## 机械臂 STM32H723
 
@@ -27,6 +27,13 @@ ThinkBook 为 Ubuntu 22.04 x86_64，CMake 3.22.1、GNU Make 4.3；本次没有 N
 ## 底盘协议主机测试
 
 ThinkBook 的 GCC 使用实际生产 `Chaiss_Communication.c` 与 `chassis_command.c` 编译主机测试，HAL/DMA API 由明确的测试桩替代。结果 **PASS**：覆盖 gate 初始关闭、200/201 ms 命令过期边界、HAL tick 回绕、拆帧、连续帧、垃圾与坏帧尾重同步、NaN 拒绝、heading-lock 字段和安全门控。故障注入还复现两项现存缺口：有限 float 的单比特翻转会被接受（协议无 CRC），UART 错误后残留的半帧可与后续字节拼成命令（错误恢复未清空 parser state）。这是底盘解析器源码的主机单测，不是 MCU 外设/DMA 实测。
+
+## ROS 2 与 P4/P7 离线回归
+
+- ThinkBook 隔离工作树在该 SHA 上分别构建 `Nav2_rea_ws` 的 2 个包及 `tzb_ws` 的 6 个包，均 **PASS**。`lite_motion_planner` 有 Pinocchio/eigenpy 对 Boost Python 头文件的 CMake 警告，但链接成功。
+- P7/P8 的 12 场景脚本已尝试 3 次，完整套件状态为 **FAIL**，不可据单场景结果覆盖。三次分别在 `grasp_failure` 的触发事件未被测试订阅器观察到、`chassis_disconnect_return` 的模拟机械臂命令租约提前锁存导致故障未注入，以及 `arm_feedback_stop` 启动时 5 秒 TF 检查未解析 `map→base_link` 时退出。相关场景分别独立重跑通过；12 个场景均有单场景 PASS 结果分布在这些隔离运行中，但没有一次 12/12 完整脚本成功结束。ThinkBook 状态文件 `ros-offline-suite.yaml` 保留完整套件 FAIL，`p7-scenario.yaml` 单独记录最新的单场景结果。
+- P4f 在 ThinkBook 上构建两个 ROS 工作空间、P4e PTY 驱动，运行的 20 项主机安全/协议断言、8 项 P6 单元及静态合同测试和取消竞态 **PASS**。前 5 个 P6 场景通过；完整 6 场景脚本在 `duplicate_trigger` 返航时遇到 Nav2 空规划路径与 TF 时间外推，任务按策略中止，因此 P4f 完整套件记录为 **FAIL**。独立复跑 `duplicate_trigger` 后通过；P4f 没有一次完整 6/6 套件通过记录。日志位于 ThinkBook `~/.local/state/lunar-cave-robot/runs/p4f-p9b-20261012T0932/`。
+- 这些 ROS/P4f/P7 结果均为 localhost 仿真、合成反馈或 PTY；不是相机、导航传感器、STM32、CAN、电机或实机验收。P7/P8 源码与既有验证脚本没有修改。
 
 ## 复现入口及安全边界
 

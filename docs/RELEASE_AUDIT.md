@@ -3,6 +3,7 @@
 P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-build-and-safety-audit` 独立分支进行；完整构建日志和产物 SHA 见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
 
 - ThinkBook ARM GNU GCC 10.3.1 完整构建底盘 STM32 成功；修正 Linux 下头文件大小写，并将原 200 ms 命令年龄谓词抽为可单测函数但保持阈值不变。固件 ELF、MAP、HEX、BIN 保存在用户缓存，不提交。
+- ThinkBook 对 `Nav2_rea_ws` 2 个包与 `tzb_ws` 6 个包的独立 ROS 2 构建均通过；底盘生产解析器与命令租约主机测试通过。P7/P8 12 场景完整套件最新状态为 FAIL（TF 启动门槛未满足后退出），12 个场景分别在不同隔离运行中均取得单场景 PASS。P4f PTY、安全断言、P6 8 项测试及取消竞态通过；P4f 六场景完整脚本因重复触发场景返航规划失败而 FAIL，单独重跑该场景通过。离线汇总不得替代完整套件状态，也不构成实机验收。
 - 机械臂 CMake 找到 ARM GCC/G++ 后因 XRobot 生成的 `Modules/CMakeLists.txt` 缺失而停止；`User/xrobot_main.hpp` 也未找到。没有生成空文件或猜测产品配置。
 - 底盘主机侧测试直接编译生产 parser/command 逻辑并 mock HAL，结果 PASS；测试确认有限数据位翻转可穿过无 CRC 帧校验、UART 错误恢复会保留半帧。
 - ROS 2 到两套固件的静态协议字段已对照。机械臂 MCU 不消费主机任务序号，USB 失联和 ROS 取消没有固件停止确认；底盘初始化先发送驱动使能帧，缺少总线级停车确认。
