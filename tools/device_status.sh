@@ -24,11 +24,11 @@ device_repo=$1
 if [[ "$device_repo" == __HOME__ ]]; then device_repo="$HOME/lunar-cave-robot"; fi
 github_sha=$2
 if [[ ! -d "$device_repo/.git" ]]; then
-  printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: 统一工作目录不存在\n  最近测试: 未记录\n  当前部署版本: 未记录\n'
+  printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: 统一工作目录不存在\n  P7/P8 全套: 未记录\n  P7 单场景: 未记录\n  ROS Nav2 工作区构建: 未记录\n  ROS 机械臂工作区构建: 未记录\n  底盘协议主机测试: 未记录\n  底盘 STM32 构建: 未记录\n  机械臂 STM32 构建: 未记录\n  当前部署版本: 未记录\n'
   exit 0
 fi
 if ! git -C "$device_repo" rev-parse --show-toplevel >/dev/null 2>&1; then
-  printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: 路径不是 Git 工作区\n  最近测试: 未记录\n  当前部署版本: 未记录\n'
+  printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: 路径不是 Git 工作区\n  P7/P8 全套: 未记录\n  P7 单场景: 未记录\n  ROS Nav2 工作区构建: 未记录\n  ROS 机械臂工作区构建: 未记录\n  底盘协议主机测试: 未记录\n  底盘 STM32 构建: 未记录\n  机械臂 STM32 构建: 未记录\n  当前部署版本: 未记录\n'
   exit 0
 fi
 head_sha=$(git -C "$device_repo" rev-parse HEAD)
@@ -55,25 +55,43 @@ else
   fi
 fi
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/lunar-cave-robot"
-if [[ -f "$state_dir/latest-test.yaml" ]]; then
+tests_dir="$state_dir/tests"
+read_test_record() {
+  local key=$1 file="$tests_dir/$1.yaml"
+  if [[ ! -f "$file" ]]; then printf '未记录'; return; fi
+  local result timestamp sha scope
+  result=$(sed -n 's/^result: //p' "$file" | head -1)
+  timestamp=$(sed -n 's/^timestamp: //p' "$file" | head -1)
+  sha=$(sed -n 's/^sha: //p' "$file" | head -1)
+  scope=$(sed -n 's/^scope: //p' "$file" | head -1)
+  printf '%s %s @ %s (%s)' "${result:-unknown}" "${timestamp:-}" "${sha:-unknown}" "${scope:-范围未知}"
+}
+suite_info=$(read_test_record ros-offline-suite)
+if [[ "$suite_info" == 未记录 && -f "$state_dir/latest-test.yaml" ]]; then
   test_time=$(sed -n 's/^timestamp: //p' "$state_dir/latest-test.yaml" | head -1)
   test_result=$(sed -n 's/^result: //p' "$state_dir/latest-test.yaml" | head -1)
   test_sha=$(sed -n 's/^sha: //p' "$state_dir/latest-test.yaml" | head -1)
-  test_info="${test_result:-unknown} ${test_time:-} @ ${test_sha:-unknown}"
-else
-  test_info='未记录'
+  suite_info="${test_result:-unknown} ${test_time:-} @ ${test_sha:-unknown} (历史记录范围未知)"
 fi
+scenario_info=$(read_test_record p7-scenario)
+nav_build_info=$(read_test_record ros-nav-build)
+arm_build_info=$(read_test_record ros-arm-build)
+chassis_protocol_test_info=$(read_test_record firmware-chassis-protocol-test)
+chassis_build_info=$(read_test_record firmware-chassis-build)
+arm_firmware_build_info=$(read_test_record firmware-arm-build)
 if [[ -f "$state_dir/deployed-sha" ]]; then
   deployed_sha=$(head -1 "$state_dir/deployed-sha" | tr -cd '[:alnum:]')
   if [[ -n "$deployed_sha" ]]; then deployed_info=$deployed_sha; else deployed_info='未记录'; fi
 else
   deployed_info='未记录'
 fi
-printf '  SHA: %s\n  分支: %s\n  未提交修改: %s\n  与 GitHub 差异: %s\n  最近测试: %s\n  当前部署版本: %s\n' \
-  "$head_sha" "${branch:-detached}" "$dirty" "$diff" "$test_info" "$deployed_info"
+printf '  SHA: %s\n  分支: %s\n  未提交修改: %s\n  与 GitHub 差异: %s\n  P7/P8 全套: %s\n  P7 单场景: %s\n  ROS Nav2 工作区构建: %s\n  ROS 机械臂工作区构建: %s\n  底盘协议主机测试: %s\n  底盘 STM32 构建: %s\n  机械臂 STM32 构建: %s\n  当前部署版本: %s\n' \
+  "$head_sha" "${branch:-detached}" "$dirty" "$diff" "$suite_info" "$scenario_info" \
+  "$nav_build_info" "$arm_build_info" "$chassis_protocol_test_info" "$chassis_build_info" \
+  "$arm_firmware_build_info" "$deployed_info"
 REMOTE
   ); then
-    printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: SSH 状态查询失败\n  最近测试: 未知\n  当前部署版本: 未知\n'
+    printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: SSH 状态查询失败\n  P7/P8 全套: 未知\n  P7 单场景: 未知\n  ROS Nav2 工作区构建: 未知\n  ROS 机械臂工作区构建: 未知\n  底盘协议主机测试: 未知\n  底盘 STM32 构建: 未知\n  机械臂 STM32 构建: 未知\n  当前部署版本: 未知\n'
     return
   fi
   printf '%s\n' "$output"

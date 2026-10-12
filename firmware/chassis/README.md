@@ -15,7 +15,7 @@ cmake --preset Debug
 cmake --build --preset Debug
 ```
 
-本轮 ThinkBook 与 NUC 均未发现 `arm-none-eabi-gcc`，所以未执行固件编译。静态检查确认 CMake/Keil 配置引用的源目录、启动文件、链接脚本和两种工具链所需的 CMSIS-DSP 库均已归档；所有 Keil 文件引用均有对应源文件。原 Keil 项目引用的 `bsp_usart1.c` 与 `rc_pwm.c` 在原 ZIP 中也不存在且不在 CMake 源码列表，因此从归档副本中删除了这两个无效条目。CMake 文件中的固定 Windows 安装路径已改为从 `PATH` 或 `STM32CUBECLT_PATH` 查找。不得调用 `flash` 或 `flash-cmsis-dap` 目标。
+P9-B 在 ThinkBook 隔离工具目录中使用 ARM GNU GCC 10.3.1 和 CMake 3.22.1 完成完整交叉编译，输出 `CtrlBoard-H7_IMU.elf/.map/.hex/.bin`。Linux 大小写敏感构建发现 `INS_task.c` 原来包含小写 `ins_task.h`，与归档中的 `INS_task.h` 不一致；已按真实头文件名修正。原有 200 ms 命令新鲜度判断抽为纯函数供底盘任务使用，阈值不变，并新增 tick 回绕/超时边界测试。构建日志及 ELF/MAP 哈希见[STM32 构建审计](../../docs/STM32_BUILD_AUDIT.md)。编译仍有既存警告，需要在后续固件整改中复查。没有烧录；不得调用 `flash` 或 `flash-cmsis-dap` 目标。
 
 ## 静态接口摘要
 

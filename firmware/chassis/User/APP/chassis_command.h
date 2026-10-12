@@ -43,5 +43,7 @@ uint8_t chassis_command_is_safety_enabled(void);
 void chassis_command_stop(chassis_cmd_source_e source);
 void chassis_command_publish_heading_lock(chassis_cmd_source_e source);
 uint8_t chassis_command_read(chassis_command_t *command);
+uint8_t chassis_command_is_fresh(const chassis_command_t *command,
+                                 uint32_t now_ms, uint32_t max_age_ms);
 
 #endif /* __CHASSIS_COMMAND_H */

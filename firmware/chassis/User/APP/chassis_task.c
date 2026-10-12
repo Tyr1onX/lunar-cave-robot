@@ -108,11 +108,11 @@ void Chassis_task(void)
         {
             chassis_command_t command;
             uint8_t command_ok = chassis_command_read(&command);
-            uint32_t command_age = HAL_GetTick() - command.update_ms;
 
             if ((command_ok != 0u) &&
                 (command.enabled != 0u) &&
-                (command_age <= CHASSIS_CMD_TIMEOUT_MS))
+                (chassis_command_is_fresh(&command, HAL_GetTick(),
+                                          CHASSIS_CMD_TIMEOUT_MS) != 0u))
             {
                 chassis_move.start_flag = 1u;
                 chassis_move.command_source = command.source;

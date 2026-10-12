@@ -140,9 +140,9 @@ Nav2 规划/控制                                                ↓
 | P3 / P3b | [离线复验记录](P3_P4B_VALIDATION.md)：时间戳坐标转换测试、动态 URDF/TF 与合成视觉抓放通过 | 光学 TF 是模拟夹具；未验证真实相机外参或实体抓取 |
 | P4a / P4b | [离线复验记录](P3_P4B_VALIDATION.md)：通信帧解析、六关节映射、URDF 限位与 FK 测试通过 | 未验证 STM32 实机协议、零位、方向或运动安全 |
 | P4c | [安全审计与故障注入报告](P4c_control_safety_audit.md) 和 PTY 故障注入脚本归档；报告记录 4 项检查通过 | 安全整改未完成；原始提交 2964e87 来源待核实；未做实机安全验收 |
-| P5a / P9 | [底盘源码审计](p5a/chassis-source-audit.md)、13 项模型测试；P9 将团队底盘和机械臂 STM32 工程归档到 `firmware/` | 固件未编译；无物理串口/CAN 验收 |
+| P5a / P9 | [底盘源码审计](p5a/chassis-source-audit.md)、13 项模型测试；P9 将团队底盘和机械臂 STM32 工程归档到 `firmware/` | P9-B 底盘 GCC 构建、解析器主机测试通过；机械臂缺生成文件；无物理串口/CAN 验收 |
 | P5b | [单向控制链路报告](p5b/chassis-ros2-integration.md) 和 [PTY 复验步骤](p5b/run-offline-validation.md)；历史 ROS 2 构建/集成通过 | 本次当前环境无法运行 ROS 2；无实车和完整闭环验收 |
-| GitHub 交付 | 当前 `main` 已汇总 P0～P8 ROS 2 主线；P9 归档源码、资产清单和同步机制 | P9 合并后的 ROS 构建与 PTY 结果应查设备实时状态；STM32 未编译、实机未验收 |
+| GitHub 交付 | 当前 `main` 已汇总 P0～P8 ROS 2 主线与 P9-A 资产归档；P9-B 在独立 PR | ThinkBook 当前分支 ROS 构建/PTy 结果由设备状态记录显示；底盘可编译，机械臂未生成；实机未验收 |
 
 当前仍未归档的资产包括 OpenVINO/YOLO 权重、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图和标定结果。可访问目录中没有找到 CAD、原理图/PCB、BOM 或接线图；厂商电机手册因再分发条件未确认留在原始 ZIP。已归档资产、来源和 SHA-256 见[项目资产清单](PROJECT_ASSETS.md)。密钥、运行日志和构建缓存不进入版本库。
 
@@ -185,7 +185,7 @@ Nav2 规划/控制                                                ↓
 
 下行的底盘速度字段在机械臂固件中被解析后丢弃。六个关节角使用编码器连续弧度；+1 表示夹紧，-1 表示张开，0 表示保持。固件把偏置与坐标换算留给主机侧。
 
-UART5 配置为 100000 baud、9 位字长、偶校验、单停止位、仅接收，用作遥控/SBUS 输入；它不是 ROS 2 机械臂命令口。当前 tzb_ws ROS 2 驱动配置的是串口式 46 字节桥和 9600 baud。源码确认的固件主机链路是 USB CDC，UART5 则为遥控接收，因此还需核实 USB CDC 端点、主机设备映射、实际线缆以及 ROS 包与固件帧字段的一致性。代码中的 4 字节预留区在固件中被忽略，不能只凭相同的 46 字节长度推断直接互通。
+UART5 配置为 100000 baud、9 位字长、偶校验、单停止位、仅接收，用作遥控/SBUS 输入；它不是 ROS 2 机械臂命令口。P9-B 对 ROS 与 STM32 的字段偏移、字节序、单位、使能和夹爪语义作了逐字段静态比对：46 字节下行与 35 字节反馈的帧布局兼容；但固件忽略 ROS 下行的 4 字节任务序号，实体 CDC 设备映射/线缆仍未核验。协议差异和安全限制见[STM32 协议说明](STM32_PROTOCOL_SPEC.md)。
 
 ### 六轮底盘控制器
 
@@ -197,11 +197,17 @@ P5a 审计记录的是修复前基线：9600 baud、bringup 未启动桥、fake_
 
 机械臂和底盘不能共享一个“46 字节通用串口协议”：机械臂固件主机端点是 USB CDC，底盘是 115200/8N1 UART；两者的控制职责、帧解释和 CAN 电机总线都不同。ROS 2 当前对机械臂的串口参数和固件 USB CDC 实现尚需端口核对。P5b 已修正底盘 Nav2 主机端的波特率、启动链、差速模型和命令新鲜度；轮速/故障遥测和真实闭环仍未实现。P5b 已完成 ROS 2 到 PTY 的单向离线集成验证；未做实机串口、电机或安全联调，也未烧录。
 
+### P9-B 固件协议与控制安全审计
+
+ROS 与两个 STM32 的源码字段已静态对齐；这不表示当前实体控制器运行了归档源码。底盘帧和机械臂帧都没有 CRC；机械臂固件不读取 ROS 的任务序号。P4f 取消会让 ROS 驱动停止发送使能帧并报告“STM32 stop is unconfirmed”，但 MCU 不把 enable=0 或 USB 断链转换为停止/失能，仍可能继续执行此前目标。底盘固件初始化路径会先发送电机使能帧，之后的 200 ms 命令租约和 relax 帧不构成独立硬件急停证明。
+
+完整风险、代码证据和整改顺序见[STM32 安全审计](STM32_SAFETY_AUDIT.md)和[整改方案](STM32_SAFETY_REMEDIATION_PLAN.md)。S0 缺口仍未闭合，当前没有任何真实执行器运动许可。
+
 ### 2026-10-12 P9 项目资产归档状态
 
 当前 GitHub `main` 中的 [`tzb_ws/`](../tzb_ws/) 与 [`Nav2_rea_ws/`](../Nav2_rea_ws/) 是 P8 ROS 2 主线，二者保持独立构建。ThinkBook 的 P0～P8 分支、工作区及可访问的导航/串口历史包已与该主线核对；没有找到应覆盖或补入的更新 ROS 2 实现。P4f 本地独有的三处修改会撤销 P8 的任务新鲜度、反馈和底盘状态保护，故保留 P8 版本。
 
-[`firmware/arm/`](../firmware/arm/) 与 [`firmware/chassis/`](../firmware/chassis/) 当前包含工程源码，而不只是审计说明。两套输入包来源、SHA-256、保留内容与构建边界见[项目资产清单](PROJECT_ASSETS.md)；团队已授权其在 Private 仓库内归档。底盘工程结构和 Keil 文件引用已静态核验，机械臂工程缺少 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt`，不能独立配置。ThinkBook/NUC 均没有 `arm-none-eabi-gcc`，未编译。静态接口摘要不证明 ROS 2 与 MCU 已互通，实体控制器当前版本也未知。软硬件版本对应见[矩阵](HARDWARE_SOFTWARE_MATRIX.md)，三端状态与发布流程见[设备状态](DEVICE_STATUS.md)和[部署流程](DEPLOYMENT_WORKFLOW.md)。
+[`firmware/arm/`](../firmware/arm/) 与 [`firmware/chassis/`](../firmware/chassis/) 当前包含完整度不同的工程快照。机械臂工程缺少 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt`，XRobot CMake 检查因此停止；没有伪造产品模块配置。底盘能进入交叉编译，但首轮发现 Linux 大小写不一致的 `ins_task.h` 引用（P9-B 修正为实际文件名 `INS_task.h`）；最终编译结论以[固件构建审计](STM32_BUILD_AUDIT.md)为准。协议、安全问题见[协议说明](STM32_PROTOCOL_SPEC.md)、[安全审计](STM32_SAFETY_AUDIT.md)及[整改方案](STM32_SAFETY_REMEDIATION_PLAN.md)。
 
 
 ## 8. P5b 当前底盘命令链路与验收边界

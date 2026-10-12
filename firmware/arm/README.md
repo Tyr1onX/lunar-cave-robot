@@ -13,7 +13,7 @@
 
 当前归档中的 `User/app_main.cpp` 包含 `xrobot_main.hpp`，LibXR 的 CMake 检查还要求 `Modules/CMakeLists.txt`。这两个生成文件不在 ZIP、Git 对象历史、ThinkBook 或 NUC 可访问工程中。`Modules/modules.yaml` 与 `sources.yaml` 保留了配置，但不能替代生成文件。因此目前不能确认 CMake 工程可独立配置或编译；需要从固件负责人处恢复该产品对应的 XRobot 生成文件，或由负责人确认生成方式和模块版本后再生成。
 
-ThinkBook 与 NUC 当前均没有 `arm-none-eabi-gcc`；本轮未编译、未烧录。普通工程构建不是实机安全验收。
+P9-B 在 ThinkBook 上通过隔离工具目录准备了 ARM GNU GCC 10.3.1；CMake 能识别 GCC/G++，随后在 LibXR 的 XRobot 集成检查处因缺少 `Modules/CMakeLists.txt` 停止。`User/xrobot_main.hpp` 也缺失，恢复前无法生成 ELF。当前独立工具链还没有安装随 ARM GNU 工具链单独分发的 newlib C++ headers/runtime；补齐生成输入后需要一并安装，再重新构建。具体日志和工具链来源见[STM32 构建审计](../../docs/STM32_BUILD_AUDIT.md)。没有烧录；普通工程构建不是实机安全验收。
 
 ## 静态接口摘要
 

@@ -30,6 +30,32 @@ Mac 需要可用的 SSH 别名 `thinkbook`、`nuc`，已加载可访问 GitHub �
 
 该入口执行 P7/P8 集成 PTY 离线场景，不会访问真实串口、CAN、相机、雷达或电机。测试结果带有仓库 SHA 保存到用户状态目录，供 `device_status.sh` 展示。不同设备依赖缺失时按错误输出补齐依赖，不得把跳过或未运行标记为通过。
 
+完整套件与单个场景分开记录。运行单场景：
+
+```bash
+./tools/run_p7_scenario.sh normal
+```
+
+分别构建两个 ROS 工作区并记录各自的构建 SHA：
+
+```bash
+./tools/build_ros2_offline_workspaces.sh
+```
+
+记录文件位于 `$XDG_STATE_HOME/lunar-cave-robot/tests/`。固件构建状态由归档工作区的固件构建入口写入同一状态目录；不能用 ROS/PTy 结果代替 STM32 编译结果。
+
+## STM32 固件构建
+
+在 ThinkBook 的 Linux 环境安装独立 ARM GNU 工具链后，在统一仓库工作区运行：
+
+```bash
+export STM32CUBECLT_PATH=/path/to/arm-gnu-toolchain
+./tools/build_stm32_firmware.sh chassis
+./tools/build_stm32_firmware.sh arm
+```
+
+脚本在 `$XDG_CACHE_HOME/lunar-cave-robot/stm32/`（默认 `~/.cache/lunar-cave-robot/stm32/`）建立仓库外构建目录和日志，并分别写入 `firmware-chassis-build` / `firmware-arm-build` 状态记录。它只运行 CMake 配置和编译，不调用烧录、串口或调试器命令。工具链路径、编译器版本、已知的机械臂生成文件阻塞及最近审计结果见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
+
 ## NUC 部署与回滚
 
 Git 同步只更新源码，不等于将该版本部署到车载运行目录。部署前应由负责人确认目标 SHA、设备专用参数、驱动 SDK 与安全门槛，并沿用 `docs/REAL_ROBOT_SAFETY_GATES.md` 的受控流程。运行程序和执行器需显式人工启动；P9 脚本不会自动启动。
