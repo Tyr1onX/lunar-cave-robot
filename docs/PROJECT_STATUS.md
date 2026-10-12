@@ -12,6 +12,12 @@
 
 ## 验收状态
 
+### P9-C 离线软件验证
+
+- ThinkBook 上两轮完整 P7 12/12 场景通过，使用 DWB 离线地图代价配置修正和按场景关闭 ROS 2 CLI daemon。没有放宽测试断言。结果及源码 SHA-256 见 `docs/P9C_OFFLINE_VALIDATION.md`。
+- P4f/P6 使用新结果目录和隔离 ROS domain 完成：19 项 ROS PTY 驱动检查、10 项逻辑/静态测试、规划取消竞态及六个 P6 合成场景通过。
+- 上述结果是离线结果，不代表实体传感器、电机、底盘停止距离、机械臂承载或实机任务验收。
+
 - P8 历史验收：ThinkBook 和 NUC 在旧 P8 工作区记录各 12 个 P7 PTY 离线场景通过。NUC MID-360 驱动曾构建成功；未启动传感器采集。
 - P9 固件静态归档：两个工程的必要源文件、工程配置、启动文件、链接配置和所需构建依赖已做完整性核验。设备上没有 `arm-none-eabi-gcc`，因此没有 STM32 编译结果。
 - 机械臂 CMake 依赖两个未找到的 XRobot 生成文件 `User/xrobot_main.hpp` 和 `Modules/CMakeLists.txt`，当前不能独立配置/编译。
