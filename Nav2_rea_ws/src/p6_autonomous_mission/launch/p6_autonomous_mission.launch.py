@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.actions import Node
 
 
@@ -18,6 +19,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('domain_id', default_value='97'),
         DeclareLaunchArgument('scenario', default_value='normal'),
+        DeclareLaunchArgument('arm_backend', default_value='synthetic'),
+        DeclareLaunchArgument('auto_start', default_value='true'),
+        DeclareLaunchArgument('p4e_status_required', default_value='false'),
+        DeclareLaunchArgument('chassis_command_topic', default_value='/cmd_vel'),
+        DeclareLaunchArgument('navigation_timeout_sec', default_value='90.0'),
         DeclareLaunchArgument('test_cancel_delay_sec', default_value='0.5'),
         DeclareLaunchArgument('event_log_path', default_value='/tmp/p6_autonomous_mission_events.jsonl'),
         SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('domain_id')),
@@ -32,6 +38,7 @@ def generate_launch_description():
         Node(
             package='p6_autonomous_mission', executable='cave_simulator',
             name='p6_cave_simulator', output='screen',
+            parameters=[{'command_topic': LaunchConfiguration('chassis_command_topic')}],
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(nav2_launch),
@@ -45,11 +52,13 @@ def generate_launch_description():
             package='p6_autonomous_mission', executable='mission_coordinator',
             name='p6_mission_coordinator', output='screen',
             parameters=[{
-                'arm_backend': 'synthetic',
+                'arm_backend': LaunchConfiguration('arm_backend'),
                 'scenario': LaunchConfiguration('scenario'),
                 'test_cancel_delay_sec': LaunchConfiguration('test_cancel_delay_sec'),
-                'auto_start': True,
-                'p4e_status_required': False,
+                'auto_start': ParameterValue(LaunchConfiguration('auto_start'), value_type=bool),
+                'p4e_status_required': ParameterValue(LaunchConfiguration('p4e_status_required'), value_type=bool),
+                'navigation_timeout_sec': ParameterValue(
+                    LaunchConfiguration('navigation_timeout_sec'), value_type=float),
                 'event_log_path': LaunchConfiguration('event_log_path'),
             }],
         ),

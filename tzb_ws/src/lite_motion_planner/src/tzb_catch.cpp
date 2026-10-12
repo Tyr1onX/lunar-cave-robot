@@ -679,6 +679,7 @@ public:
                 cancelled_task_epoch_ = active_task_epoch_;
                 active_task_id_.clear();
                 active_task_epoch_ = 0;
+                p6_task_hold_active_ = false;
                 task_cancel_requested_.store(true);
                 active_cancel = true;
               }
@@ -690,9 +691,21 @@ public:
                 task_trigger_pending_ = false;
                 pending_task_id_.clear();
                 pending_task_epoch_ = 0;
+                p6_task_hold_active_ = false;
+                active_task_id_.clear();
+                active_task_epoch_ = 0;
                 pending_cancel = true;
                 immediate_ack = true;
               }
+            } else if (p6_task_hold_active_ && active_task_id_ == task_id &&
+                       active_task_epoch_ == epoch) {
+              p6_cancelled_task_epochs_.insert(task_id + "|" + std::to_string(epoch));
+              p6_task_hold_active_ = false;
+              active_task_id_.clear();
+              active_task_epoch_ = 0;
+              task_cancel_requested_.store(true);
+              active_cancel = true;
+              immediate_ack = true;
             } else if (epoch < p6_task_epoch_high_water_) {
               reject_reason = "cancellation epoch is older than the persisted high-water";
             } else if (epoch > p6_task_epoch_high_water_ &&
@@ -855,6 +868,7 @@ public:
         publishReferenceMarkers("initial");
         publishE3Marker();
         worker_ = std::thread([this]() { runSequence(); });
+        command_keepalive_worker_ = std::thread([this]() { runP6CommandKeepalive(); });
       });
   }
 
@@ -866,6 +880,9 @@ public:
     sentry_cv_.notify_all();
     if (worker_.joinable()) {
       worker_.join();
+    }
+    if (command_keepalive_worker_.joinable()) {
+      command_keepalive_worker_.join();
     }
   }
 
@@ -2097,8 +2114,8 @@ private:
 
   bool nextCommandContextLocked(std::string& frame_id, uint64_t* sequence = nullptr) {
     if (!p6_staged_tasks_) { frame_id.clear(); return true; }
-    if (!p6_task_active_ || active_task_id_.empty() || active_task_epoch_ == 0 ||
-        task_cancel_requested_.load()) return false;
+    if ((!p6_task_active_ && !p6_task_hold_active_) || active_task_id_.empty() ||
+        active_task_epoch_ == 0 || task_cancel_requested_.load()) return false;
     ++next_arm_command_sequence_;
     if (sequence) *sequence=next_arm_command_sequence_;
     frame_id = "p4f:" + active_task_id_ + ":" + std::to_string(active_task_epoch_) +
@@ -2119,8 +2136,56 @@ private:
     msg.position = positions;
     std::lock_guard<std::mutex> lock(task_trigger_mutex_);
     if (!nextCommandContextLocked(msg.header.frame_id)) return;
+    last_arm_command_joint_names_ = joint_names;
+    last_arm_command_positions_ = positions;
+    have_last_arm_command_ = true;
     arm_command_pub_->publish(msg);
     if (p6_staged_tasks_ && p4f_arm_command_pub_) p4f_arm_command_pub_->publish(msg);
+  }
+
+  void publishArmCommandForTask(
+    const std::string& expected_task_id,
+    uint64_t expected_epoch,
+    const std::vector<std::string>& joint_names,
+    const std::vector<double>& positions) {
+    if (!arm_command_pub_ || joint_names.size() != positions.size()) return;
+    sensor_msgs::msg::JointState msg;
+    msg.header.stamp = this->now();
+    msg.name = joint_names;
+    msg.position = positions;
+    std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+    if (!p6_staged_tasks_ || task_cancel_requested_.load() ||
+        (!p6_task_active_ && !p6_task_hold_active_) ||
+        active_task_id_ != expected_task_id || active_task_epoch_ != expected_epoch ||
+        !nextCommandContextLocked(msg.header.frame_id)) return;
+    last_arm_command_joint_names_ = joint_names;
+    last_arm_command_positions_ = positions;
+    have_last_arm_command_ = true;
+    arm_command_pub_->publish(msg);
+    if (p4f_arm_command_pub_) p4f_arm_command_pub_->publish(msg);
+  }
+
+  void runP6CommandKeepalive() {
+    while (rclcpp::ok() && !stop_requested_.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      if (arm_command_streaming_.load() || task_cancel_requested_.load()) continue;
+      std::string task_id;
+      uint64_t epoch = 0;
+      std::vector<std::string> joint_names;
+      std::vector<double> positions;
+      {
+        std::lock_guard<std::mutex> lock(task_trigger_mutex_);
+        if (!p6_staged_tasks_ || (!p6_task_active_ && !p6_task_hold_active_) ||
+            !have_last_arm_command_) continue;
+        task_id = active_task_id_;
+        epoch = active_task_epoch_;
+        joint_names = last_arm_command_joint_names_;
+        positions = last_arm_command_positions_;
+      }
+      if (!task_id.empty() && epoch > 0) {
+        publishArmCommandForTask(task_id, epoch, joint_names, positions);
+      }
+    }
   }
 
   void publishArmCommandCurrentState(const std::string& stage_name) {
@@ -2149,6 +2214,7 @@ private:
     const double period_sec = 1.0 / arm_command_publish_hz_;
     const auto started_at = std::chrono::steady_clock::now();
     auto previous_tick = started_at;
+    arm_command_streaming_.store(true);
 
     RCLCPP_INFO(
       this->get_logger(),
@@ -2184,6 +2250,7 @@ private:
     }
 
     publishArmCommand(trajectory.joint_names, final_positions);
+    arm_command_streaming_.store(false);
     return !taskExecutionStopped();
   }
 
@@ -2915,6 +2982,7 @@ private:
       active_task_id_ = task_id;
       active_task_epoch_ = task_epoch;
       next_arm_command_sequence_ = 0;
+      p6_task_hold_active_ = false;
       p6_task_active_ = true;
     }
     return true;
@@ -3139,12 +3207,15 @@ private:
       if (p6_staged_tasks_) {
         std::lock_guard<std::mutex> lock(task_trigger_mutex_);
         p6_task_active_ = false;
-        active_task_id_.clear();
-        active_task_epoch_ = 0;
+        p6_task_hold_active_ = success && !cancelled;
+        if (!p6_task_hold_active_) {
+          active_task_id_.clear();
+          active_task_epoch_ = 0;
+        }
         cancelled_task_id_.clear();
         cancelled_task_epoch_ = 0;
         task_cancel_requested_.store(false);
-        next_arm_command_sequence_ = 0;
+        if (!p6_task_hold_active_) next_arm_command_sequence_ = 0;
       }
       if (!success) {
         if (task_start_gate_enabled_ || p6_staged_tasks_) {
@@ -3518,7 +3589,13 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> frozen_camera_tf_broadcaster_;
 
   std::thread worker_;
+  std::thread command_keepalive_worker_;
   std::atomic_bool stop_requested_{false};
+  std::atomic_bool arm_command_streaming_{false};
+  bool p6_task_hold_active_{false};
+  bool have_last_arm_command_{false};
+  std::vector<std::string> last_arm_command_joint_names_;
+  std::vector<double> last_arm_command_positions_;
 
   std::string planning_frame_;
   std::string arm_group_;

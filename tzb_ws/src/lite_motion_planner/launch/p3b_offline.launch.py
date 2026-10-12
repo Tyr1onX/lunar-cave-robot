@@ -90,6 +90,7 @@ def _make_nodes(context):
             'state_topic': '/p2_offline/arm_joint_state',
             'command_topic': '/p2_offline/arm_joint_command',
         }],
+        condition=IfCondition(LaunchConfiguration('synthetic_arm_feedback')),
     )
     joint_state_relay = Node(
         package='lite_motion_planner', executable='p3b_joint_state_relay.py',
@@ -144,6 +145,7 @@ def generate_launch_description():
         DeclareLaunchArgument('autostart', default_value='false'),
         DeclareLaunchArgument('p6_staged_tasks', default_value='false'),
         DeclareLaunchArgument('publish_synthetic_target', default_value='false'),
+        DeclareLaunchArgument('synthetic_arm_feedback', default_value='true'),
         DeclareLaunchArgument('use_rviz', default_value='false'),
         SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('offline_domain_id')),
         SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '1'),

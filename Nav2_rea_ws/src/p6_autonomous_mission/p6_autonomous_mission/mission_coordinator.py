@@ -13,9 +13,11 @@ from lifecycle_msgs.msg import State as LifecycleState
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import JointState
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, String
 
 from .mission_logic import MissionModel, MissionState
@@ -49,12 +51,13 @@ class MissionCoordinator(Node):
         self.declare_parameter('arm_cancel_ack_topic', '/p6/arm_task/cancel_ack')
         self.declare_parameter('arm_result_topic', '/p6/arm_task/result')
         self.declare_parameter('arm_safety_topic', '/serial/arm_safety/status')
+        self.declare_parameter('arm_feedback_topic', '/p2_offline/arm_joint_state')
         self.declare_parameter('p4e_status_required', False)
         self.declare_parameter('event_log_path', '/tmp/p6_autonomous_mission_events.jsonl')
 
         self.backend = str(self.get_parameter('arm_backend').value)
-        if self.backend != 'synthetic':
-            raise RuntimeError('P6 offline launch only accepts arm_backend=synthetic; hardware mode is disabled')
+        if self.backend not in ('synthetic', 'p4e_pty'):
+            raise RuntimeError('P6 offline launch accepts only synthetic or p4e_pty; hardware mode is disabled')
         self.scenario = str(self.get_parameter('scenario').value)
         self._test_cancel_delay_sec = max(0.0, float(self.get_parameter('test_cancel_delay_sec').value))
         self.model = MissionModel()
@@ -85,11 +88,18 @@ class MissionCoordinator(Node):
         self._cancel_epoch = None
         self._arm_result = None
         self._arm_cancel_sent = False
+        self._arm_hold_task_id = None
+        self._arm_hold_epoch = None
         self._communication_result_dropped = False
         self._test_cancel_at = None
         self._safety_state = None
         self._safety_rx = 0.0
-        self._p4e_status_required = bool(self.get_parameter('p4e_status_required').value)
+        self._p4e_status_required = (
+            bool(self.get_parameter('p4e_status_required').value) or self.backend == 'p4e_pty')
+        self._arm_feedback_rx = 0.0
+        self._arm_feedback_count = 0
+        self._arm_feedback_count_at_start = 0
+        self._arm_saw_active_host = False
         self._event_path = str(self.get_parameter('event_log_path').value)
         self._event_pub = self.create_publisher(String, '/p6/mission_events', 20)
         self._state_pub = self.create_publisher(String, '/p6/mission_state', 1)
@@ -116,6 +126,9 @@ class MissionCoordinator(Node):
         self.create_subscription(
             Odometry, str(self.get_parameter('odom_topic').value), self._on_odom, 10)
         self.create_subscription(
+            JointState, str(self.get_parameter('arm_feedback_topic').value), self._on_arm_feedback,
+            qos_profile_sensor_data)
+        self.create_subscription(
             PoseStamped, str(self.get_parameter('target_topic').value), self._on_target, 10)
         self.create_subscription(String, str(self.get_parameter('arm_result_topic').value),
                                  self._on_arm_result, 10)
@@ -129,8 +142,8 @@ class MissionCoordinator(Node):
                      p4e_status_required=self._p4e_status_required)
         self._publish_state()
         self.get_logger().warning(
-            'P6 OFFLINE ONLY: arm_backend=synthetic; no serial driver is part of this launch. '
-            'Any observed P4e FAULT_LATCHED status aborts the mission.')
+            'P6 OFFLINE ONLY: arm_backend=%s; physical hardware mode is disabled. '
+            'P4e FAULT_LATCHED status aborts the mission.' % self.backend)
 
     @property
     def state(self):
@@ -170,6 +183,10 @@ class MissionCoordinator(Node):
             else:
                 self._detection_streak = 0
             self._last_pose_stamp = stamp
+
+    def _on_arm_feedback(self, msg):
+        self._arm_feedback_rx = time.monotonic()
+        self._arm_feedback_count += 1
 
     def _on_arm_result(self, msg):
         fields = msg.data.split('|')
@@ -219,6 +236,9 @@ class MissionCoordinator(Node):
         self._arm_cancel_timeout_logged = False
         self._cancel_task_id = None
         self._cancel_epoch = None
+        if self._arm_hold_task_id == task_id and self._arm_hold_epoch == epoch:
+            self._arm_hold_task_id = None
+            self._arm_hold_epoch = None
         self._record('ARM_CANCEL_CONFIRMED', task_id=task_id, trajectory_epoch=epoch,
                      confirmation='ROS upstream publisher quiescent; STM32 stop not implied')
 
@@ -230,6 +250,8 @@ class MissionCoordinator(Node):
                 self._safety_state = token.split('=', 1)[1].strip().strip(',;')
                 break
         self._safety_rx = time.monotonic()
+        if self._safety_state == 'ACTIVE_HOST' and self._arm_task_id is not None:
+            self._arm_saw_active_host = True
         if self._safety_state == 'FAULT_LATCHED':
             self._abort('P4e arm host safety reports FAULT_LATCHED')
         elif self._p4e_status_required and self.state in (
@@ -278,11 +300,10 @@ class MissionCoordinator(Node):
             else:
                 self._abort('stage timeout in %s' % self.state.value)
             return
-        if self._p4e_status_required and self.state in (
-                MissionState.ARM_PICK, MissionState.ARM_UNLOAD):
-            if self._safety_state is None or now - self._safety_rx > 2.0:
-                self._abort('required P4e arm safety status is missing or stale')
-                return
+        if self._p4e_status_required and (
+                self._safety_state is None or now - self._safety_rx > 2.0):
+            self._abort('required P4e arm safety status is missing or stale')
+            return
 
         if self.state == MissionState.WAITING_FOR_STACK:
             odom_ready = self._odom is not None and now - self._odom_rx < 0.5
@@ -410,12 +431,19 @@ class MissionCoordinator(Node):
         goal.pose.header.stamp = self.get_clock().now().to_msg()
         goal.pose.pose.position.x = x
         goal.pose.pose.position.y = y
-        goal.pose.pose.orientation.w = 1.0
+        if self._odom is not None:
+            start = self._odom.pose.pose.position
+            dx, dy = x - start.x, y - start.y
+            goal_yaw = math.atan2(dy, dx) if math.hypot(dx, dy) > 1.0e-6 else 0.0
+        else:
+            goal_yaw = 0.0
+        goal.pose.pose.orientation.z = math.sin(goal_yaw * 0.5)
+        goal.pose.pose.orientation.w = math.cos(goal_yaw * 0.5)
         self._nav_goal_handle = None
         self._nav_result_future = None
         self._nav_goal_future = self._nav_client.send_goal_async(goal)
         self._deadline = time.monotonic() + float(self.get_parameter('navigation_timeout_sec').value)
-        self._record('NAV_GOAL_SENT', destination=destination, x=x, y=y,
+        self._record('NAV_GOAL_SENT', destination=destination, x=x, y=y, yaw=goal_yaw,
                      attempt=self._nav_attempt, action_result_required=True)
 
     def _poll_navigation(self, now):
@@ -484,9 +512,15 @@ class MissionCoordinator(Node):
         return False
 
     def _start_arm_task(self, stage):
+        now = time.monotonic()
         if self._p4e_status_required and (
-                self._safety_state != 'ACTIVE_HOST' or time.monotonic() - self._safety_rx > 2.0):
-            self._abort('P4e safety must be freshly ACTIVE_HOST before arm execution')
+                self._safety_state not in ('ARMED_WAIT_COMMAND', 'ACTIVE_HOST')
+                or now - self._safety_rx > 2.0):
+            self._abort('P4e safety must be freshly operator-enabled before arm execution')
+            return
+        if self._p4e_status_required and (
+                self._arm_feedback_rx == 0.0 or now - self._arm_feedback_rx > 0.5):
+            self._abort('fresh P4e controller feedback is required before arm execution')
             return
         task_id = uuid.uuid4().hex
         self._arm_epoch_counter = max(self._arm_epoch_counter + 1, time.time_ns())
@@ -495,6 +529,10 @@ class MissionCoordinator(Node):
         self._arm_stage = stage
         self._arm_result = None
         self._arm_cancel_sent = False
+        self._arm_hold_task_id = None
+        self._arm_hold_epoch = None
+        self._arm_saw_active_host = self._safety_state == 'ACTIVE_HOST'
+        self._arm_feedback_count_at_start = self._arm_feedback_count
         msg = String()
         msg.data = task_id + '|' + stage + '|' + str(self._arm_epoch)
         self._arm_request_pub.publish(msg)
@@ -509,6 +547,23 @@ class MissionCoordinator(Node):
             return
         success = self._arm_result
         task_id, stage = self._arm_task_id, self._arm_stage
+        if success and self._p4e_status_required:
+            feedback_samples = self._arm_feedback_count - self._arm_feedback_count_at_start
+            feedback_age = now - self._arm_feedback_rx if self._arm_feedback_rx else float('inf')
+            if not self._arm_saw_active_host or feedback_samples <= 0 or feedback_age > 0.5:
+                self._record('ARM_RESULT_REJECTED', task_id=task_id, stage=stage,
+                             reason='missing P4e active status or fresh post-request controller feedback',
+                             p4e_active_host_seen=self._arm_saw_active_host,
+                             feedback_samples_since_request=feedback_samples,
+                             feedback_age_sec=feedback_age)
+                self._abort('P4e controller execution was not confirmed')
+                return
+            self._record('P4E_EXECUTION_CONFIRMED', task_id=task_id, stage=stage,
+                         feedback_samples_since_request=feedback_samples, feedback_age_sec=feedback_age,
+                         evidence='46-byte PTY command frames were consumed and P4e-published feedback is fresh')
+        if success:
+            self._arm_hold_task_id = self._arm_task_id
+            self._arm_hold_epoch = self._arm_epoch
         self._arm_task_id = None
         self._arm_stage = None
         self._arm_epoch = None
@@ -518,7 +573,9 @@ class MissionCoordinator(Node):
             return
         if stage == 'pick' and self.state == MissionState.ARM_PICK:
             self._record('SAMPLE_PICK_CONFIRMED', task_id=task_id,
-                         evidence='P3b planner completed with synthetic joint feedback')
+                         evidence=('P3b planner completed with fresh P4e serial feedback'
+                                   if self._p4e_status_required else
+                                   'P3b planner completed with synthetic joint feedback'))
             self._nav_destination = (
                 'home', float(self.get_parameter('home_x').value),
                 float(self.get_parameter('home_y').value))
@@ -526,23 +583,27 @@ class MissionCoordinator(Node):
             self._begin_navigation_attempt()
         elif stage == 'unload' and self.state == MissionState.ARM_UNLOAD:
             self._record('BASE_UNLOAD_CONFIRMED', task_id=task_id,
-                         evidence='P3b staged unload plan completed with synthetic joint feedback')
+                         evidence=('P3b unload plan completed with fresh P4e serial feedback'
+                                   if self._p4e_status_required else
+                                   'P3b staged unload plan completed with synthetic joint feedback'))
             self._transition(MissionState.SUCCEEDED, 'base unload result confirmed')
 
     def _send_arm_cancel(self, reason):
-        if not self._arm_task_id or self._arm_epoch is None or self._arm_cancel_sent:
+        task_id = self._arm_task_id or self._arm_hold_task_id
+        epoch = self._arm_epoch if self._arm_task_id else self._arm_hold_epoch
+        if not task_id or epoch is None or self._arm_cancel_sent:
             return
         cancel = String()
-        cancel.data = self._arm_task_id + '|' + str(self._arm_epoch)
+        cancel.data = task_id + '|' + str(epoch)
         self._arm_cancel_pub.publish(cancel)
         self._arm_cancel_sent = True
         self._arm_cancel_pending = True
         self._arm_cancel_sent_at = time.monotonic()
-        self._cancel_task_id = self._arm_task_id
-        self._cancel_epoch = self._arm_epoch
+        self._cancel_task_id = task_id
+        self._cancel_epoch = epoch
         self._arm_cancel_timeout_logged = False
-        self._record('ARM_CANCEL_SENT', task_id=self._arm_task_id,
-                     trajectory_epoch=self._arm_epoch, reason=reason,
+        self._record('ARM_CANCEL_SENT', task_id=task_id,
+                     trajectory_epoch=epoch, reason=reason,
                      acknowledgement_required=True)
 
     def _abort(self, reason):

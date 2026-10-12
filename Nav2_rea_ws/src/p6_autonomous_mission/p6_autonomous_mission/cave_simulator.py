@@ -74,8 +74,9 @@ class CaveSimulator(Node):
         self.create_timer(1.0 / self.control_rate, self._tick)
         self._publish_map()
         self.get_logger().warning(
-            'OFFLINE SIMULATION ONLY: /cmd_vel drives a mathematical differential-drive model; '
-            'the map and /scan are generated in process. No sensor or device driver is started.')
+            'OFFLINE SIMULATION ONLY: %s drives the mathematical differential-drive model; '
+            'the map and /scan are generated in process. No sensor or physical device is started.'
+            % self.command_topic)
 
     def _make_world(self):
         # OccupancyGrid rows grow in +y. Leave a one-cell solid boundary.
@@ -213,6 +214,9 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:
+        if rclpy.ok():
+            raise
     finally:
         node.destroy_node()
         if rclpy.ok():
