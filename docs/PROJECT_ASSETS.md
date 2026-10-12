@@ -25,7 +25,7 @@
 
 ### 六轮底盘
 
-- 找到位置：用户提供的微信文件 `用户本轮提供的微信附件 DM-car-six-wheel.zip`，大小 249,683,285 字节，SHA-256 `823ff6981859dbce1d05a3d4864b921bd0f9aa5165335d0caec7d12852701d2e`。原包含 2,252 个文件、约 894 MB 解压内容，没有项目 Git 元数据。
+- 找到位置：用户本轮提供的微信附件 `DM-car-six-wheel.zip`，大小 249,683,285 字节，SHA-256 `823ff6981859dbce1d05a3d4864b921bd0f9aa5165335d0caec7d12852701d2e`。原包含 2,252 个文件、约 894 MB 解压内容，没有项目 Git 元数据。
 - 工程包含 `CtrlBoard-H7_IMU.ioc`、CMake/Presets、Keil `.uvprojx`、C 与 FreeRTOS 源码、STM32H723 启动与链接配置。原工程使用的 DSP GCC 静态库和 Keil ARM 静态库均保留；其他架构版本未复制。
 - 原 CMake 中的固定 Windows 用户/工具安装路径已移除，改为使用 `PATH` 和 `STM32CUBECLT_PATH`。原 Keil 工程还引用不存在于原包的 `User/Bsp/bsp_usart1.c`、`User/Bsp/rc_pwm.c`，且 CMake 源码列表没有使用它们；在整理副本中删除了这两个失效的 Keil 条目，没有合成替代源文件。现存 Keil `FilePath` 均解析到已归档源码。仅做工程配置清理；没有运行下载/烧录目标。
 
