@@ -56,7 +56,6 @@ export P7_MISSION_TIMEOUT_SEC="${P7_MISSION_TIMEOUT_SEC:-260}"
 export P7_NAV_TIMEOUT_SEC="${P7_NAV_TIMEOUT_SEC:-90}"
 export ROS_DOMAIN_ID="$DOMAIN"
 export ROS_LOCALHOST_ONLY=1
-export ROS2CLI_DISABLE_DAEMON=1
 unset ROS_DISCOVERY_SERVER || true
 mkdir -p "$P7_PTY_DIR" "$LOG_DIR"
 # Avoid accepting a stale ready file or stale PTY links when a caller reuses LOG_DIR.
@@ -144,6 +143,16 @@ cleanup() {
   for pid in "${pids[@]}"; do
     [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
   done
+  # ROS 2 Humble ignores ROS2CLI_DISABLE_DAEMON. Stop only the CLI daemon
+  # bound to this scenario's isolated domain after all scenario processes exit.
+  if [[ -f /opt/ros/humble/setup.bash ]]; then
+    (
+      set +u
+      source /opt/ros/humble/setup.bash
+      set -u
+      ROS_DOMAIN_ID="$DOMAIN" ros2 daemon stop >/dev/null 2>&1
+    )
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -222,7 +231,7 @@ setsid bash -c '
 ' >"$LOG_DIR/nav2-mission.log" 2>&1 &
 NAV_PID=$!; pids+=("$NAV_PID")
 
-sleep 3
+sleep 1
 {
   echo '=== /navigate_to_pose ==='
   (set +u; source /opt/ros/humble/setup.bash; source "$NAV_WS/install/p7/setup.bash"; set -u; ros2 action info /navigate_to_pose) 2>&1 || true
@@ -231,10 +240,26 @@ sleep 3
     (set +u; source /opt/ros/humble/setup.bash; source "$NAV_WS/install/p7/setup.bash"; set -u; ros2 topic info "$topic" --verbose) 2>&1 || true
   done
 } >"$LOG_DIR/ros-graph.log"
-(timeout 5s bash -c 'source /opt/ros/humble/setup.bash; source "$P7_NAV_WS/install/p7/setup.bash"; ros2 run tf2_ros tf2_echo map base_link' \
-  >"$LOG_DIR/tf-map-base.log" 2>&1 || true)
+# TF publishers can start after lifecycle/graph discovery. Keep tf2_echo alive
+# until it resolves the transform, with a bounded deadline, instead of treating
+# a fixed five-second startup delay as a transform failure.
+setsid timeout 30s bash -c 'source /opt/ros/humble/setup.bash; source "$P7_NAV_WS/install/p7/setup.bash"; exec stdbuf -oL ros2 run tf2_ros tf2_echo map base_link' \
+  >"$LOG_DIR/tf-map-base.log" 2>&1 &
+TF_PID=$!; pids+=("$TF_PID")
+tf_deadline=$((SECONDS + 30))
+while (( SECONDS < tf_deadline )); do
+  if grep -q 'Translation:' "$LOG_DIR/tf-map-base.log"; then
+    kill -INT -- "-$TF_PID" 2>/dev/null || true
+    wait "$TF_PID" 2>/dev/null || true
+    break
+  fi
+  if ! kill -0 "$TF_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 0.2
+done
 if ! grep -q 'Translation:' "$LOG_DIR/tf-map-base.log"; then
-  echo "TF map->base_link was not resolved; see $LOG_DIR/tf-map-base.log" >&2
+  echo "TF map->base_link was not resolved within 30 seconds; see $LOG_DIR/tf-map-base.log" >&2
   exit 1
 fi
 

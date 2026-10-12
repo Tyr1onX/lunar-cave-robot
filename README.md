@@ -33,6 +33,7 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 ## 当前验证边界
 
 - P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
+- P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
 - 两套 STM32 工程源码树已归档。底盘 CubeMX/CMake/Keil 配置的文件引用完整；机械臂工程缺少 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt` 这两个 XRobot 生成文件。两台 Linux 设备都未发现 ARM GNU 工具链，因此本轮不能报告固件编译通过。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
