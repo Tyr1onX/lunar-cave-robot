@@ -69,7 +69,7 @@ GitHub `main` 是源码版本来源。Mac 连接 ThinkBook 和 NUC 后，在仓�
 ./tools/sync_devices.sh
 ```
 
-状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。默认统一目录为 ThinkBook `~/lunar-cave-robot`、NUC `~/lunar-cave-robot`；原有 P0～P8 工作空间不移动、不覆盖。可以通过 `THINKBOOK_REPO`、`NUC_REPO` 环境变量更改目标路径。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)与[设备状态](docs/DEVICE_STATUS.md)。
+状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。默认统一目录为 ThinkBook `~/lunar-cave-robot`、NUC `~/lunar-cave-robot`；原有 P0～P8 工作空间不移动、不覆盖。可以通过 `THINKBOOK_REPO`、`NUC_REPO` 环境变量更改目标路径。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问；同步还需要 Mac SSH agent 中已授权 GitHub 的密钥，密钥不会复制到设备。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)与[设备状态](docs/DEVICE_STATUS.md)。
 
 ## 仓库及分享边界
 

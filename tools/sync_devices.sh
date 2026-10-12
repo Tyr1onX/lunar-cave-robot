@@ -12,7 +12,7 @@ fi
 sync_device() {
   local label=$1 host=$2 device_repo=$3
   printf '%s: 检查并同步到 %s\n' "$label" "$expected_sha"
-  ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" bash -s -- "$remote_url" "$device_repo" "$expected_sha" <<'REMOTE'
+  ssh -A -o BatchMode=yes -o ConnectTimeout=8 "$host" bash -s -- "$remote_url" "$device_repo" "$expected_sha" <<'REMOTE'
 set -euo pipefail
 remote_url=$1
 device_repo=$2
@@ -29,13 +29,29 @@ normalize_repo() {
   printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
 }
 
+clone_temp=''
+cleanup_clone_temp() {
+  if [[ -n "$clone_temp" && -d "$clone_temp" ]]; then
+    rm -rf -- "$clone_temp"
+  fi
+}
+trap cleanup_clone_temp EXIT
+
 if [[ -L "$device_repo" ]]; then
   echo "拒绝符号链接目标：$device_repo" >&2
   exit 10
 fi
 if [[ ! -e "$device_repo" ]]; then
-  mkdir -p "$(dirname -- "$device_repo")"
-  git clone --single-branch --branch main "$remote_url" "$device_repo"
+  parent_dir=$(dirname -- "$device_repo")
+  mkdir -p "$parent_dir"
+  clone_temp=$(mktemp -d "$parent_dir/.lunar-cave-robot-clone.XXXXXX")
+  git clone --single-branch --branch main "$remote_url" "$clone_temp"
+  if [[ -e "$device_repo" || -L "$device_repo" ]]; then
+    echo "目标目录在克隆期间出现；保留目标并停止：$device_repo" >&2
+    exit 18
+  fi
+  mv -- "$clone_temp" "$device_repo"
+  clone_temp=''
 fi
 if [[ ! -d "$device_repo/.git" ]]; then
   echo "目标已存在但不是普通 Git 工作区；未改动：$device_repo" >&2
