@@ -55,13 +55,15 @@ which can route the sensor subnet over Wi-Fi while Ethernet is disconnected.
 If the route selects Wi-Fi or the wrong source address, stop and agree on a
 narrow route correction before changing network settings.
 
-UFW was observed active during audit, but its rules were not inspected because
-`ufw status` requires root. Have an authorized operator inspect the existing
-rules before test day; do not change them as part of this procedure. MID-360
+Authorized read-only `sudo ufw status verbose` reported `Status: inactive`,
+so UFW is not currently filtering traffic. No UFW rules were changed. Other
+nftables/iptables rules were not checked; if another firewall backend is
+managed on the NUC, have an authorized operator inspect it before test day.
+MID-360
 `host_net_info` in the selected JSON specifies UDP ports 56101, 56201, 56301,
 56401, and 56501. Its `lidar_net_info` specifies 56100, 56200, 56300, 56400,
-and 56500. Confirm the required packet directions with the SDK2/driver policy
-and existing firewall before permitting traffic.
+and 56500. Confirm required packet directions with the SDK2/driver policy and
+applicable firewall before starting the driver.
 
 ## First live static capture
 

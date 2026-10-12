@@ -59,8 +59,8 @@ No system packages were installed.
 - Preserved `nav_ws` MID-360 config: lidar `192.168.1.147`, host `192.168.1.50`.
 - Current wired NIC `enp86s0` is down; Wi-Fi `wlo1` is `192.168.1.105/24`. The current route to `192.168.1.119` selects Wi-Fi. Tailscale is on `tailscale0`; keep it and Wi-Fi enabled during the test.
 - Once the Ethernet cable is connected, verify that the actual sensor route uses `enp86s0` and the selected config's host IP. If not, stop; a narrow route change needs separate authorization.
-- UFW service was active. Read-only `ufw status verbose` returned that root is required, so rules remain unverified and unchanged.
-- The configs specify lidar-side UDP ports 56100, 56200, 56300, 56400, 56500 and host-side ports 56101, 56201, 56301, 56401, 56501. Confirm firewall policy and packet directions against the selected config before starting the driver.
+- Authorized read-only `sudo ufw status verbose` reported `Status: inactive`; UFW is not currently filtering traffic. No UFW rules were changed. Independent nftables/iptables rules were not queried.
+- The configs specify lidar-side UDP ports 56100, 56200, 56300, 56400, 56500 and host-side ports 56101, 56201, 56301, 56401, 56501. If another firewall backend is managed on the NUC, verify its policy and packet directions against the selected config before starting the driver.
 - No real MID-360 was connected or powered, and no Livox ROS driver launch was run.
 
 ## Reproduction and live entry point
