@@ -18,6 +18,9 @@ if [[ ! "$DOMAIN_START" =~ ^[0-9]+$ ]] || (( DOMAIN_START < 2 || DOMAIN_START > 
   exit 2
 fi
 mkdir -p "$RESULTS"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_RESULTS="$RESULTS/$RUN_ID"
+mkdir -p "$RUN_RESULTS"
 export ROS_LOCALHOST_ONLY=1
 export ROS2CLI_DISABLE_DAEMON=1
 unset ROS_DISCOVERY_SERVER || true
@@ -49,7 +52,7 @@ run_case() {
     return
   fi
   local domain=$((DOMAIN_START + case_index))
-  local case_dir="$RESULTS/$name"
+  local case_dir="$RUN_RESULTS/$name"
   case_index=$((case_index + 1))
   if (( domain > 101 )); then
     echo "P7 case domains exceed ROS_DOMAIN_ID range 0..101" >&2
@@ -84,3 +87,4 @@ run_case chassis_disconnect_return normal ABORTED chassis_disconnect_return
 run_case chassis_bridge_stop normal ABORTED chassis_bridge_stop
 
 echo "P7_E2E_SCENARIOS=PASS results=$RESULTS cases=$case_index"
+echo "P7_E2E_RUN_ID=$RUN_ID"

@@ -129,7 +129,6 @@ static const wheel_motor_config_t g_wheel_motor_config[WHEEL_COUNT] =
 #define RC_STEER_SIGN           (-1.0f)   /* 遥控器右打应产生顺时针（负 angular_z） */
 #define YAW_RATE_RAMP_RADPS2    (3.0f)    /* 普通运动目标角速度斜坡 rad/s^2 */
 #define CHASSIS_CMD_TIMEOUT_MS  (200u)
-#define ENABLE_CHASSIS_AUTO_TEST (0u)     /* Only set to 1 with wheels lifted. */
 /* 左右任一侧车轮允许的最大接地线速度。 */
 #define SIDE_SPEED_MAX_MS       (0.6f)
 

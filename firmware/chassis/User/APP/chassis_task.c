@@ -51,7 +51,6 @@ static hcan_t *bus_handle(motor_can_bus_e bus)
 void Chassis_init(chassis_t *chassis)
 {
     unsigned char i;
-    unsigned char j;
 
     /* 数组顺序必须与 vehicle_config.h 中 wheel_index_e 完全一致。 */
     for (i = 0u; i < (unsigned char)WHEEL_COUNT; i++)
@@ -59,16 +58,8 @@ void Chassis_init(chassis_t *chassis)
         chassis->motor[i].id = g_wheel_motor_config[i].can_id;
     }
 
-    /* 上电后连续发送使能帧，保证 6 个电机可靠进入 MIT 模式 */
-    for (j = 0u; j < 5u; j++)
-    {
-        for (i = 0u; i < (unsigned char)WHEEL_COUNT; i++)
-        {
-            hm_motor_enable(bus_handle(g_wheel_motor_config[i].bus),
-                            g_wheel_motor_config[i].can_id);
-            osDelay(1);
-        }
-    }
+    /* Power-up only initializes IDs. Drive enable is deferred to a fresh
+     * command after the operator has completed the safety re-arm sequence. */
 }
 
 void Chassis_task(void)
@@ -81,6 +72,7 @@ void Chassis_task(void)
     float yaw_rate_integral = 0.0f;
     const float dt = (float)CHASSIS_TASK_PERIOD_MS / 1000.0f;
     unsigned char i;
+    uint8_t motors_enabled = 0u;
 
     /* 等待 IMU 收敛 */
     while (INS.ins_flag == 0u)
@@ -114,6 +106,20 @@ void Chassis_task(void)
                 (chassis_command_is_fresh(&command, HAL_GetTick(),
                                           CHASSIS_CMD_TIMEOUT_MS) != 0u))
             {
+                if (motors_enabled == 0u)
+                {
+                    unsigned char repeat;
+                    for (repeat = 0u; repeat < 5u; repeat++)
+                    {
+                        for (i = 0u; i < (unsigned char)WHEEL_COUNT; i++)
+                        {
+                            hm_motor_enable(bus_handle(g_wheel_motor_config[i].bus),
+                                            g_wheel_motor_config[i].can_id);
+                            osDelay(1);
+                        }
+                    }
+                    motors_enabled = 1u;
+                }
                 chassis_move.start_flag = 1u;
                 chassis_move.command_source = command.source;
 
@@ -144,6 +150,7 @@ void Chassis_task(void)
             }
             else
             {
+                motors_enabled = 0u;
                 chassis_move.start_flag = 0u;
                 chassis_move.v_set = 0.0f;
                 chassis_move.yaw_rate_set = 0.0f;

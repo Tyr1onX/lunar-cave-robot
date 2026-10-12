@@ -95,6 +95,7 @@ set(FREERTOS_SOURCES
 set(USER_SOURCES
     User/APP/Chaiss_Communication.c
     User/APP/chassis_command.c
+    User/APP/chassis_safety.c
     User/APP/INS_task.c
     User/APP/chassis_task.c
     User/APP/kinematics.c

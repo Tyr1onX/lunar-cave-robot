@@ -35,6 +35,7 @@
 #include "hm_motor.h"
 #include "rc_sbus.h"
 #include "chassis_command.h"
+#include "chassis_safety.h"
 #include "Chaiss_Communication.h"
 #include <math.h>
 
@@ -148,70 +149,61 @@ void StartDefaultTask(void const * argument)
    * 底盘任务只读取统一 chassis_command，不关心指令来源。
    */
   static rc_control_mode_e active_control_mode = RC_CONTROL_DISABLED;
+  static chassis_safety_t chassis_safety;
+  static uint8_t chassis_safety_initialized = 0u;
   static float yaw_rate_cmd_filt = 0.0f;
   static float v_cmd_filt = 0.0f;
-#if ENABLE_CHASSIS_AUTO_TEST
-  static uint32_t test_start_ms = 0u;
-#endif
+  static uint32_t last_uart_error_count = 0u;
   const float yaw_lpf_alpha = 0.2f;
   const float v_lpf_alpha   = 0.2f;
 
   /* 说明 */
   for(;;)
   {
-#if ENABLE_CHASSIS_AUTO_TEST
-    /*
-     * One-shot bench test. This block is compiled only when explicitly
-     * enabled in vehicle_config.h. Lift all wheels before enabling it.
-     */
+    if (chassis_safety_initialized == 0u)
     {
-      uint32_t elapsed;
-      float test_v = 0.0f;
-      float test_w = 0.0f;
-      uint8_t test_enable = 0u;
-
-      chassis_command_set_safety_enabled(1u);
-
-      if (test_start_ms == 0u)
-      {
-        test_start_ms = HAL_GetTick();
-      }
-      elapsed = HAL_GetTick() - test_start_ms;
-
-      if ((elapsed >= 2000u) && (elapsed < 5000u))
-      {
-        test_v = 0.10f;       /* straight */
-        test_enable = 1u;
-      }
-      else if ((elapsed >= 5000u) && (elapsed < 8000u))
-      {
-        test_w = 0.20f;       /* rotate CCW */
-        test_enable = 1u;
-      }
-      else if ((elapsed >= 8000u) && (elapsed < 11000u))
-      {
-        test_v = 0.10f;       /* arc */
-        test_w = 0.20f;
-        test_enable = 1u;
-      }
-
-      chassis_command_publish(test_v, test_w,
-                              test_enable, CHASSIS_CMD_TEST);
-      osDelay(10);
-      continue;
+      chassis_safety_init(&chassis_safety);
+      chassis_safety_initialized = 1u;
     }
-#endif
-
     rc_sbus_update();
 
     {
       rc_control_mode_e requested_mode = RC_CONTROL_DISABLED;
+      uint8_t rc_neutral;
+      uint8_t serial_fresh;
+      uint8_t serial_neutral;
+      uint8_t uart_fault_event;
+      chassis_safety_state_e safety_state;
 
       if (rc_sbus.online)
       {
         requested_mode = rc_control_mode_from_pwm(
             rc_sbus.ch_pwm[g_sbus_ch_map.control_mode]);
       }
+
+      rc_neutral =
+          (rc_sbus_channel_norm(g_sbus_ch_map.throttle) == 0.0f &&
+           rc_sbus_channel_norm(g_sbus_ch_map.steer) == 0.0f) ? 1u : 0u;
+
+      /*
+       * Keep parsing serial input while unarmed only in the explicitly selected
+       * serial mode. The independent chassis command gate still rejects motion.
+       */
+      Chaiss_Communication_SetCommandEnabled(
+          (rc_sbus.online && requested_mode == RC_CONTROL_SERIAL) ? 1u : 0u);
+      serial_fresh = Chaiss_Communication_IsOnline();
+      serial_neutral =
+          (fabsf(g_chaiss_communication.vx) <= 0.0001f &&
+           fabsf(g_chaiss_communication.vy) <= 0.0001f &&
+           fabsf(g_chaiss_communication.vz) <= 0.0001f) ? 1u : 0u;
+      uart_fault_event =
+          (g_chaiss_communication.uart_error_count != last_uart_error_count) ? 1u : 0u;
+      last_uart_error_count = g_chaiss_communication.uart_error_count;
+      safety_state = chassis_safety_update(
+          &chassis_safety, rc_sbus.online ? 1u : 0u, requested_mode,
+          rc_neutral, serial_fresh, serial_neutral, uart_fault_event);
+      chassis_command_set_safety_enabled(
+          (safety_state == CHASSIS_SAFETY_ARMED) ? 1u : 0u);
 
       if (requested_mode != active_control_mode)
       {
@@ -222,23 +214,22 @@ void StartDefaultTask(void const * argument)
         v_cmd_filt = 0.0f;
       }
 
-      if (active_control_mode == RC_CONTROL_DISABLED)
+      if ((requested_mode == RC_CONTROL_DISABLED) ||
+          (safety_state != CHASSIS_SAFETY_ARMED))
       {
-        /* CH8 下拨或 SBUS 掉线：两路输入均禁止，底盘立即停止。 */
-        Chaiss_Communication_SetCommandEnabled(0u);
-        chassis_command_set_safety_enabled(0u);
+        /*
+         * Boot, receiver recovery, mode changes and serial lease expiry all
+         * remain logically disarmed until CH8 is deliberately cycled through
+         * disabled with neutral controls. This software gate is not an E-stop.
+         */
         chassis_command_stop(CHASSIS_CMD_RC);
         osDelay(10);
         continue;
       }
 
-      chassis_command_set_safety_enabled(1u);
-
-      if (active_control_mode == RC_CONTROL_SERIAL)
+      if (requested_mode == RC_CONTROL_SERIAL)
       {
-        /* CH8 中置：只打开 USART1 指令入口，忽略 SBUS 摇杆。 */
-        Chaiss_Communication_SetCommandEnabled(1u);
-        (void)Chaiss_Communication_IsOnline();
+        /* CH8 中置：仅在新鲜零速帧完成手动互锁后允许串口控制。 */
         osDelay(10);
         continue;
       }

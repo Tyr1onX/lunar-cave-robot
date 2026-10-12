@@ -36,8 +36,9 @@
 /* USB 中断 -> Host 任务的环形缓冲容量（实际可用 HOST_RX_QUEUE_SIZE - 1 字节） */
 #define HOST_RX_QUEUE_SIZE   512U
 
-/* 链路在线判据窗口；仅用于状态观测，不参与 hold/失能策略 */
+/* USB 字节链路在线判据窗口，仅供诊断；控制租约使用下面的 100 ms 已采纳命令窗口。 */
 #define HOST_LINK_TIMEOUT_MS 500U
+#define HOST_COMMAND_LEASE_MS 100U
 
 /* USB 中断收到数据后置起的任务标志：中断侧（usb_callback.cpp）与任务侧（task_host.cpp）共用一处定义 */
 #define HOST_RX_FLAG 0x00000001U
@@ -72,6 +73,12 @@ void Host_Poll(void);
 
 /* 以下四个只读接口供遥测/调试使用，可被任意任务调用 */
 uint8_t Host_IsOnline(void);
+uint8_t Host_IsCommandFresh(void);
+void Host_SetSafetyArmed(uint8_t armed);
+void Host_ResetSafetyHandshake(void);
+uint8_t Host_HasDisabledSinceSafetyReset(void);
+uint8_t Host_HasEnableAfterDisabled(void);
+uint8_t Host_ConsumeSafetyDisableEvent(void);
 uint32_t Host_GetRxFrameCount(void);
 uint32_t Host_GetRxDropCount(void);
 uint32_t Host_GetTxDropCount(void);   /* 发送侧因缓冲区被占而丢弃的上行帧数 */
