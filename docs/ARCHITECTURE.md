@@ -1,7 +1,7 @@
 # 机器人系统架构与成员接手指南
 
-> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜基线：2026-10-11 首次整理的 P0～P2b 源码快照。  
-> **文档描述的是源码中的设计与已验证边界，不等于整机实机验收。** 修改硬件、串口、运动控制或启动文件前，必须经过设备负责人核对。
+> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜截至 2026-10-12，`main` 统一 P0～P8 代码。本文保留早期模块梳理，接口与源码细节须结合最新 P8 实现核对。
+> **本页主要供定位模块和接口，不等于实机验收。** P7/P8 最新离线结论见 [P8 验收报告](P8_VALIDATION_REPORT.md)；涉及硬件、串口、运动控制或启动文件的修改须先由设备负责人核对。
 
 ## 1. 一分钟认识项目
 
@@ -61,7 +61,7 @@ Nav2 规划/控制                                                ↓
 | 目录/ROS 包 | 作用 | 首选源码入口 |
 | --- | --- | --- |
 | `drivers/livox_ros_driver2` | Livox MID-360 消息驱动；Livox SDK 不在本仓库 | [单雷达建图启动](../Nav2_rea_ws/src/bringup/launch/mapping_single_lidar.launch.py) |
-| `drivers/serial/driver`、`drivers/serial/msgs` | 底盘串口控制；与机械臂工作空间的同名 ROS 包**不是可直接混用的同一配置** | [驱动实现](../Nav2_rea_ws/src/drivers/serial/driver/src/node.cpp) |
+| `chassis_serial_bridge` | Nav2 底盘单向速度发送；独立包名，不与机械臂串口包重名 | [桥接实现](../Nav2_rea_ws/src/drivers/serial/driver/src/chassis_serial_bridge_node.cpp)、[参数](../Nav2_rea_ws/src/drivers/serial/driver/config/serial_params.yaml) |
 | `preprocess/imu_tools` | IMU 坐标转换、互补滤波 | [IMU 启动](../Nav2_rea_ws/src/preprocess/imu_tools/launch/imu_transform.launch.py) |
 | `preprocess/pointcloud_tools` | 点云融合、转换为虚拟 LaserScan、PCD 工具 | [单雷达导航总启动](../Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py) |
 | `localization/point_lio` | 主要单雷达方案中的激光惯性里程计、点云建图 | [配置](../Nav2_rea_ws/src/localization/point_lio/config/mid360.yaml) |
@@ -70,7 +70,7 @@ Nav2 规划/控制                                                ↓
 | `localization/pcd_processor` | 点云到地图、滤波等离线/辅助处理 | [代码目录](../Nav2_rea_ws/src/localization/pcd_processor/) |
 | `navigation/terrain_analysis` | 点云地形、障碍物分析，提供导航代价信息 | [参数](../Nav2_rea_ws/src/navigation/terrain_analysis/config/terrain_analysis_plus.yaml) |
 | `navigation/rm_navigation`、`behavior_ext_plugins`、`fast_layer`、`dog_map` | Nav2 启动、规划/控制配置、行为树与自定义层/插件 | [Nav2 入口](../Nav2_rea_ws/src/navigation/rm_navigation/launch/bringup_rm_navigation.py) |
-| `navigation/fake_vel_transform` | 将导航速度变换为底盘使用的速度坐标系 | [说明](../Nav2_rea_ws/src/navigation/fake_vel_transform/README.md)、[实现](../Nav2_rea_ws/src/navigation/fake_vel_transform/src/fake_vel_transform.cpp) |
+| `navigation/fake_vel_transform` | 保留的历史坐标变换节点；P5b 三个导航 bringup 不启动它，代码保留 angular.z | [说明](../Nav2_rea_ws/src/navigation/fake_vel_transform/README.md)、[实现](../Nav2_rea_ws/src/navigation/fake_vel_transform/src/fake_vel_transform.cpp) |
 | `interfaces` | 导航侧自定义消息接口 | [消息目录](../Nav2_rea_ws/src/interfaces/msg/) |
 | `bringup` | 组合以上模块的不同运行场景、Nav2 参数和 RViz 配置 | [启动目录](../Nav2_rea_ws/src/bringup/launch/) |
 
@@ -93,7 +93,7 @@ Nav2 规划/控制                                                ↓
 | 可选旧 `nav2arm` ↔ 抓取 | `tzb_state_test` 状态 + `/tzb_catch/start` / `/tzb_catch/result` | 依赖缺失的 `tzb_state_test/msg/TzbState` |
 | LiDAR / IMU → Point-LIO | `/livox/lidar`、`/livox/imu`（经 IMU 预处理可能使用 `/imu/data`） | 雷达与惯性测量；以驱动配置和参数重映射为准 |
 | 地形点云 → 虚拟激光 → SLAM | `/terrain_map` → `/scan` → `/map` | 单 MID-360 在线地图方案 |
-| Nav2 → 底盘 | `cmd_vel_nav` → 速度平滑 → `cmd_vel` → `fake_vel_transform` → `/cmd_vel_chassis` | 代码中的预期速度控制链，串口驱动订阅 `/cmd_vel_chassis`；必须现场检查实际连接 |
+| Nav2 → 底盘 | `/cmd_vel_nav` → velocity_smoother → `/cmd_vel` → chassis_serial_bridge → USART1 | 115200/8N1、50 Hz、14 字节单向速度帧；三个 P5b bringup 需要显式 chassis_device。仅离线 PTY 验收，尚无实车/闭环验收 |
 
 ### 机械臂抓放的工作顺序
 
@@ -137,7 +137,12 @@ Nav2 规划/控制                                                ↓
 | P1 | 软件规划、碰撞与合成反馈检查 | 不等于真实机械臂轨迹精度或安全性验证 |
 | P2 | 本机 ROS domain 187、`ROS_LOCALHOST_ONLY=1` 下完成合成抓放/放置/返回流程 | 不等于真实相机识别、夹爪抓取、实体碰撞或下位机闭环验证 |
 | P2b | RGB-D bag 的检查、录制和回放工具已留存 | 尚无获批真实 bag、手眼标定、TF 证据或完整实机抓取验收 |
-| GitHub 交付 | Private 仓库源码、配置和文档已上传 | 全新克隆环境下的构建与测试仍待复核 |
+| P3 / P3b | [离线复验记录](P3_P4B_VALIDATION.md)：时间戳坐标转换测试、动态 URDF/TF 与合成视觉抓放通过 | 光学 TF 是模拟夹具；未验证真实相机外参或实体抓取 |
+| P4a / P4b | [离线复验记录](P3_P4B_VALIDATION.md)：通信帧解析、六关节映射、URDF 限位与 FK 测试通过 | 未验证 STM32 实机协议、零位、方向或运动安全 |
+| P4c | [安全审计与故障注入报告](P4c_control_safety_audit.md) 和 PTY 故障注入脚本归档；报告记录 4 项检查通过 | 安全整改未完成；原始提交 2964e87 来源待核实；未做实机安全验收 |
+| P5a | [底盘源码审计](p5a/chassis-source-audit.md) 与 13 项模型测试；当前本机 13/13 通过 | 固件源码未获授权；无物理串口/CAN 验收 |
+| P5b | [单向控制链路报告](p5b/chassis-ros2-integration.md) 和 [PTY 复验步骤](p5b/run-offline-validation.md)；历史 ROS 2 构建/集成通过 | 本次当前环境无法运行 ROS 2；无实车和完整闭环验收 |
+| GitHub 交付 | P5b 代码基线和选定归档文档位于独立集成分支 | 本机缺少 ROS 2/colcon，需在 Ubuntu 22.04 ROS 2 Humble 环境复现工作空间构建与 PTY 集成测试 |
 
 以下资产**不在 Git 中**：受授权限制的 OpenVINO/YOLO 权重（包括 `.bin`）、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图、校准结果、虚拟环境、密钥和运行日志。不得为追求一键运行而直接提交它们；应先明确所有权、来源和分发范围。
 
@@ -161,3 +166,47 @@ Nav2 规划/控制                                                ↓
 - **P2：** 获得授权的真实 RGB-D 记录与标定资料，按 [P2b 文档](../tzb_ws/tools/p2b/README.md) 逐阶段验收。
 
 以上优先级是交接建议，不代表这些事项已有指定负责人或已批准开展实机实验。
+
+
+## 7. 两套 STM32 控制器与 ROS 2 接口边界
+
+两套固件分别运行在独立 STM32 控制器上。ROS 2 节点通过各自的主机链路发送命令；CAN 是控制器内部连接电机的总线，不是现有 ROS 2 的直接接口。两套 ROS 工作空间也不能在同一个终端叠加，见本指南前文。
+
+### 机械臂控制器
+
+输入工程 lunar_rover.zip 的静态源码显示目标芯片为 STM32H723。控制循环按 2 ms 周期更新六个机械臂关节参考、动力学前馈和电机控制；第七路按夹爪处理。FDCAN3 连接关节电机，FDCAN3 配置为 CAN FD/BRS：时序参数对应标称速率 1 Mbps、数据相位 2 Mbps。variables.cpp 的注释称 classic CAN，但构造参数启用了 FD 和 BRS；需要对照电机侧配置确认，不能仅按注释上实机。电机 CAN 命令与反馈由控制器固件处理，ROS 2 不直接访问 CAN。
+
+主机协议由 USB OTG HS CDC 提供，帧布局如下：
+
+| 方向 | 长度 | 字段 |
+| --- | ---: | --- |
+| ROS 主机到控制器 | 46 字节 | A5；3 个 float32 底盘速度占位字段；4A B5；使能；4 字节预留；6 个 float32 连续关节目标弧度；有符号夹爪命令；4B |
+| 控制器到 ROS 主机 | 35 字节 | 5A 01 4A B5；反馈就绪标记；uint32 帧计数；6 个 float32 连续关节反馈弧度；夹爪状态；4B |
+
+下行的底盘速度字段在机械臂固件中被解析后丢弃。六个关节角使用编码器连续弧度；+1 表示夹紧，-1 表示张开，0 表示保持。固件把偏置与坐标换算留给主机侧。
+
+UART5 配置为 100000 baud、9 位字长、偶校验、单停止位、仅接收，用作遥控/SBUS 输入；它不是 ROS 2 机械臂命令口。当前 tzb_ws ROS 2 驱动配置的是串口式 46 字节桥和 9600 baud。源码确认的固件主机链路是 USB CDC，UART5 则为遥控接收，因此还需核实 USB CDC 端点、主机设备映射、实际线缆以及 ROS 包与固件帧字段的一致性。代码中的 4 字节预留区在固件中被忽略，不能只凭相同的 46 字节长度推断直接互通。
+
+### 六轮底盘控制器
+
+P5a 源码审计显示底盘使用另一块 STM32H723 控制器，FreeRTOS 控制周期为 5 ms（200 Hz）。USART1（PA9/PA10）以 115200 baud、8N1、DMA 接收主机速度命令；帧长 14 字节，依次是 A5、VX/VY/VZ 三个小端 float32、4A。协议没有 CRC、序号或时间戳。固件执行 CH8 模式门控、命令限幅/斜坡、200 ms 串口超时停车及六轮运动学。FDCAN1/2 控制六个 HM G36 电机；BMI088 用于底盘姿态反馈。固件的 FDCAN3 虽初始化，但不在当前六轮电机映射中。
+
+P5a 审计记录的是修复前基线：9600 baud、bringup 未启动桥、fake_vel_transform 覆盖 angular.z、MPPI 横移自由度和旧命令持续重发等问题。P5b 已在 ROS 主机侧修正波特率、launch/topic 路由、差速限制与命令过期清零；仍未提供底盘回传、轮速里程计、BMI088 状态或控制器故障遥测。历史发现和 P5b 修复范围见 docs/p5a/chassis-source-audit.md 与 docs/p5b/chassis-ros2-integration.md。
+
+### 联调边界
+
+机械臂和底盘不能共享一个“46 字节通用串口协议”：机械臂固件主机端点是 USB CDC，底盘是 115200/8N1 UART；两者的控制职责、帧解释和 CAN 电机总线都不同。ROS 2 当前对机械臂的串口参数和固件 USB CDC 实现尚需端口核对。P5b 已修正底盘 Nav2 主机端的波特率、启动链、差速模型和命令新鲜度；轮速/故障遥测和真实闭环仍未实现。P5b 已完成 ROS 2 到 PTY 的单向离线集成验证；未做实机串口、电机或安全联调，也未烧录。
+
+
+## 8. P5b 当前底盘命令链路与验收边界
+
+P5b 将 Nav2 速度命令接入独立的 chassis_serial_bridge：
+
+- Nav2 控制器输出 remap 为 /cmd_vel_nav；velocity_smoother 输出 remap 为 /cmd_vel；桥接只订阅 /cmd_vel。
+- bringup、mapping、mapping_navigation_single_lidar 三种导航入口各启动一次桥接，并要求显式提供 chassis_device。导航链路不再经过 fake_vel_transform。
+- ROS 桥以 115200 baud、8N1 写 USART1；每 20 ms 发送一帧 14 字节：A5、linear.x、固定为零的 linear.y、angular.z（三个小端 float32）、4A。STM32 内部 200 Hz 控制循环再经 FDCAN1/2 驱动六轮 HM G36 电机；ROS 主机不直接访问 CAN。
+- NaN/Inf、超出范围的线/角速度、超过容差的横向速度和不支持轴会导致零速输出。命令停止更新 100 ms 后桥接发送零帧；串口重连后先清零，须收到新的有效 ROS 命令才恢复。
+- ROS 里程计仍由 Point-LIO 发布 /odometry 与 odom_init -> base_frame；LiDAR 的 IMU 处理链提供 Point-LIO 输入。STM32 BMI088、编码器和驱动器故障没有由该桥接读取或发布。
+- P5b 报告记录了 ROS 2 velocity_smoother、真实 bridge 节点和 PTY 模拟接收端的离线集成结果，覆盖 7 类行为；它不包含 Nav2 控制器本身，也不证明 USART1、CH8、CAN、电机或机械制动的真实行为。
+- 新环境恢复时先构建 chassis_serial_bridge，再按 docs/p5b/run-offline-validation.md 执行静态配置检查和 PTY 测试。PTY 参数只能指向伪终端；真实 tty、急停、CH8 和架空轮子测试必须另行执行现场安全流程。
+

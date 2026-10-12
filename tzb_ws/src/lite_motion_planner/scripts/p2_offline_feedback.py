@@ -2,6 +2,7 @@
 """Explicitly synthetic joint feedback for the localhost-only P2 offline test."""
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
@@ -51,7 +52,7 @@ def main():
     node = OfflineArmFeedback()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

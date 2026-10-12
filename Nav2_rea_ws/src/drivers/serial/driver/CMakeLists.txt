@@ -1,29 +1,23 @@
-cmake_minimum_required(VERSION 3.10)
-project(rm_serial_driver)
+cmake_minimum_required(VERSION 3.8)
+project(chassis_serial_bridge)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
-add_compile_options(-O3 -Wall -Wpedantic -Werror)
-
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-find_package(ament_cmake_auto REQUIRED)
-ament_auto_find_build_dependencies()
-
-ament_auto_add_library(${PROJECT_NAME} SHARED
-  DIRECTORY src
+add_executable(chassis_serial_bridge_node
+  src/chassis_serial_bridge_node.cpp
 )
+target_compile_features(chassis_serial_bridge_node PUBLIC cxx_std_17)
+target_compile_options(chassis_serial_bridge_node PRIVATE -Wall -Wextra -Wpedantic -Werror)
+ament_target_dependencies(chassis_serial_bridge_node rclcpp geometry_msgs std_msgs)
 
-rclcpp_components_register_node(${PROJECT_NAME}
-  PLUGIN rm::serial::DriverNode
-  EXECUTABLE node
+install(TARGETS chassis_serial_bridge_node
+  DESTINATION lib/${PROJECT_NAME}
 )
-
-install(DIRECTORY
-  launch
-  config
+install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-ament_auto_package()
+ament_package()

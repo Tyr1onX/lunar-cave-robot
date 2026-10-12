@@ -6,8 +6,9 @@
     parity: "none"
     stop_bits: "1"
 
-    # Navigation/chassis serial fields are still kept in the packet prefix.
-    # Do not remove the serial parameters above when only the arm is being tested.
+    # The 46-byte arm serial format retains a 14-byte navigation prefix for wire compatibility.
+    # This arm bridge is not a Nav2 command owner; use an isolated legacy topic only if needed.
+    tzb.legacy_chassis_command_topic: "/tzb/legacy_chassis_cmd"
 
     # Upper computer <-> lower computer arm serial bridge.
     # Subscribes to tzb_catch arm command and sends 6 joint angles at 100 Hz.
@@ -18,17 +19,33 @@
     tzb.suppress_expected_serial_abort_logs: true
     tzb.arm_command_topic: "/tzb_catch/arm_joint_command"
     tzb.arm_state_topic: "/serial/arm_joint_state"
-    # std_msgs/Int8: 1 closes the gripper; -1 opens it. The current state
-    # is retransmitted with every serial packet until a new command arrives.
+    # std_msgs/Int8: 1 closes, -1 opens, and 0 holds the current gripper state.
+    # Start in hold until an explicit command arrives.
     tzb.gripper_command_topic: "/tzb_catch/gripper_command"
     # Print the actual gripper_command sent on the serial wire at this interval.
     # Set to 0.0 to print on every serial packet.
     tzb.gripper_command_log_interval_sec: 5.0
+    # This sequence is fixed to the STM32 wire order; incoming JointState names may be shuffled.
     tzb.arm_joint_names: ["J1_joint", "J2_joint", "J3_joint", "J4_joint", "J5_joint", "J6_joint"]
+    # ROS joint-space bounds copied from tzb_description/urdf/tzb_description.urdf.
+    tzb.arm_joint_lower_limits_rad: [-1.5708, -1.1345, -2.618, -2.8798, -1.578, -2.8798]
+    tzb.arm_joint_upper_limits_rad: [3.6652, 1.1345, 2.618, 2.8798, 1.5708, 2.8798]
     # Unit used only on the binary serial wire for arm joint angles.
     # ROS JointState and planner parameters stay in radians unless their own YAML says otherwise.
     tzb.arm_serial_angle_unit: "rad"
     tzb.arm_command_publish_hz: 100.0
+    # Candidate host command lease only. The 100 ms value is provisional until
+    # ThinkBook end-to-end jitter and supported mechanical stop behavior are reviewed.
+    tzb.arm_command_lease_sec: 0.1
+    tzb.arm_command_max_age_sec: 0.1
+    tzb.arm_command_future_tolerance_sec: 0.05
+    # Candidate whole-frame feedback timeout; it cannot detect stale individual CAN axes.
+    tzb.arm_feedback_timeout_sec: 0.5
+    tzb.arm_rearm_quiet_sec: 0.1
+    tzb.arm_safety_status_hz: 2.0
+    tzb.arm_safety_status_topic: "/serial/arm_safety/status"
+    tzb.arm_safety_reset_service: "/serial/arm_safety/reset"
+    tzb.arm_safety_enable_service: "/serial/arm_safety/enable"
     tzb.arm_command_speed_scale: 1.0
     tzb.arm_command_goal_tolerance_rad: 0.005
     # Keep this hard limiter aligned with lite_motion_planner.

@@ -16,6 +16,7 @@ find_package(io_context REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(rm_serial_msgs REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
@@ -37,6 +38,7 @@ ament_target_dependencies(${PROJECT_NAME}
   geometry_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   rm_serial_msgs
 )
 
@@ -75,7 +77,29 @@ ament_export_dependencies(
   geometry_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   rm_serial_msgs
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_arm_serial_protocol
+    test/test_arm_serial_protocol.cpp
+    src/packet.cpp
+  )
+  target_include_directories(test_arm_serial_protocol PRIVATE include)
+
+  ament_add_gtest(test_arm_joint_mapping
+    test/test_arm_joint_mapping.cpp
+    src/packet.cpp
+  )
+  target_include_directories(test_arm_joint_mapping PRIVATE include)
+
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(
+    NAME test_tzb_urdf_joint_fk
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tzb_urdf_joint_fk.py
+  )
+endif()
 
 ament_package()

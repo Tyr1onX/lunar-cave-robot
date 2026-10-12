@@ -22,6 +22,7 @@ find_package(moveit_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(lite_motion_msgs REQUIRED)
 find_package(arm2nav_msgs REQUIRED)
 find_package(geometric_shapes REQUIRED)
@@ -166,7 +167,7 @@ if(TARGET dhz_4)
 endif()
 
 ament_target_dependencies(tzb_catch
-  rclcpp trajectory_msgs geometry_msgs sensor_msgs std_msgs visualization_msgs tf2_ros lite_motion_msgs arm2nav_msgs
+  rclcpp trajectory_msgs geometry_msgs sensor_msgs std_msgs visualization_msgs tf2_ros tf2_geometry_msgs lite_motion_msgs arm2nav_msgs
 )
 
 if(TARGET haomu_flow_console)
@@ -183,5 +184,16 @@ install(TARGETS ${PROJECT_NAME}_core ${${PROJECT_NAME}_executables}
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_pose_transform test/test_pose_transform.cpp)
+  target_include_directories(test_pose_transform PRIVATE include)
+  ament_target_dependencies(test_pose_transform
+    rclcpp geometry_msgs tf2_ros tf2_geometry_msgs
+  )
+endif()
+
+install(PROGRAMS scripts/p3b_joint_state_relay.py scripts/p3b_synthetic_vision.py scripts/p3b_urdf_tf_test.py DESTINATION lib/lite_motion_planner)
 
 ament_package()
