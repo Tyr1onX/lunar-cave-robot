@@ -1,6 +1,6 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前软件基线为 ROS 2 Humble 的 P8 主线。STM32 源码已归档，但尚未在这些设备上编译，也不能据此判断控制器当前运行的固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 GitHub `main` 基线为 P8 ROS 2 主线与 P9-A 硬件资产归档；P9-B 固件构建和安全审计在独立 PR 中。ThinkBook 已完成底盘固件交叉编译；机械臂生成文件仍缺失。归档源码不代表实体控制器当前运行的固件版本。
 
 ## 源码地图
 
@@ -34,11 +34,11 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 
 - P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
 - P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
-- 两套 STM32 工程源码树已归档。底盘 CubeMX/CMake/Keil 配置的文件引用完整；机械臂工程缺少 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt` 这两个 XRobot 生成文件。两台 Linux 设备都未发现 ARM GNU 工具链，因此本轮不能报告固件编译通过。
+- P9-C 固件安全分支上，底盘 ARM GNU GCC 10.3.1 交叉编译及底盘/机械臂安全状态机主机测试通过；该固件 PR 尚未合并，验证不涉及实体执行器。机械臂构建仍因缺少 XRobot 生成文件 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt` 而阻塞。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 
-详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)和[资产清单](docs/PROJECT_ASSETS.md)。
+详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
 
 ## 开发与离线验证
 
@@ -52,14 +52,15 @@ P7_SIMULATED_OPERATOR_ACTION=enable-offline-simulator ./tools/p7_offline/run.sh
 
 完整的 12 项离线故障场景可通过 `./tools/run_offline_validation.sh` 运行。脚本只调用仓库内隔离 PTY 测试，并把测试结果写入用户状态目录；不会启动设备驱动或实体机器人。源码和脚本自身的完整性检查入口为 `python3 tools/verify_project_assets.py`。
 
-固件编译入口：
+固件编译入口（构建目录和日志位于用户缓存目录，不会连接控制器）：
 
 ```bash
-cd firmware/chassis && cmake --preset Debug && cmake --build --preset Debug
-cd ../../firmware/arm && cmake --preset Debug && cmake --build --preset Debug
+export STM32CUBECLT_PATH=/path/to/arm-gnu-toolchain
+./tools/build_stm32_firmware.sh chassis
+./tools/build_stm32_firmware.sh arm
 ```
 
-固件需要 CMake 3.22+、Ninja、对应版本的 `arm-none-eabi-gcc`；Keil 工程还需要 MDK-ARM 及 STM32H7 设备包。机械臂当前 CMake 入口会因缺少上面的 XRobot 生成文件而中止。普通构建不会自动下载固件；不要调用 `flash` 或 `flash-cmsis-dap` 目标。输入 ZIP、源码来源和逐文件 SHA-256 见 [`docs/PROJECT_ASSETS.md`](docs/PROJECT_ASSETS.md) 与 [`firmware/SOURCE_SHA256SUMS`](firmware/SOURCE_SHA256SUMS)，软硬件版本映射见 [`docs/HARDWARE_SOFTWARE_MATRIX.md`](docs/HARDWARE_SOFTWARE_MATRIX.md)。
+固件需要 CMake 3.22+ 和 `arm-none-eabi-gcc`；Keil 工程还需要 MDK-ARM 及 STM32H7 设备包。脚本只配置和构建，不调用烧录目标，并将结果按源码 SHA、分支和范围写入设备状态。机械臂当前会因缺少 XRobot 生成文件而停止配置；两套工程的实际构建结论见[固件构建审计](docs/STM32_BUILD_AUDIT.md)。底盘主机侧协议测试可在 ThinkBook 上运行 `firmware/chassis/tests/host/run.sh`，它编译实际底盘解析器/命令代码并 mock HAL，不连接串口或电机。输入 ZIP、源码来源和逐文件 SHA-256 见 [`docs/PROJECT_ASSETS.md`](docs/PROJECT_ASSETS.md) 与 [`firmware/SOURCE_SHA256SUMS`](firmware/SOURCE_SHA256SUMS)，协议和安全缺口见 [`docs/STM32_PROTOCOL_SPEC.md`](docs/STM32_PROTOCOL_SPEC.md)、[`docs/STM32_SAFETY_AUDIT.md`](docs/STM32_SAFETY_AUDIT.md) 与 [`docs/STM32_SAFETY_REMEDIATION_PLAN.md`](docs/STM32_SAFETY_REMEDIATION_PLAN.md)。
 
 ## 三端版本管理
 
@@ -71,6 +72,8 @@ GitHub `main` 是源码版本来源。Mac 连接 ThinkBook 和 NUC 后，在仓�
 ```
 
 状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。默认统一目录为 ThinkBook `~/lunar-cave-robot`、NUC `~/lunar-cave-robot`；原有 P0～P8 工作空间不移动、不覆盖。可以通过 `THINKBOOK_REPO`、`NUC_REPO` 环境变量更改目标路径。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问；同步还需要 Mac SSH agent 中已授权 GitHub 的密钥，密钥不会复制到设备。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)与[设备状态](docs/DEVICE_STATUS.md)。
+
+状态查询会分别显示 P7/P8 全套、单场景、两个 ROS 工作区构建以及两套 STM32 固件构建记录。单场景通过 `./tools/run_p7_scenario.sh normal` 运行并单独记账，不会覆盖完整套件结果；两个 ROS 工作区可用 `./tools/build_ros2_offline_workspaces.sh` 独立构建并自动记录各自结果。测试记录附带执行时 SHA、分支、时间和测试范围；未运行显示“未记录”。
 
 ## 仓库及分享边界
 

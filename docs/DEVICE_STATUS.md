@@ -16,9 +16,9 @@ GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是源码版本来源�
 ./tools/device_status.sh
 ```
 
-脚本以只读方式读取 GitHub `main` SHA，并通过 SSH 别名 `thinkbook` 和 `nuc` 查询统一目录的 HEAD、分支、未提交文件数、与 GitHub 的提交差异、最近一次脚本测试记录和显式部署 SHA。可用 `THINKBOOK_ALIAS`、`NUC_ALIAS`、`THINKBOOK_REPO`、`NUC_REPO` 覆盖默认值。只读查询不转发 SSH agent；同步命令会在当前 SSH 会话中临时转发 Mac agent，以便设备克隆或获取私有 GitHub 仓库。
+脚本以只读方式读取 GitHub `main` SHA，并通过 SSH 别名 `thinkbook` 和 `nuc` 查询统一目录的 HEAD、分支、未提交文件数、与 GitHub 的提交差异、各类构建/测试记录和显式部署 SHA。可用 `THINKBOOK_ALIAS`、`NUC_ALIAS`、`THINKBOOK_REPO`、`NUC_REPO` 覆盖默认值。只读查询不转发 SSH agent；同步命令会在当前 SSH 会话中临时转发 Mac agent，以便设备克隆或获取私有 GitHub 仓库。
 
-设备最近测试记录写在各自 `$XDG_STATE_HOME/lunar-cave-robot/latest-test.yaml`（默认 `$HOME/.local/state/lunar-cave-robot/latest-test.yaml`），包括时间、结果和测试时的 Git SHA。部署版本记录只有在部署负责人确认后才可以手动写入 `deployed-sha`；代码同步脚本不写入它。若状态不可读取，脚本显示 unknown，不推测状态。
+独立记录保存在设备各自 `$XDG_STATE_HOME/lunar-cave-robot/tests/`（默认 `$HOME/.local/state/lunar-cave-robot/tests/`）：`ros-offline-suite.yaml`、`p7-scenario.yaml`、`ros-nav-build.yaml`、`ros-arm-build.yaml`、`firmware-chassis-protocol-test.yaml`、`firmware-chassis-build.yaml` 和 `firmware-arm-build.yaml`。每条记录由脚本从执行时 Git 工作树自动写入时间、结果、SHA、分支和范围；单场景状态不会覆盖完整 P7/P8 套件状态。旧版 `latest-test.yaml` 仍作为无范围历史记录读取。`./tools/device_status.sh` 对缺失记录显示“未记录”，不会把未运行推断为通过。部署版本记录只有在部署负责人确认后才可以手动写入 `deployed-sha`；代码同步脚本不写入它。
 
 ## 已知基线与限制
 

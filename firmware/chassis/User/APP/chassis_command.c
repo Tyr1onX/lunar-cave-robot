@@ -110,3 +110,15 @@ uint8_t chassis_command_read(chassis_command_t *command)
 
     return 0u;
 }
+
+uint8_t chassis_command_is_fresh(const chassis_command_t *command,
+                                 uint32_t now_ms, uint32_t max_age_ms)
+{
+    if (command == 0)
+    {
+        return 0u;
+    }
+
+    /* Unsigned subtraction is intentional so the millisecond tick may wrap. */
+    return ((uint32_t)(now_ms - command->update_ms) <= max_age_ms) ? 1u : 0u;
+}

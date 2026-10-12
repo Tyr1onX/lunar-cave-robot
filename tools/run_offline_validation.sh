@@ -25,4 +25,6 @@ temporary_file=$(mktemp "$state_dir/.latest-test.XXXXXX") || exit 2
   printf 'results: %s\n' "$results_dir"
 } > "$temporary_file"
 mv -f "$temporary_file" "$state_dir/latest-test.yaml"
+"$repo_root/tools/record_local_status.sh" ros-offline-suite "$outcome" \
+  p7_offline_validate_scenarios 12-case-full-suite "$results_dir"
 exit "$result"
