@@ -249,7 +249,7 @@ class MissionControl(Node):
             'chassis_link_status': self.chassis_link_status,
             'mission_event_names': [event.get('event') for event in self.events],
         }
-        if (self.fault in ('chassis_disconnect', 'chassis_disconnect_return')
+        if (self.fault in ('chassis_disconnect', 'chassis_disconnect_return', 'chassis_bridge_stop')
                 and self.fault_injection_time_unix is not None):
             health_events = [event for event in self.events
                              if event.get('event') == 'CHASSIS_LINK_UNHEALTHY']
