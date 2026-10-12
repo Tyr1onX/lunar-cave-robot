@@ -1,82 +1,89 @@
-# Lunar Cave Robot
+# Lunar Cave Robot｜月球洞穴机器人
 
-ROS 2 Humble robot project recovered from the NUC and validated on the ThinkBook. This repository keeps **two separate workspaces**: `tzb_ws/` (arm/perception) and `Nav2_rea_ws/` (navigation). Never source both overlays in the same terminal: both define `rm_serial_driver` / `rm_serial_msgs`.
+基于 **Ubuntu 22.04 / ROS 2 Humble** 的移动机器人与机械臂协作工程。仓库包含导航、底盘串口控制、RGB-D 视觉、机械臂规划与抓放，以及自主采样任务协调代码。
 
-## Architecture and team onboarding
+> **当前交接版本：[`p8/nuc-integration-ready`](https://github.com/Tyr1onX/lunar-cave-robot/tree/p8/nuc-integration-ready)（2026-10-12）。** `main` 仍是早期 P0～P2b 快照，**尚未合并 P3～P8**。本页描述 P8 分支；从 `main` 克隆无法运行下述 P7/P8 工具。
+>
+> **验收边界：** P7/P8 在 ThinkBook 与 NUC 上通过了真实 ROS 2 节点配合模拟数据、虚拟串口（PTY）的任务级离线验收；**尚未通过实机运动、传感器数据、STM32 控制或实体安全验收**。不得将软件离线通过视为真实机器人可安全运行。
 
-New contributors: start with the [system architecture and module handoff guide](docs/ARCHITECTURE.md) (中文). It maps the two ROS 2 workspaces, main launch files, ROS topics/TF, navigation-arm interfaces, verified scope, and open integration gaps. The diagrams describe source-level design; they are **not** evidence of physical-robot acceptance.
+## 项目结构
 
-## Validated boundary
+| 路径 | 内容 |
+| --- | --- |
+| [`Nav2_rea_ws/`](Nav2_rea_ws/) | 底盘导航、Nav2、雷达/定位、P5b 串口桥接、P6 自主任务协调 |
+| [`tzb_ws/`](tzb_ws/) | RGB-D 视觉、YOLO 检测、目标位姿估计、机械臂模型、规划与安全串口驱动 |
+| [`tools/p7_offline/`](tools/p7_offline/) | 不接触真实串口的 ROS 2 + PTY 端到端验收入口与场景测试 |
+| [`tools/p6_offline/`](tools/p6_offline/) | P6 任务逻辑测试与离线验证工具 |
+| [`firmware/`](firmware/) | STM32 固件审计说明；**不包含可编译的机械臂与底盘固件工程** |
+| [`docs/`](docs/) | 架构、各阶段验收、安全约束、部署及发布审计 |
 
-ThinkBook (Ubuntu 22.04 / ROS 2 Humble): original P0 builds completed for 14 arm packages and 18 navigation packages; P1 arm planning and collision checks passed with synthetic feedback; P2 only covered offline software/model checks; P2b provides real-bag capture/replay audit scripts but no real RGB-D bag or hand-eye-calibration acceptance is recorded. **No physical arm, base, camera, lidar or serial-device behavior is verified.**
+核心链路（**P7 离线验收**）：
 
-The publishable snapshot intentionally omits original build/install/log directories, Python environments, captured maps/bags, trained model weights and bundled SDK binary libraries. As a result, a full hardware-driver/model build **requires separately installing authorized upstream dependencies and models**; the isolated offline build below does not cover those components.
-
-## P3–P4b archived offline results
-
-The integration history adds P3 timestamp-safe vision TF conversion, P3b URDF/TF synthetic integration, P4a arm serial framing/parsing, P4b six-joint angle mapping, P4c safety audit evidence, P5a chassis source audit, and the P5b one-way ROS 2 chassis command bridge. See [P3–P4b test commands and measured outcomes](docs/P3_P4B_VALIDATION.md) for source commit SHAs, reproducible tests, and limitations. On ThinkBook, the isolated integrated snapshot built successfully and reported **23 passing colcon tests**; P3b dynamic TF and the synthetic vision-to-place sequence also passed.
-
-**Offline accepted ≠ hardware accepted.** No real STM32 command/feedback, arm motion, gripper, camera hand-eye calibration, navigation-to-arm interaction, or physical safety test is validated. The full STM32 firmware project is not in Git pending separate authorization and license review. Do not launch hardware-facing bringup to reproduce these tests.
-
-## Offline builds (no device access)
-
-Prerequisites: Ubuntu 22.04, ROS 2 Humble, `colcon`, and system dependencies (MoveIt 2, Nav2, slam_toolbox, Eigen/PCL, OMPL, Ruckig, Pinocchio, serial dependencies). Use `rosdep` to inspect missing dependencies; known legacy/external keys `ament_python`, `gz_sim_ros`, `rm_armor_msgs` and `tzb_state_test` cannot be assumed resolvable. In particular, `nav2arm` still needs the unavailable `tzb_state_test` interface at runtime.
-
-From the repository root, in **separate terminals**:
-
-```bash
-source /opt/ros/humble/setup.bash
-cd tzb_ws
-colcon build --base-paths src --packages-skip orbbec_camera \
-  --build-base build/offline --install-base install/offline \
-  --parallel-workers 4
+```text
+P6 自主任务协调
+  ├─ Nav2 规划 / 控制 → 速度平滑 → P5b 底盘串口桥 → PTY 模拟底盘
+  │                                                    └─ 模拟里程计 / TF / 扫描反馈
+  └─ 目标与抓放任务 → P3b 机械臂规划 / P4f 轨迹管理
+                     → P4e 主机安全驱动 → PTY 模拟 STM32 → 模拟关节反馈
 ```
 
-```bash
-source /opt/ros/humble/setup.bash
-cd Nav2_rea_ws
-colcon build --base-paths src --packages-skip livox_ros_driver2 fast_lio point_lio pointcloud_tools \
-  --build-base build/offline --install-base install/offline \
-  --parallel-workers 4
-```
+实际硬件所需的相机、MID-360、定位、外参、真实 MCU 应答及制动/急停**不在这条离线通过的闭环内**。完整模块、话题和 TF 说明见[系统架构与交接指南](docs/ARCHITECTURE.md)；其中部分状态仍以早期快照为基线，P7/P8 的真实验收结论以本页下面链接的报告为准。
 
-Optional camera/laser driver builds need the original SDK libraries obtained from the appropriate licensed upstream distribution; do not copy libraries from NUC or another local system into Git.
+## 当前进展
 
-## Safe offline arm test
+| 阶段 | 已完成并记录的范围 | 仍未验证 |
+| --- | --- | --- |
+| P0～P2b | ROS 2 源码恢复、机械臂规划与合成抓放、RGB-D 数据检查/回放工具 | 真实相机、标定与抓取 |
+| P3～P4f | TF/时间戳、URDF、串口协议、关节映射与 ROS 主机安全/轨迹生命周期的离线测试 | 真实 STM32 停止确认、机械安全 |
+| P5a～P5b | 底盘源码审计、Nav2 到 14 字节串口帧的主机侧控制链和 PTY 检查 | 控制器反馈、里程计、真实刹停 |
+| P6～P7 | ROS 2 任务协调、Nav2 / 机械臂 / 两条模拟串口的完整离线闭环 | 真实任务、运动控制和感知 |
+| P8 | ThinkBook 与 NUC 上 12 个 P7 离线场景分别通过；NUC 上 MID-360 驱动编译通过；增加底盘主机串口失联检测 | MID-360 实际点云/IMU、整机实机联调 |
 
-After completing the arm offline build, from `tzb_ws/`:
+详细证据：[P7 ROS 2 验收](docs/p7/ros2-runtime-acceptance.md) · [P8 验收报告](docs/P8_VALIDATION_REPORT.md) · [P8 部署记录](docs/P8_DEPLOYMENT.md)。
 
-```bash
-./tools/p2_offline/run.sh
-```
+## 快速接手：先跑安全离线流程
 
-The launcher enforces domain 187, localhost-only ROS, synthetic arm feedback, and `/p2_offline/*` command topics; it never starts robot hardware drivers. Ctrl-C stops it. Only use this offline launcher, **not** the default robot bringup files, when no robot operator is present.
+环境：**Ubuntu 22.04、ROS 2 Humble、colcon** 及对应 ROS 系统包（含 Nav2、机械臂规划相关依赖）。完整依赖和独立构建步骤见 [P8 部署文档](docs/P8_DEPLOYMENT.md)。首次构建须按错误信息与 `rosdep` 检查缺失依赖；**不要为了通过构建从原机器复制未授权的 SDK 二进制或模型权重**。
 
-P2 model sample inference requires a separately authorized OpenVINO `.bin` matching the versioned XML and an explicitly supplied RGB sample; `./tools/p2_offline/run_yolo_rgb_sample.sh IMAGE MODEL_DIR` does not activate hardware. P2b bag auditing and replay require independently captured and approved bag files: see `tzb_ws/tools/p2b/README.md`.
+1. 克隆当前集成分支：
 
-## Source provenance and distribution
+   ```bash
+   git clone --single-branch --branch p8/nuc-integration-ready https://github.com/Tyr1onX/lunar-cave-robot.git
+   cd lunar-cave-robot
+   ```
 
-`docs/RELEASE_AUDIT.md` documents copied components, excluded assets and outstanding release blockers. Individual upstream `LICENSE` and `NOTICE` files are preserved; the entire mixed-origin repository is **not** assigned a blanket open-source license. This is an internal private snapshot; any public release still requires project-owner authorization and another license and data audit.
+2. 运行**不连接实体设备**的 P7 正常场景（默认先分别构建所需 ROS 包）：
 
+   ```bash
+   P7_SIMULATED_OPERATOR_ACTION=enable-offline-simulator ./tools/p7_offline/run.sh
+   ```
 
-## Unified engineering archive with P5b
+   启动器强制 `ROS_LOCALHOST_ONLY=1`、独立 ROS Domain，并自行创建、验证 `/dev/pts/*` 模拟串口；拒绝外部指定的串口路径。须看到 `PASS serial isolation: only runtime-created PTYs are configured`。这里的 `enable-offline-simulator` **只是对模拟控制器的显式使能，不是实体机器人使能命令**。
 
-Integration branch: archive/unified-engineering-assets-p5b. It starts directly from the latest P5b branch head eefd91e5d4e378e15b34dc37872413f097131132 and carries the reviewed archive documentation forward. The branch retains all P5b code, offline test scripts, the P4c audit and fault-injection records, and the P3–P4b baseline. It does not change main or either existing archive branch.
+3. 需要完整故障场景验收时运行：
 
-P4c: the arm safety audit and fault-injection report/test are present. Safety remediation remains open. The original short SHA 2964e87 is still not traceable to a source repository or full commit.
+   ```bash
+   ./tools/p7_offline/validate_scenarios.sh
+   ```
 
-P5a: the six-wheel chassis firmware source audit is complete. Firmware source itself remains outside Git pending redistribution authorization.
+   脚本包括正常任务、导航失败、目标丢失、机械臂故障及串口/桥接异常，共 12 个离线场景。历史验收结果详见 [P8 验收报告](docs/P8_VALIDATION_REPORT.md)；新环境仍应独立复测，不能预设结果。
 
-P5b: the ROS 2 one-way chassis command path passed the reported offline build and PTY integration validation. This does not verify a real chassis or closed-loop feedback. See docs/p5b/chassis-ros2-integration.md and docs/p5b/run-offline-validation.md.
+**工作空间隔离：** `tzb_ws/` 与 `Nav2_rea_ws/` 保持独立构建和运行，仍存在重名 `rm_serial_msgs` 包；不要在同一终端随意叠加两个 `install/setup.bash`，也不要把两套源码合并为同一个 colcon 工作空间。P7 启动器已按不同进程隔离所需 overlay。
 
-The arm and chassis STM32 projects remain withheld because project ownership and internal redistribution permission have not been confirmed. The private repository setting does not grant third-party redistribution rights. firmware/arm/ and firmware/chassis/ contain audit notes only.
+## 接手工作建议
 
-To clone this integration branch:
+阅读顺序：**本 README → [架构与模块入口](docs/ARCHITECTURE.md) → [P8 部署与验收](docs/P8_DEPLOYMENT.md) → 自己负责模块的 launch、配置和源码**。
 
-~~~bash
-git clone --single-branch --branch archive/unified-engineering-assets-p5b https://github.com/Tyr1onX/lunar-cave-robot.git
-cd lunar-cave-robot
-python3 tools/p5a_offline/test_chassis_control_path.py
-~~~
+每个模块接手时，至少明确负责人、源码入口、输入/输出 Topic、运行依赖、已验证命令、未完成项和测试结果。修复或新增能力时在独立分支提交 PR，说明**实际执行的测试**；没有执行的验证不要写成通过。实机事项须由设备及安全负责人确认，不能直接套用离线 launch。
 
-For ROS 2 Humble recovery, build and source tzb_ws and Nav2_rea_ws in separate terminals. Install python3-yaml before running tools/p5b_validate_configuration.py. Build chassis_serial_bridge and run the PTY integration steps in docs/p5b/run-offline-validation.md. No firmware is deployed or flashed by these instructions.
+最优先的后续工作：确认两套 STM32 固件及协议的发布/接手权限；补齐真实硬件停止确认、急停/制动与机械限位验收；随后分阶段完成 MID-360 静态点云、相机及手眼标定、定位/里程计、受控运动验证。具体准入要求见[实体机器人安全门槛](docs/REAL_ROBOT_SAFETY_GATES.md)和[MID-360 静态验收](docs/MID360_STATIC_ACCEPTANCE.md)。
+
+## 代码来源与公开发布
+
+本仓库目前为**内部私有工程**，不是已获准公开分发的完整开源发布：
+
+- 机械臂和底盘 STM32 固件源码、模型权重、原始 bag / 私有地图、授权受限 SDK 二进制及运行日志**未纳入版本库**，需分别向权利人取得授权和资产。
+- 工程包含不同来源及许可证的组件；各第三方原始许可与通知应保留，**不得擅自将整个工程统一授权为 MIT 或其他许可证**。
+- 对外设为 Public 前，仍需完成团队代码发布许可、第三方许可证义务、文件及 Git 历史敏感信息审计。
+
+详见[发布审计](docs/RELEASE_AUDIT.md)和[第三方代码许可清单](THIRD_PARTY_NOTICES.md)。如仅需邀请学长审阅，先通过 GitHub 私有仓库协作者权限共享即可。
