@@ -1,5 +1,7 @@
 # Pre-publication audit — 2026-10-11
 
+本页末尾追加了 2026-10-12 的 ThinkBook 全项目源码归档审计；较早章节是历史阶段记录，不应覆盖新审计结论。
+
 Status: **private repository import authorized; not cleared for public release**. Staging: `~/lunar-cave-robot-staging/` on ThinkBook; NUC unchanged.
 
 ## Source snapshots
@@ -107,4 +109,41 @@ P5b 分支的桥接实现、包名、参数、启动入口和 tests 均作为新
 - P5b 原报告记载在 ThinkBook Ubuntu 22.04 / ROS 2 Humble 上构建 chassis_serial_bridge，并用实际 velocity_smoother、bridge 节点与 PTY 模拟接收端通过集成验证。该历史报告列出 7 类控制路径及断线/超时/关闭检查。
 - 当前执行端是 macOS，未安装 ROS 2、rclpy 或 colcon。因此本轮没有重新构建 ROS 包，也没有重跑 P5b/P4c ROS PTY 测试；调用相应命令分别因缺少 colcon、rclpy、ros2 而停止。P3–P4b 历史 23 项 ROS 测试也没有在此主机重跑。
 - 以上离线数据均不涉及实体串口、CAN、电机、相机、雷达或实车。P5b 是单向 ROS 命令链路，不是底盘反馈闭环或实机验收。
+
+## 2026-10-12 ThinkBook 全项目源码归档审计
+
+### 检查范围与 Git 基线
+
+- 通过只读 SSH 核对 ThinkBook 系统、用户主目录下明确的 `lunar-cave-*` 工程、`robot_p0` 内嵌 Git 仓库、`teacher_robot_sources`、常用工程投递目录、可访问挂载点及本地分支。没有遍历无关个人目录，也没有修改 ThinkBook 原工程。
+- ThinkBook 上检查到 `lunar-cave-p8-validation`（`p8/nuc-integration-ready`，`f6005a0`）、P4f 工作区（`p4f/arm-trajectory-safety`，`8accb4e`，含未提交改动）、P6、P7、staging/main 和 `robot_p0` 下 P0～P4c 的嵌套工作区。另见 P0 初始 bundle 及 `teacher_robot_sources/imported/{nav_ws.zip,serial_t.zip}`。检查过的候选根目录中未发现 CubeMX `.ioc`、Keil `.uvproj[x]` 工程文件或机械臂/底盘 ZIP 的另一个副本。
+- GitHub 仓库保持 Private。审计时最新 `main` 是 `35e388f6a064fcb6e229d08d74f2eea6126cae9f`；远端历史包含 P0～P8 阶段分支，ThinkBook P8 七个领先提交已经在该 `main` 中。工作空间 `tzb_ws/`、`Nav2_rea_ws/` 与 P8 基线的 Git 差异为空。
+- P4f 工作区的 10 个已跟踪改动中，7 个与 P8 相同；4 个未跟踪说明/脚本也已在 P8。仅 3 个源文件存在独有差异：P6 launch、`mission_coordinator.py` 和 `tzb_catch.cpp`。逐段比较发现它们回退了 P8 的底盘状态接入、任务命令 keepalive/hold、反馈检查、安全故障门控和目标朝向处理。它们是旧行为回退，未导入。P0/P6/P7 的旧工作区仅有已被 P8 替代的旧版本或第三方 SDK/示例产物，没有复制整套历史工作区。
+
+### STM32 固件工程及授权处置
+
+| 工程 | 结构/硬件与工具链 | 编译与处置 |
+| --- | --- | --- |
+| 六轮底盘 `DM-car-six-wheel.zip` | 本次用户提供的包 SHA-256 `823ff6981859dbce1d05a3d4864b921bd0f9aa5165335d0caec7d12852701d2e`；2252 项、解压约 894 MB。含 STM32H723VGTx、CubeMX `.ioc`、Core/Drivers/Middlewares/User、CMake/CMakePresets、Keil MDK-ARM 工程、启动文件和链接脚本，工程结构基本完整。包还含构建产物、预编译库和日志；根目录无项目 LICENSE。 | ThinkBook 与本机均无 `arm-none-eabi-gcc`、STM32CubeIDE 或 Keil/armclang，未编译。第一方及团队内部共享授权未确认，第三方 HAL/CMSIS/FreeRTOS 许可证不能授权整个工程；不上传源码、二进制、日志或 ZIP。细节见 [`firmware/chassis/README.md`](../firmware/chassis/README.md)。 |
+| 机械臂 `lunar_rover.zip` | 既有审计记录 SHA-256 `63ac07e173e148ab248b1689ccae64ba380b730d0c64b2b29d82b96307c48ab8`、包内 Git HEAD `963fd0275ddbe2c759b35250842284c6d62e90c1`；记录的工程包含 STM32H723、CubeMX、CMake/Keil、启动及链接文件，结构基本完整。此次在 ThinkBook 候选路径没有找到原始 ZIP，因此本轮未重新核对包内容。 | 无本机 STM32 工具链，未编译。项目及内部共享授权没有确认，历史审计所述上游无项目许可证；不上传源码、子模块、预编译内容或 ZIP。具体限制见 [`firmware/arm/README.md`](../firmware/arm/README.md)。 |
+
+两套工程均保留 MCU/工具链、启动/链接、HAL/CMSIS、通信、电机及当前 ROS 2 接口的静态审计摘要，但**当前仓库没有可编译的两套固件工程**。底盘固件串口 115200/8N1、14 字节协议与 P5b ROS 主机帧参数相符；未证明 UART/CAN/电机互通。机械臂包审计记录为 USB OTG HS CDC 的 46 字节下行/35 字节上行，而当前 ROS 2 驱动使用串口设备配置，设备映射及字段兼容仍待有授权的受控验证。未连接或驱动实体硬件。
+
+### 其他候选源码及替代关系
+
+- ThinkBook `robot_p0`、P6、P7 以及 staging 的 ROS 代码被主线 P8 取代；P0 中旧工作区有旧版文件和 Orbbec SDK 二进制、示例图片等，只在对照后排除，没有将旧工作空间叠加到当前树。
+- `nav_ws.zip` SHA-256 `0d4d3cb04085fc6bd5f5a351e84124f33866ad643b224e2381f1027f7f7a925c`：对照 `Nav2_rea_ws` 有 206 个相同文件、21 个不同文件、26 个包内独有文件、143 个主线独有文件。包内 `competition_online_navigation` 启动/参数、目标序列及 Nanling 地图属于额外候选，但归档说明将其标为教师提供，未找到可在团队私有仓库共享的授权；另含编辑器配置、缓存、运行日志、PCD/地图数据。没有导入。
+- `serial_t.zip` SHA-256 `49f0cefbe386ab812ec38084d8d960fa4fe47776bcc16e54df6c8a6cb2328476`：10 项、约 38 KB；其中 ROS 驱动源码与 P8 当前串口实现不同，P8 含后续协议安全策略。压缩包内源文件标注与包元数据中的许可证不一致，仓库链接亦与相机项目无关，无法据此确认权利。没有导入旧代码或协议文档。
+- DM 底盘 ZIP 之前的部分解压副本仅有 64/2252 项，不能作为完整工程；本次未将它当作可编译源树。旧包里的 `.hex/.elf/.map/.axf`、预编译 SDK、缓存和日志均排除。第三方源码没有新增，故本轮不改 `THIRD_PARTY_NOTICES.md`。
+
+### 本轮改动、提交安全与验证
+
+- 本轮没有新增项目代码；仅补充 README、架构、状态和本审计记录。没有更改两个 ROS 2 工作空间、P7/P8 实现或现有测试脚本，也没有恢复旧源码覆盖新实现。
+- 变更范围不含固件、密钥、令牌、绝对设备路径、编译输出、缓存、模型权重、录制数据或第三方源码。仓库 Private 状态保持不变。
+- P5a 离线模型：13/13 通过。P5b 静态配置：ThinkBook ROS 2 环境中 5/5 组通过；本机 macOS 缺少 PyYAML，故不在本机执行该项。
+- 另在 ThinkBook 上从最新 `main` 的干净 Git 快照隔离运行 P4e/P6/P7 验收，没有覆盖原工作区：P4e 所需机械臂工作空间 6 个包、P6 与底盘桥接 2 个包、P7 机械臂工作空间 6 个包均构建成功（仅有 Pinocchio/eigenpy 对 Python 头文件的 CMake 提示）。P4e ROS 驱动 PTY 故障注入 20 项通过；P6 的 8 项逻辑/静态单测、规划取消竞态和 6 个场景通过。
+- P7 12 个正常/故障场景均在隔离运行中得到预期结果。首次顺序执行在第 6 个 `duplicate_trigger` 场景遇到 Nav2 空路径和 controller patience 超时，整条脚本因此提前退出；不改源码单独复跑该场景成功，随后剩余 6 个场景均通过。因此 12 个场景各自均有 PASS 结果，但**首次全套脚本没有一次性跑完**，且保留了一个离线 Nav2 规划不稳定记录。
+- P5a 标准库模型测试 13/13 通过；P5b 静态配置检查在 ThinkBook ROS 2 环境 5/5 组通过。当前 macOS 没有 PyYAML，本机执行 P5b 检查因 `ModuleNotFoundError: yaml` 停止，故改在已装依赖的 ThinkBook 上验证。四份本轮文档的相对 Markdown 链接与 `git diff --check` 均通过。
+- 没有 STM32 编译器，因此固件仅完成结构与静态完整性审查，**未编译**。离线测试不是 STM32、传感器、实体串口、CAN、电机、刹停或机器人运动验收。
+
+**交接结论：** P0～P8 ROS 2 源码、测试和配置已集中于私有 `main`；当前不需要从 ThinkBook 恢复一份未被替代且授权明确的 ROS 2 代码。但两套 STM32 第一方工程的内部共享许可未确认，机械臂原包本轮也未找到，因此还不能宣称仓库已包含全部获准共享的机器人源码或满足完整源码交接条件。
 

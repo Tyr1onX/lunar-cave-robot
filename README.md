@@ -14,7 +14,7 @@
 | [`tzb_ws/`](tzb_ws/) | RGB-D 视觉、YOLO 检测、目标位姿估计、机械臂模型、规划与安全串口驱动 |
 | [`tools/p7_offline/`](tools/p7_offline/) | 不接触真实串口的 ROS 2 + PTY 端到端验收入口与场景测试 |
 | [`tools/p6_offline/`](tools/p6_offline/) | P6 任务逻辑测试与离线验证工具 |
-| [`firmware/`](firmware/) | STM32 固件审计说明；**不包含可编译的机械臂与底盘固件工程** |
+| [`firmware/`](firmware/) | 机械臂与六轮底盘 STM32 固件审计、接口摘要和授权状态；**不包含固件工程源码** |
 | [`docs/`](docs/) | 架构、各阶段验收、安全约束、部署及发布审计 |
 
 核心链路（**P7 离线验收**）：
@@ -40,6 +40,12 @@ P6 自主任务协调
 | P8 | ThinkBook 与 NUC 上 12 个 P7 离线场景分别通过；NUC 上 MID-360 驱动编译通过；增加底盘主机串口失联检测 | MID-360 实际点云/IMU、整机实机联调 |
 
 详细证据：[P7 ROS 2 验收](docs/p7/ros2-runtime-acceptance.md) · [P8 验收报告](docs/P8_VALIDATION_REPORT.md) · [P8 部署记录](docs/P8_DEPLOYMENT.md)。
+
+## 2026-10-12 ThinkBook 源码归档核对
+
+ThinkBook 上的 P0～P8 工作区、历史分支和可访问项目归档已与最新 `main` 对照。两个 ROS 2 工作空间在当前主线中保留；没有发现可安全加入且未被 P8 替代的 ROS 2 源码。P4f 工作区的三处独有代码差异会移除 P8 的安全/超时保护，因此未回灌。旧 `nav_ws.zip`、`serial_t.zip` 版本已被当前导航和串口实现替代，来源/许可证据不足的额外内容没有复制。
+
+本轮确认的底盘固件输入包具有完整 STM32H723/CubeMX/CMake/Keil 工程骨架，但缺少项目级许可和团队内部共享授权，且本机没有 STM32 工具链，未上传也未编译。机械臂固件只可核对到以往审计记录；本次 ThinkBook 候选路径没有找到原始包，源码共享授权同样未确认。具体来源、排除项和验证边界见[发布审计](docs/RELEASE_AUDIT.md)及 [firmware/](firmware/)说明。**因此当前仓库具备 ROS 2 源码交接基础，但还不是包含两套获准固件源码的完整源码交接包。**
 
 ## 快速接手：先跑安全离线流程
 
