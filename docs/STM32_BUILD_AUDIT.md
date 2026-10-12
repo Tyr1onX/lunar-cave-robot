@@ -23,6 +23,7 @@ ThinkBook 为 Ubuntu 22.04 x86_64，CMake 3.22.1、GNU Make 4.3；本次没有 N
 - 结果：ThinkBook CMake 找到 ARM GCC/G++ 10.3.1，配置 **FAIL / BLOCKED** 于 LibXR 的 XRobot 集成检查：`firmware/arm/Modules/CMakeLists.txt` 缺失。`firmware/arm/User/xrobot_main.hpp` 也缺失；源码的 `XRobot.cmake` 明确要求由 XRobot 生成这些产品文件。没有准确产品配置/模块源，因此没有运行生成器、没有编造空文件、没有产出 ELF。
 - 当前用户级工具目录还缺 ARM GNU 单独分发的 newlib C++ headers/runtime。即使补齐 XRobot 输入，仍须先补齐匹配的 C++ 工具链组件再尝试编译。
 - ThinkBook 配置日志：`~/.cache/lunar-cave-robot/p9b-build/arm-cmake-configure.log`。原始压缩包、ThinkBook/NUC 可访问工作区与 Git 历史检索均未找到丢失的生成文件；需要原固件工程负责人提供对应产品的生成结果或完整可复现配置。
+- 生成机制复核：`User/libxr_config.yaml` 标明 LibXR generator 6.0.0，`.config.yaml` 是从 `lunar_rover.ioc` 解析出的 CubeMX 配置；但 ThinkBook PATH 中没有 `libxr` 或 `xrobot` 命令。`Modules/modules.yaml` 仍是 XRobot 模板，并指向示例 `xrobot-org/BlinkLED`；没有找到该机械臂产品实际使用的模块清单/产品配置。`User/app_main.cpp` 明确包含 `xrobot_main.hpp` 并调用 `XROBOT_MAIN()`。即使按 CMake 提示移除 XRobot 集成目录，也不能补回该产品入口和模块实现；不能用默认 BlinkLED 模板生成来冒充原工程。因此本轮不运行生成器、不制造空模块；需负责人提供实际产品配置或对应生成文件。
 
 ## 底盘协议主机测试
 
