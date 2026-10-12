@@ -182,7 +182,7 @@ def main():
     link_status = []
     node.create_subscription(
         String, "/chassis/serial_link_status",
-        lambda message: link_status.append((time.monotonic(), message.data.strip())), 10)
+        lambda message: link_status.append((time.monotonic(), message.data.strip())), 100)
     bridge_out = open(bridge_log, "w")
     smoother_out = open(smoother_log, "w")
     bridge = subprocess.Popen(
@@ -324,15 +324,35 @@ def main():
         os.close(master1)
         master1 = None
         collector2 = FrameCollector(master2)
-        reconnect_frames = run_for(node, None, collector2, 3.5)
+        reconnect_frames = []
+        reconnect_deadline = time.monotonic() + 5.0
+        recovery_observed_at = None
+        while time.monotonic() < reconnect_deadline:
+            rclpy.spin_once(node, timeout_sec=0.02)
+            reconnect_frames.extend(collector2.read(0.01))
+            reconnect_statuses = link_status[status_mark:]
+            failed_statuses = [stamp for stamp, status in reconnect_statuses
+                               if status == "DISCONNECTED"]
+            recovered_statuses = [stamp for stamp, status in reconnect_statuses
+                                  if status == "HOST_WRITE_OK" and failed_statuses
+                                  and stamp > failed_statuses[0]]
+            if failed_statuses and recovered_statuses and \
+                    recovered_statuses[0] > failed_statuses[0]:
+                if recovery_observed_at is None:
+                    recovery_observed_at = time.monotonic()
+                elif time.monotonic() - recovery_observed_at >= 0.35:
+                    break
         reconnect_statuses = link_status[status_mark:]
         failed_statuses = [stamp for stamp, status in reconnect_statuses if status == "DISCONNECTED"]
-        recovered_statuses = [stamp for stamp, status in reconnect_statuses if status == "HOST_WRITE_OK"]
+        recovered_statuses = [stamp for stamp, status in reconnect_statuses
+                              if status == "HOST_WRITE_OK" and failed_statuses
+                              and stamp > failed_statuses[0]]
         check(failed_statuses, "bridge did not publish DISCONNECTED after PTY peer loss")
         check(failed_statuses[0] - disconnect_started < 1.0,
               "bridge did not expose host-side PTY loss promptly")
         check(recovered_statuses and recovered_statuses[0] > failed_statuses[0],
-              "bridge did not publish recovery after opening the replacement PTY")
+              "bridge did not publish recovery after opening the replacement PTY; "
+              f"observed statuses={reconnect_statuses[-20:]}; see {bridge_log}")
         print("PASS chassis link health: PTY loss detected under 1s; reconnect reports host write recovery")
         assert_frame_set(reconnect_frames, "PTY reconnect")
         check(all(max(abs(v) for v in item[2]) < 1e-7 for item in reconnect_frames),
