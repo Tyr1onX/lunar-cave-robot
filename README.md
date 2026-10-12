@@ -2,7 +2,7 @@
 
 基于 **Ubuntu 22.04 / ROS 2 Humble** 的移动机器人与机械臂协作工程。仓库包含导航、底盘串口控制、RGB-D 视觉、机械臂规划与抓放，以及自主采样任务协调代码。
 
-> **当前交接版本：[`p8/nuc-integration-ready`](https://github.com/Tyr1onX/lunar-cave-robot/tree/p8/nuc-integration-ready)（2026-10-12）。** `main` 仍是早期 P0～P2b 快照，**尚未合并 P3～P8**。本页描述 P8 分支；从 `main` 克隆无法运行下述 P7/P8 工具。
+> **当前默认版本：`main`（2026-10-12 整合至 P8 软件基线）。** P0～P8 的现有 ROS 2 主线代码已统一归档；[`p8/nuc-integration-ready`](https://github.com/Tyr1onX/lunar-cave-robot/tree/p8/nuc-integration-ready) 保留为阶段开发记录。
 >
 > **验收边界：** P7/P8 在 ThinkBook 与 NUC 上通过了真实 ROS 2 节点配合模拟数据、虚拟串口（PTY）的任务级离线验收；**尚未通过实机运动、传感器数据、STM32 控制或实体安全验收**。不得将软件离线通过视为真实机器人可安全运行。
 
@@ -27,7 +27,7 @@ P6 自主任务协调
                      → P4e 主机安全驱动 → PTY 模拟 STM32 → 模拟关节反馈
 ```
 
-实际硬件所需的相机、MID-360、定位、外参、真实 MCU 应答及制动/急停**不在这条离线通过的闭环内**。完整模块、话题和 TF 说明见[系统架构与交接指南](docs/ARCHITECTURE.md)；其中部分状态仍以早期快照为基线，P7/P8 的真实验收结论以本页下面链接的报告为准。
+实际硬件所需的相机、MID-360、定位、外参、真实 MCU 应答及制动/急停**不在这条离线通过的闭环内**。完整模块、话题和 TF 说明见[系统架构与交接指南](docs/ARCHITECTURE.md)；其中原始模块说明形成于早期快照，P7/P8 的集成、运行结果及安全边界以本页下面链接的最新验收报告为准。
 
 ## 当前进展
 
@@ -45,10 +45,10 @@ P6 自主任务协调
 
 环境：**Ubuntu 22.04、ROS 2 Humble、colcon** 及对应 ROS 系统包（含 Nav2、机械臂规划相关依赖）。完整依赖和独立构建步骤见 [P8 部署文档](docs/P8_DEPLOYMENT.md)。首次构建须按错误信息与 `rosdep` 检查缺失依赖；**不要为了通过构建从原机器复制未授权的 SDK 二进制或模型权重**。
 
-1. 克隆当前集成分支：
+1. 克隆默认主分支：
 
    ```bash
-   git clone --single-branch --branch p8/nuc-integration-ready https://github.com/Tyr1onX/lunar-cave-robot.git
+   git clone https://github.com/Tyr1onX/lunar-cave-robot.git
    cd lunar-cave-robot
    ```
 
