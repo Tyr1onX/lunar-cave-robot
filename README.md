@@ -1,6 +1,6 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 GitHub `main` 基线为 P8 ROS 2 主线与 P9-A 硬件资产归档；P9-B 固件构建和安全审计在独立 PR 中。ThinkBook 已完成底盘固件交叉编译；机械臂生成文件仍缺失。归档源码不代表实体控制器当前运行的固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 `main` 基线为 P8 ROS 2 主线与 P9-A 硬件资产归档；P9-B 在 PR #6，P9-C 离线稳定性与 STM32 安全整改基于 P9-B 分支继续审查。ThinkBook 的历史 P9-B 记录包含底盘 GCC 交叉编译通过；机械臂 XRobot 生成文件仍缺失。归档源码不代表实体控制器当前运行的固件版本。
 
 ## 源码地图
 
@@ -34,6 +34,7 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 
 - P0～P8 ROS 2 主线已进入 `main`。P8 历史记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。P9-B 对 ROS 工作区的复验结果和源码 SHA 由 `./tools/device_status.sh` 显示。离线记录不表示真实点云、IMU 或机器人运动验收通过。
 - P9-B ThinkBook 上两个 ROS 2 工作空间和底盘 STM32 GCC 构建、生产解析器主机测试通过；机械臂工程缺少 XRobot 生成的 `Modules/CMakeLists.txt` 与 `User/xrobot_main.hpp`，CMake 停止配置，没有 ELF。P7/P8 12 场景及 P4f 6 场景的完整套件目前均有时序/仿真导航失败记录，不能记为全套通过；每个 P7 场景及 P4f 重复触发场景已在独立运行中通过。所有结果都不是实机验收，详见[固件构建审计](docs/STM32_BUILD_AUDIT.md)。
+- P9-C 为底盘和机械臂固件加入人工重新使能状态机、故障锁存和主机侧测试；保留 ROS 2 UART 14 字节与 USB CDC 46 字节接口。P7/P8 12 场景在 ThinkBook 本轮连续通过一次，第二轮复验未完成；此前出现的 Nav2 空局部路径和 P6 规划组名为空仍保留为已知间歇问题。源码通过不代表物理急停或安全停车；底盘 GCC 交叉构建没有 P9-C 新结果，机械臂生成文件仍缺失。当前测试结果、日志路径和未解决限制见 [P9-C 验证记录](docs/P9C_VALIDATION.md) 与 [P9-C 状态机说明](docs/P9C_SAFETY_STATE_MACHINES.md)。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 

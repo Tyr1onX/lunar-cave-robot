@@ -30,6 +30,12 @@ class OfflineContractTest(unittest.TestCase):
         self.assertIn('FAULT_LATCHED', source)
         self.assertIn("MissionState.ABORTED", source)
 
+    def test_navigation_goals_use_latest_tf_for_recovery(self):
+        source = (ROOT / 'Nav2_rea_ws/src/p6_autonomous_mission/'
+                  'p6_autonomous_mission/mission_coordinator.py').read_text()
+        self.assertIn('Keep its stamp at zero', source)
+        self.assertNotIn('goal.pose.header.stamp = self.get_clock().now().to_msg()', source)
+
 
 if __name__ == '__main__':
     unittest.main()

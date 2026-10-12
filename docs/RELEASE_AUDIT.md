@@ -1,3 +1,9 @@
+# P9-C offline stability and firmware safety — 2026-10-13
+
+P9-C is developed on `p9c/offline-stability-stm32-safety`, stacked on open PR #6 branch `p9b/stm32-build-and-safety-audit`. The ROS/firmware implementation under validation is `2af38430b23691a6cf9f12f695b0293000bb24e0`. ThinkBook completed one full P7 12/12 run after the P6 latest-TF recovery change; a second full run is still required for repeated stability. Earlier P7 full-run failures and the unexplained arm planner `Unknown planning group:` failure remain in [P9-C validation](P9C_VALIDATION.md).
+
+P9-C introduces source-level STM32 arming/fault-latch policies. The complete chassis firmware integration has not been cross-compiled in this P9-C environment because `arm-none-eabi-gcc` is not available; PR #6 records an earlier chassis build at its earlier source SHA. The arm build remains blocked on authentic generated XRobot files. No hardware serial interface was opened, no firmware was flashed, and no motor was energized. Physical disable/relax behavior and the arm's gravity support are unknown, so the firmware changes require separate hardware safety review before merge or powered tests. Repository remains Private.
+
 # P9-B 当前固件构建与安全结论 — 2026-10-12
 
 P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-build-and-safety-audit` 独立分支进行；完整构建日志和产物 SHA 见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
