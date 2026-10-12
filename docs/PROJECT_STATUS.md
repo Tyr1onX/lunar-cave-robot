@@ -1,10 +1,20 @@
-
 # 项目阶段状态与验收记录
 
-更新日期：2026-10-11  
-统一集成分支：archive/unified-engineering-assets-p5b  
-代码基线：p5b/chassis-ros2-integration，提交 eefd91e5d4e378e15b34dc37872413f097131132。该提交沿用 archive/p3-p4b-offline-validation 的共同提交 bb6e61f0ba330cc060bd2aaa92cdf73391ce7dbc。  
-说明：本分支在 P5b 代码基线上只选择性整合归档文档；未改写 P5b 实现。离线通过不等于实机或闭环验收。
+更新日期：2026-10-12  
+当前默认分支：`main`，已整合 P0～P8 ROS 2 主线代码与 P8 中文接手说明。  
+P8 软件开发基线：`p8/nuc-integration-ready`（从 P7 `852aced` 延续）；实体硬件相关验收仍不完整。
+
+## 当前主线进度（P6～P8）
+
+- **P6：** 已有 ROS 2 自主采样任务协调和六场景离线集成验收。合成传感器/机械臂反馈不等于实机验收，详见 [P6 验收](p6/ros2-runtime-acceptance.md)。
+- **P7：** 通过完整 Nav2、P5b 底盘桥接、P4e 机械臂驱动与 PTY 模拟 STM32 的软件端到端闭环，详见 [P7 验收](p7/ros2-runtime-acceptance.md)。
+- **P8：** ThinkBook 和 NUC 均记录 **12 项 P7 离线场景通过**；NUC 上 MID-360 驱动编译通过，未启动传感器采集、未验证点云/IMU；新增 P5b 主机串口状态供 P6 快速故障中止，详见 [P8 验收](P8_VALIDATION_REPORT.md)和 [P8 部署](P8_DEPLOYMENT.md)。
+- **仍然缺失：** 两套 STM32 可编译固件工程、实测相机及雷达数据/标定、真实控制器的取消/停止确认、物理急停和实际运动验收。实机操作必须先满足 [安全门槛](REAL_ROBOT_SAFETY_GATES.md)。
+- **发布状态：** 仓库仍为私有，未完成源码所有权、第三方许可及 Git 历史敏感信息审计；详见 [发布审计](RELEASE_AUDIT.md)。
+
+## 历史阶段记录（原 P0～P5b 归档，2026-10-11）
+
+以下是原 P5b 集成资料的阶段记录。文内提及的 `archive/unified-engineering-assets-p5b` 以及“本分支”仅指当时的历史归档基线，不代表目前 `main` 仍停留在 P5b。
 
 ## P0 — ROS 2 工程恢复与基线构建
 
