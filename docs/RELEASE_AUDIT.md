@@ -1,3 +1,13 @@
+# P9-A 当前归档结论 — 2026-10-12
+
+本节覆盖本轮资产归档；下文为阶段历史审计。用户已明确确认机械臂和六轮底盘是战队自有工程，并授权归档到 Private 团队仓库。因此下文早期“无项目级许可证/内部授权所以不上传”的结论已不适用于这两套团队工程。仓库保持 Private；团队授权不改变第三方许可证，也不代表可公开发布。
+
+- 两套 STM32H723 工程已从原始 ZIP 整理进 `firmware/arm/`、`firmware/chassis/`，保留 CubeMX、CMake、Keil、启动/链接配置、源码和必要依赖。输入 ZIP 哈希、源码来源、筛选依据和逐文件校验入口见 [`PROJECT_ASSETS.md`](PROJECT_ASSETS.md) 与 `firmware/SOURCE_SHA256SUMS`。
+- 底盘工程静态结构完整；机械臂工程缺少 `User/xrobot_main.hpp`、`Modules/CMakeLists.txt`，不能独立配置。ThinkBook 和 NUC 均未找到 `arm-none-eabi-gcc`，本轮未编译任何固件。实体控制器版本未知。
+- P0～P8 ROS 主线没有被历史源码覆盖。旧 `nav_ws.zip`、`serial_t.zip` 和 NUC 的 `mid360_driver_dev` 均经对照后未导入。原设备工作区保持不变，P9 统一 clone 独立管理。
+- 可访问路径中没有找到可编辑 CAD、原理图/PCB、BOM 或接线图。底盘 ZIP 内电机厂商 PDF 的再分发条件未确认，未上传并保留在原包。
+- 未打开真实 STM32 串口、未烧录、未启动机器人或电机。新统一目录离线测试以设备状态脚本记录；历史 P8 PTY 通过不代表实机验收。
+
 # Pre-publication audit — 2026-10-11
 
 本页末尾追加了 2026-10-12 的 ThinkBook 全项目源码归档审计；较早章节是历史阶段记录，不应覆盖新审计结论。

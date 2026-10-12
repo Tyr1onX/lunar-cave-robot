@@ -1,6 +1,6 @@
 # 机器人系统架构与成员接手指南
 
-> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜截至 2026-10-12，`main` 统一 P0～P8 代码。本文保留早期模块梳理，接口与源码细节须结合最新 P8 实现核对。
+> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜截至 2026-10-12，`main` 包含 P0～P8 ROS 2 主线和 P9 固件/资产归档。本文保留模块入口索引，接口与源码细节须结合当前 P8 软件实现核对。
 > **本页主要供定位模块和接口，不等于实机验收。** P7/P8 最新离线结论见 [P8 验收报告](P8_VALIDATION_REPORT.md)；涉及硬件、串口、运动控制或启动文件的修改须先由设备负责人核对。
 
 ## 1. 一分钟认识项目
@@ -140,11 +140,11 @@ Nav2 规划/控制                                                ↓
 | P3 / P3b | [离线复验记录](P3_P4B_VALIDATION.md)：时间戳坐标转换测试、动态 URDF/TF 与合成视觉抓放通过 | 光学 TF 是模拟夹具；未验证真实相机外参或实体抓取 |
 | P4a / P4b | [离线复验记录](P3_P4B_VALIDATION.md)：通信帧解析、六关节映射、URDF 限位与 FK 测试通过 | 未验证 STM32 实机协议、零位、方向或运动安全 |
 | P4c | [安全审计与故障注入报告](P4c_control_safety_audit.md) 和 PTY 故障注入脚本归档；报告记录 4 项检查通过 | 安全整改未完成；原始提交 2964e87 来源待核实；未做实机安全验收 |
-| P5a | [底盘源码审计](p5a/chassis-source-audit.md) 与 13 项模型测试；当前本机 13/13 通过 | 固件源码未获授权；无物理串口/CAN 验收 |
+| P5a / P9 | [底盘源码审计](p5a/chassis-source-audit.md)、13 项模型测试；P9 将团队底盘和机械臂 STM32 工程归档到 `firmware/` | 固件未编译；无物理串口/CAN 验收 |
 | P5b | [单向控制链路报告](p5b/chassis-ros2-integration.md) 和 [PTY 复验步骤](p5b/run-offline-validation.md)；历史 ROS 2 构建/集成通过 | 本次当前环境无法运行 ROS 2；无实车和完整闭环验收 |
-| GitHub 交付 | P5b 代码基线和选定归档文档位于独立集成分支 | 本机缺少 ROS 2/colcon，需在 Ubuntu 22.04 ROS 2 Humble 环境复现工作空间构建与 PTY 集成测试 |
+| GitHub 交付 | 当前 `main` 已汇总 P0～P8 ROS 2 主线；P9 归档源码、资产清单和同步机制 | P9 合并后的 ROS 构建与 PTY 结果应查设备实时状态；STM32 未编译、实机未验收 |
 
-以下资产**不在 Git 中**：受授权限制的 OpenVINO/YOLO 权重（包括 `.bin`）、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图、校准结果、虚拟环境、密钥和运行日志。不得为追求一键运行而直接提交它们；应先明确所有权、来源和分发范围。
+当前仍未归档的资产包括 OpenVINO/YOLO 权重、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图和标定结果。可访问目录中没有找到 CAD、原理图/PCB、BOM 或接线图；厂商电机手册因再分发条件未确认留在原始 ZIP。已归档资产、来源和 SHA-256 见[项目资产清单](PROJECT_ASSETS.md)。密钥、运行日志和构建缓存不进入版本库。
 
 另外已有**至少 24 个源文件**包含旧主机绝对路径；`localization/alignment/config/config.yaml` 是直观例子。机械臂原始 YAML、老导航 launch、地图路径以及外部 `tzb_state_test` 依赖需要逐项清理或重新配置。第三方 GPL/Apache/MIT/BSD/AGPL 等信息见 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)，发布边界见 [`RELEASE_AUDIT.md`](RELEASE_AUDIT.md)。
 
@@ -152,7 +152,7 @@ Nav2 规划/控制                                                ↓
 
 1. **先认领模块与接口。** 确认你负责导航、感知、规划、底盘/机械臂串口或系统集成中的哪一块，以及该模块对接人是谁。**现有仓库没有可信的模块负责人名单，不能从提交者推断负责人。**
 2. **读本页和对应 launch / YAML。** 理清输入、输出 Topic、TF、消息类型、硬件端口及是否依赖未上传资产。
-3. **只用安全离线入口复现。** 先遵循仓库 [README 的两工作空间离线构建命令](../README.md#offline-builds-no-device-access)，再验证 [P2 离线流程](../tzb_ws/tools/p2_offline/README.md)。不要为了调试使用默认实机总启动。
+3. **只用安全离线入口复现。** 先遵循仓库 [README 的开发与离线验证入口](../README.md)，再验证 [P2 离线流程](../tzb_ws/tools/p2_offline/README.md)。不要为了调试使用默认实机总启动。
 4. **改动前记录可验证证据。** 至少写清运行环境、命令、预期与实际结果、相关 Topic/TF 和失败日志位置；日志、录制数据留在 Git 之外。
 5. **涉及实机必须走负责人确认。** 包括串口设备名、关节限位/速度、底盘运动、雷达外参、手眼标定、导航安全区域、急停和人员监护，禁止未经审批的直接启动。
 6. **补齐模块交接卡片。** 在后续协作中逐模块填写：负责人/备份人、入口文件、依赖设备/SDK、输入输出、测试命令、当前阻塞、配置与数据存放位置（只记录路径和访问方式，**不要提交密钥和私有文件**）。
@@ -197,11 +197,11 @@ P5a 审计记录的是修复前基线：9600 baud、bringup 未启动桥、fake_
 
 机械臂和底盘不能共享一个“46 字节通用串口协议”：机械臂固件主机端点是 USB CDC，底盘是 115200/8N1 UART；两者的控制职责、帧解释和 CAN 电机总线都不同。ROS 2 当前对机械臂的串口参数和固件 USB CDC 实现尚需端口核对。P5b 已修正底盘 Nav2 主机端的波特率、启动链、差速模型和命令新鲜度；轮速/故障遥测和真实闭环仍未实现。P5b 已完成 ROS 2 到 PTY 的单向离线集成验证；未做实机串口、电机或安全联调，也未烧录。
 
-### 2026-10-12 源码归档状态
+### 2026-10-12 P9 项目资产归档状态
 
 当前 GitHub `main` 中的 [`tzb_ws/`](../tzb_ws/) 与 [`Nav2_rea_ws/`](../Nav2_rea_ws/) 是 P8 ROS 2 主线，二者保持独立构建。ThinkBook 的 P0～P8 分支、工作区及可访问的导航/串口历史包已与该主线核对；没有找到应覆盖或补入的更新 ROS 2 实现。P4f 本地独有的三处修改会撤销 P8 的任务新鲜度、反馈和底盘状态保护，故保留 P8 版本。
 
-[`firmware/arm/README.md`](../firmware/arm/README.md) 和 [`firmware/chassis/README.md`](../firmware/chassis/README.md) 记录的是固件来源与接口审计，不是固件源码。底盘 STM32H723 项目包结构基本完整；机械臂包的结构信息来自既有审计记录，本轮没有在 ThinkBook 候选目录找到原始包。两套工程均没有可确认的团队内部共享授权，当前仓库不能据此独立构建固件。接口摘要来自静态源码审计，不代表 ROS 2 与 MCU 已互通；本机无 STM32 编译工具链，详情和验证记录见[发布审计](RELEASE_AUDIT.md)。
+[`firmware/arm/`](../firmware/arm/) 与 [`firmware/chassis/`](../firmware/chassis/) 当前包含工程源码，而不只是审计说明。两套输入包来源、SHA-256、保留内容与构建边界见[项目资产清单](PROJECT_ASSETS.md)；团队已授权其在 Private 仓库内归档。底盘工程结构和 Keil 文件引用已静态核验，机械臂工程缺少 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt`，不能独立配置。ThinkBook/NUC 均没有 `arm-none-eabi-gcc`，未编译。静态接口摘要不证明 ROS 2 与 MCU 已互通，实体控制器当前版本也未知。软硬件版本对应见[矩阵](HARDWARE_SOFTWARE_MATRIX.md)，三端状态与发布流程见[设备状态](DEVICE_STATUS.md)和[部署流程](DEPLOYMENT_WORKFLOW.md)。
 
 
 ## 8. P5b 当前底盘命令链路与验收边界
