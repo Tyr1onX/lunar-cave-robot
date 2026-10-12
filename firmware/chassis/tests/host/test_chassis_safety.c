@@ -46,8 +46,10 @@ int main(void)
     assert(chassis_safety_update(&safety, 1u, RC_CONTROL_SERIAL, 1u, 1u, 1u, 0u) ==
            CHASSIS_SAFETY_FAULT_LATCHED);
     (void)chassis_safety_update(&safety, 1u, RC_CONTROL_DISABLED, 1u, 0u, 0u, 0u);
+    /* The neutral selector position followed by an active neutral command is
+     * the deliberate manual reset/re-arm sequence. */
     assert(chassis_safety_update(&safety, 1u, RC_CONTROL_SERIAL, 1u, 1u, 1u, 0u) ==
-           CHASSIS_SAFETY_DISARMED);
+           CHASSIS_SAFETY_ARMED);
     assert(chassis_safety_update(&safety, 1u, RC_CONTROL_SERIAL, 1u, 1u, 1u, 0u) ==
            CHASSIS_SAFETY_ARMED);
 
