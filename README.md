@@ -32,8 +32,9 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 
 ## 当前验证边界
 
-- P0～P8 ROS 2 主线已进入 `main`。P8 历史记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。P9-B 对 ROS 工作区的复验结果和源码 SHA 由 `./tools/device_status.sh` 显示。离线记录不表示真实点云、IMU 或机器人运动验收通过。
-- P9-B ThinkBook 上两个 ROS 2 工作空间和底盘 STM32 GCC 构建、生产解析器主机测试通过；机械臂工程缺少 XRobot 生成的 `Modules/CMakeLists.txt` 与 `User/xrobot_main.hpp`，CMake 停止配置，没有 ELF。P7/P8 12 场景及 P4f 6 场景的完整套件目前均有时序/仿真导航失败记录，不能记为全套通过；每个 P7 场景及 P4f 重复触发场景已在独立运行中通过。所有结果都不是实机验收，详见[固件构建审计](docs/STM32_BUILD_AUDIT.md)。
+- P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
+- P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
+- P9-C 固件安全分支上，底盘 ARM GNU GCC 10.3.1 交叉编译及底盘/机械臂安全状态机主机测试通过；该固件 PR 尚未合并，验证不涉及实体执行器。机械臂构建仍因缺少 XRobot 生成文件 `User/xrobot_main.hpp` 与 `Modules/CMakeLists.txt` 而阻塞。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 

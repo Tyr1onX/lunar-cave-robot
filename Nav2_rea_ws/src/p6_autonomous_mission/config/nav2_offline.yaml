@@ -51,7 +51,9 @@ controller_server:
       short_circuit_trajectory_evaluation: true
       stateful: true
       critics: [RotateToGoal, Oscillation, BaseObstacle, GoalAlign, PathAlign, PathDist, GoalDist]
-      BaseObstacle.scale: 0.02
+      # The synthetic cave contains a narrow approach near the final obstacle.
+      # Give inflated obstacle costs enough weight to keep DWB trajectories clear.
+      BaseObstacle.scale: 0.2
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -71,8 +73,8 @@ local_costmap:
       update_frequency: 8.0
       publish_frequency: 3.0
       rolling_window: true
-      width: 4
-      height: 4
+      width: 6
+      height: 6
       resolution: 0.05
       robot_radius: 0.23
       plugins: [obstacle_layer, inflation_layer]

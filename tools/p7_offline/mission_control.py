@@ -56,6 +56,14 @@ class MissionControl(Node):
         self.create_subscription(Odometry, '/odom', self._on_odom, 10)
         self.enable_client = self.create_client(Trigger, '/serial/arm_safety/enable')
 
+    def _wait_for_test_channels(self):
+        # Publish only after DDS graph discovery. A one-shot fault can otherwise
+        # be lost during startup and make a failure case pass for the wrong reason.
+        self.spin_wait(lambda: self.fault_pub.get_subscription_count() > 0,
+                       20.0, 'PTY simulator fault-injection subscriber discovery')
+        self.spin_wait(lambda: self.count_publishers('/p6/mission_events') > 0,
+                       20.0, 'P6 mission-event publisher discovery')
+
     def _write(self, event, **fields):
         item = {'time_unix': time.time(), 'event': event, 'mission_state': self.mission_state}
         item.update(fields)
@@ -205,6 +213,7 @@ class MissionControl(Node):
 
     def run(self):
         self._operator_enable()
+        self._wait_for_test_channels()
         self.spin_wait(lambda: self.start_pub.get_subscription_count() > 0, 15.0,
                        'P6 mission-start subscriber discovery')
         self._write('MISSION_START_PUBLISHED', scenario=self.scenario, fault=self.fault or None)

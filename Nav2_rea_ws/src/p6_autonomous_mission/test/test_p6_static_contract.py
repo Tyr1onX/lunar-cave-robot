@@ -30,6 +30,19 @@ class OfflineContractTest(unittest.TestCase):
         self.assertIn('FAULT_LATCHED', source)
         self.assertIn("MissionState.ABORTED", source)
 
+    def test_navigation_goals_use_latest_tf_for_recovery(self):
+        source = (ROOT / 'Nav2_rea_ws/src/p6_autonomous_mission/'
+                  'p6_autonomous_mission/mission_coordinator.py').read_text()
+        self.assertIn('Keep its stamp at zero', source)
+        self.assertNotIn('goal.pose.header.stamp = self.get_clock().now().to_msg()', source)
+
+    def test_offline_dwb_uses_obstacle_avoidance_weight(self):
+        config = (ROOT / 'Nav2_rea_ws/src/p6_autonomous_mission/config/'
+                  'nav2_offline.yaml').read_text()
+        self.assertIn('BaseObstacle.scale: 0.2', config)
+        self.assertIn('width: 6', config)
+        self.assertIn('height: 6', config)
+
 
 if __name__ == '__main__':
     unittest.main()

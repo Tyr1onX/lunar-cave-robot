@@ -4,7 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 RESULTS="${P7_RESULTS_DIR:-/tmp/p7-end-to-end-results}"
-DOMAIN_START="${P7_DOMAIN_START:-50}"
+# Use a fresh local DDS domain range for each full suite invocation. Reusing a
+# fixed range can cross-talk with another local ROS 2 session on the same host.
+DOMAIN_START="${P7_DOMAIN_START:-$((2 + $$ % 89))}"
 BUILD_JOBS="${P7_BUILD_JOBS:-4}"
 NAV_TIMEOUT="${P7_NAV_TIMEOUT_SEC:-90}"
 MISSION_TIMEOUT="${P7_MISSION_TIMEOUT_SEC:-300}"
@@ -13,13 +15,15 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "ROS 2 Humble is required at /opt/ros/humble/setup.bash" >&2
   exit 2
 fi
-if [[ ! "$DOMAIN_START" =~ ^[0-9]+$ ]] || (( DOMAIN_START < 2 || DOMAIN_START > 101 )); then
-  echo "P7_DOMAIN_START must be an integer in 2..101" >&2
+if [[ ! "$DOMAIN_START" =~ ^[0-9]+$ ]] || (( DOMAIN_START < 2 || DOMAIN_START > 90 )); then
+  echo "P7_DOMAIN_START must be an integer in 2..90 so all 12 scenario domains fit" >&2
   exit 2
 fi
 mkdir -p "$RESULTS"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_RESULTS="$RESULTS/$RUN_ID"
+mkdir -p "$RUN_RESULTS"
 export ROS_LOCALHOST_ONLY=1
-export ROS2CLI_DISABLE_DAEMON=1
 unset ROS_DISCOVERY_SERVER || true
 
 if [[ "${P7_SKIP_BUILD:-0}" != "1" ]]; then
@@ -49,7 +53,7 @@ run_case() {
     return
   fi
   local domain=$((DOMAIN_START + case_index))
-  local case_dir="$RESULTS/$name"
+  local case_dir="$RUN_RESULTS/$name"
   case_index=$((case_index + 1))
   if (( domain > 101 )); then
     echo "P7 case domains exceed ROS_DOMAIN_ID range 0..101" >&2
@@ -84,3 +88,4 @@ run_case chassis_disconnect_return normal ABORTED chassis_disconnect_return
 run_case chassis_bridge_stop normal ABORTED chassis_bridge_stop
 
 echo "P7_E2E_SCENARIOS=PASS results=$RESULTS cases=$case_index"
+echo "P7_E2E_RUN_ID=$RUN_ID"
