@@ -1,25 +1,25 @@
+# 机械臂 STM32 固件
 
-# 机械臂 STM32 工程归档状态
+该目录是从本机 `lunar_rover.zip` 整理出的工程快照，原压缩包 SHA-256 为 `63ac07e173e148ab248b1689ccae64ba380b730d0c64b2b29d82b96307c48ab8`。包内 Git `HEAD` 为 `963fd0275ddbe2c759b35250842284c6d62e90c1`；本次同时保留了压缩包中相对该提交的团队工作区源码变化和新增文件。LibXR 依赖快照为 `783b157fb3e9e5a7801edc9083834ba3ac49801f`。原始 ZIP 未被修改。
 
-状态：源码待授权审计；本目录当前只有本说明，不包含可编译固件。
+## 工程内容
 
-输入包：lunar_rover.zip  
-SHA-256：63ac07e173e148ab248b1689ccae64ba380b730d0c64b2b29d82b96307c48ab8  
-包内 Git 元数据记录的工作分支头：963fd0275ddbe2c759b35250842284c6d62e90c1  
-上游 URL：https://github.com/champ719/lunar_rover
+- MCU：STM32H723VGT6（CubeMX 标识 `STM32H723VGTx`）。
+- 工程入口：`lunar_rover.ioc`、根目录 `CMakeLists.txt` / `CMakePresets.json`、`MDK-ARM/lunar_rover.uvprojx`。
+- 包含 `Core/`、STM32 HAL、CMSIS、USB Device CDC、FreeRTOS、启动文件和链接脚本、LibXR、团队 `User/` 及 `others/` 应用源码。
+- 构建使用 CMake/Ninja 与 ARM GNU 工具链；Keil 工程需 MDK-ARM 5.32 及对应的 STM32H7 设备包。
 
-## 结构检查
+## 构建阻塞
 
-输入包包含 Core/User、STM32H723 的 CubeMX lunar_rover.ioc、根 CMakeLists.txt/CMakePresets.json、Keil MDK-ARM/lunar_rover.uvprojx、链接脚本和多个第三方组件。从工程配置看，源代码与常用构建入口基本齐全。
+当前归档中的 `User/app_main.cpp` 包含 `xrobot_main.hpp`，LibXR 的 CMake 检查还要求 `Modules/CMakeLists.txt`。这两个生成文件不在 ZIP、Git 对象历史、ThinkBook 或 NUC 可访问工程中。`Modules/modules.yaml` 与 `sources.yaml` 保留了配置，但不能替代生成文件。因此目前不能确认 CMake 工程可独立配置或编译；需要从固件负责人处恢复该产品对应的 XRobot 生成文件，或由负责人确认生成方式和模块版本后再生成。
 
-包内有 Git 历史和 LibXR 子模块、数百个 build/cache/Keil 输出、日志、object/hex/map 文件，以及一个与工程无关的可执行文件。归档候选应排除整个 .git、构建目录、缓存、运行日志、目标文件和无关文件；保留工程配置前须逐项复核机器专用路径。
+ThinkBook 与 NUC 当前均没有 `arm-none-eabi-gcc`；本轮未编译、未烧录。普通工程构建不是实机安全验收。
 
-## 许可与权限阻塞
+## 静态接口摘要
 
-工程根目录没有 LICENSE；上游 GitHub 仓库也没有声明项目许可证。包内 CMSIS、ST HAL、USB Device Library、FreeRTOS、LibXR、Eigen 和文档样式等各有不同第三方许可。它们的组件许可不能代替机械臂项目代码的授权，也不能证明团队内部共享许可。
+- USB OTG HS CDC 是 ROS 2 主机数据端点候选；源码定义 46 字节下行目标帧与 35 字节上行状态帧。
+- FDCAN3 源码配置名义速率 1 Mbps、数据相位 2 Mbps，并启用 FD/BRS；需与关节驱动器配置核对。源码中另有 classic CAN 注释，存在需硬件负责人确认的表述差异。
+- UART5 配置为 100000 baud、9 位/偶校验的遥控接收输入，不是 ROS 2 主机命令接口。
+- ROS 2 的主机帧生成逻辑与字节布局已作静态核对；没有做 USB CDC 设备映射、实体 MCU 应答或关节安全测试。
 
-因此目前不上传固件源码、子模块内容或二进制。取得项目权利人书面授权和各第三方组件清单后，再决定是保留许可兼容的来源文件，还是改用授权上游依赖。
-
-## 接口摘要
-
-源码显示控制器目标为 STM32H723；内部 FDCAN3 连接关节电机，控制周期约 2 ms。时序参数对应标称速率 1 Mbps、数据相位 2 Mbps；variables.cpp 的注释称 classic CAN，但构造参数启用了 FD/BRS，需与电机侧协议核对。主机链路由 USB OTG HS CDC 提供 46 字节下行目标帧和 35 字节上行状态帧；UART5 是 100000 baud、9 位/偶校验的仅接收遥控输入，不是 ROS 2 串口命令接口。ROS 2 驱动与 USB CDC 的设备映射和帧字段仍需实机或受控接口验证，不能据源码静态核对宣称互通。
+STM32 当前运行版本未知。源码变化、依赖来源和归档排除项见[项目资产清单](../../docs/PROJECT_ASSETS.md)与[软硬件版本对应表](../../docs/HARDWARE_SOFTWARE_MATRIX.md)。第三方许可保留在各依赖目录。

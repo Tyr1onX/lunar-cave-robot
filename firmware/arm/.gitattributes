@@ -1,0 +1,4 @@
+# Text files are LF in the repository; the working tree follows the platform.
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
