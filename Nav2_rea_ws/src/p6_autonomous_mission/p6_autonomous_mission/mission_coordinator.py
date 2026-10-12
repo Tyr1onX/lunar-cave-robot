@@ -458,7 +458,9 @@ class MissionCoordinator(Node):
         goal = NavigateToPose.Goal()
         goal.pose = PoseStamped()
         goal.pose.header.frame_id = 'map'
-        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        # The goal is expressed in the fixed map frame. Keep its stamp at zero
+        # so recovery behaviors resolve the latest map->odom->base_link TF even
+        # when the original navigation goal has been active for a long time.
         goal.pose.pose.position.x = x
         goal.pose.pose.position.y = y
         if self._odom is not None:
