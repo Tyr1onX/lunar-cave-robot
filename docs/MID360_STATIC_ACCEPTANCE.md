@@ -13,12 +13,11 @@ The driver source, build, install, logs, and transferred Git bundle live under
 ```bash
 source /opt/ros/humble/setup.bash
 cd ~/mid360_driver_dev/repo
-colcon build \
+colcon --log-base ~/mid360_driver_dev/log build \
   --base-paths Nav2_rea_ws/src/drivers/livox_ros_driver2/livox_ros_driver2 \
   --packages-select livox_ros_driver2 \
   --build-base ~/mid360_driver_dev/build \
-  --install-base ~/mid360_driver_dev/install \
-  --log-base ~/mid360_driver_dev/log
+  --install-base ~/mid360_driver_dev/install
 source ~/mid360_driver_dev/install/setup.bash
 ```
 
@@ -28,7 +27,7 @@ Confirm the package and executable without starting the node:
 ros2 pkg prefix livox_ros_driver2
 ros2 pkg executables livox_ros_driver2
 ros2 launch --show-args livox_ros_driver2 mid360_static.launch.py
-ldd ~/mid360_driver_dev/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node
+ldd ~/mid360_driver_dev/install/livox_ros_driver2/lib/liblivox_ros_driver2.so
 ```
 
 `ldd` must show the Livox SDK2 shared library and no `not found` entries.
@@ -56,13 +55,13 @@ which can route the sensor subnet over Wi-Fi while Ethernet is disconnected.
 If the route selects Wi-Fi or the wrong source address, stop and agree on a
 narrow route correction before changing network settings.
 
-UFW was observed active during audit, but its rules were not inspected with
-administrator privileges. Have an authorized operator inspect the existing
+UFW was observed active during audit, but its rules were not inspected because
+`ufw status` requires root. Have an authorized operator inspect the existing
 rules before test day; do not change them as part of this procedure. MID-360
-configuration uses host UDP receive ports 56101, 56201, 56301, 56401, and
-56501. The corresponding lidar-side service/data ports are 56100 through
-56500 as specified in the JSON. Verify the SDK2/driver packet directions and
-firewall policy against the selected configuration before permitting traffic.
+`host_net_info` in the selected JSON specifies UDP ports 56101, 56201, 56301,
+56401, and 56501. Its `lidar_net_info` specifies 56100, 56200, 56300, 56400,
+and 56500. Confirm the required packet directions with the SDK2/driver policy
+and existing firewall before permitting traffic.
 
 ## First live static capture
 
@@ -80,18 +79,32 @@ For the preserved `.147` configuration, substitute its confirmed absolute
 path. The launch publishes standard `sensor_msgs/PointCloud2` on
 `/livox/lidar` and `sensor_msgs/Imu` on `/livox/imu` when packets arrive.
 
-In terminal 2, observe both rates and record a short bag (stop with Ctrl-C):
+In terminal 2, verify advertised types and then run each `hz` command
+separately (they run continuously; stop one with Ctrl-C before starting the next):
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/mid360_driver_dev/install/setup.bash
 ros2 topic list -t
+ros2 topic echo --once /livox/imu
 ros2 topic hz /livox/lidar
+```
+
+Then run this in the same terminal:
+
+```bash
 ros2 topic hz /livox/imu
+```
+
+In terminal 3, record a short bag and stop it with Ctrl-C after both streams
+have been stable for the chosen capture interval:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/mid360_driver_dev/install/setup.bash
 ros2 bag record -o ~/mid360_static_$(date +%Y%m%d_%H%M%S) /livox/lidar /livox/imu
 ```
 
 Acceptance requires the expected message types, nonzero and stable rates on
 both topics, advancing timestamps, and a bag that can be listed and replayed.
-Capture `ros2 topic echo --once /livox/imu` if message-field inspection is
-needed. Do not enable any motion-capable stack during this test.
+Do not enable any motion-capable stack during this test.
