@@ -1,6 +1,6 @@
 # P9-C STM32 安全策略验证
 
-日期：2026-10-13。固件 PR 分支 `p9c/stm32-safety-review` 基于 P9-B 分支 `p9b/stm32-build-and-safety-audit` 的 `0236b72c93018f2bb261c6abf79715f19384e00c`。固件源内容来自 P9-C 提交 `c383944f1bd7861d10c075253a4eccf94f31627a`。以下均为 ThinkBook 离线构建/主机测试；未打开实体 STM32 串口、未烧录、未连接电机。
+日期：2026-10-13。固件 PR 分支 `p9c/stm32-safety-review` 的代码提交为 `ede9181fd6f43f8a8c54f192a475048b2f184f39`，基于 P9-B 分支 `p9b/stm32-build-and-safety-audit` 的 `0236b72c93018f2bb261c6abf79715f19384e00c`。ThinkBook 验证工作树当时位于整合快照 `c383944f1bd7861d10c075253a4eccf94f31627a`；已逐文件检查，两个提交的 `firmware/` 树完全相同。以下均为 ThinkBook 离线构建/主机测试；未打开实体 STM32 串口、未烧录、未连接电机。
 
 ## 主机测试
 

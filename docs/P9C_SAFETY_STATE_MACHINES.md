@@ -1,6 +1,6 @@
 # P9-C Offline Safety State Machines
 
-This document describes the source-level policy added on branch `p9c/offline-stability-stm32-safety`. It is not a safety certification, physical stop test, or permission to energize a robot.
+This document describes the source-level policy proposed on branch `p9c/stm32-safety-review`. It is not a safety certification, physical stop test, or permission to energize a robot.
 
 ## Chassis STM32
 
