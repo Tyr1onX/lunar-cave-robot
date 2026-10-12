@@ -4,7 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 RESULTS="${P7_RESULTS_DIR:-/tmp/p7-end-to-end-results}"
-DOMAIN_START="${P7_DOMAIN_START:-50}"
+# Use a fresh local DDS domain range for each full suite invocation. Reusing a
+# fixed range can cross-talk with another local ROS 2 session on the same host.
+DOMAIN_START="${P7_DOMAIN_START:-$((2 + $$ % 89))}"
 BUILD_JOBS="${P7_BUILD_JOBS:-4}"
 NAV_TIMEOUT="${P7_NAV_TIMEOUT_SEC:-90}"
 MISSION_TIMEOUT="${P7_MISSION_TIMEOUT_SEC:-300}"
@@ -13,8 +15,8 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   echo "ROS 2 Humble is required at /opt/ros/humble/setup.bash" >&2
   exit 2
 fi
-if [[ ! "$DOMAIN_START" =~ ^[0-9]+$ ]] || (( DOMAIN_START < 2 || DOMAIN_START > 101 )); then
-  echo "P7_DOMAIN_START must be an integer in 2..101" >&2
+if [[ ! "$DOMAIN_START" =~ ^[0-9]+$ ]] || (( DOMAIN_START < 2 || DOMAIN_START > 90 )); then
+  echo "P7_DOMAIN_START must be an integer in 2..90 so all 12 scenario domains fit" >&2
   exit 2
 fi
 mkdir -p "$RESULTS"
