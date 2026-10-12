@@ -1,6 +1,8 @@
 #include "threads.hpp"
 #include "roboarm.hpp"
 #include "Remote.h"
+#include "Host.h"
+#include "arm_safety_state.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -107,6 +109,11 @@ void Error_tasks(void *argument)
 {
 	UNUSED(argument);
 	bool holding = false;
+	arm_safety_state_t safety;
+	arm_safety_state_init(&safety);
+	ArmHold();
+	Host_ResetSafetyHandshake();
+	holding = true;
 
 	for (;;)
 	{
@@ -115,21 +122,45 @@ void Error_tasks(void *argument)
 		   避免出现“冷启动接遥控后必须复位一次才能退出急停”。 */
 		Remote_Supervise();
 
-		if (Remote_IsHoldRequested() != 0U)
+		arm_safety_inputs_t inputs = {};
+		inputs.rc_online = Remote_IsOnline();
+		inputs.host_control = Remote_IsHostControl();
+		inputs.hold_requested =
+			(Remote_IsHoldRequested() != 0U || inputs.rc_online == 0U) ? 1U : 0U;
+		inputs.host_disable_event = Host_ConsumeSafetyDisableEvent();
+		inputs.manual_rearm_action = Remote_ConsumeManualRearmRequest();
+		if (inputs.manual_rearm_action != 0U)
 		{
-			if (!holding)
-			{
-				holding = true;
-				ArmHold();
-			}
-			ArmFeedbackKeepAlive();  // 挂起期间保持角度反馈持续刷新，见函数注释
+			/* A manual re-arm first invalidates every pre-fault host command/edge. */
+			Host_ResetSafetyHandshake();
 		}
-		else if (holding)
+		inputs.host_command_fresh = Host_IsCommandFresh();
+		inputs.host_disabled_seen = Host_HasDisabledSinceSafetyReset();
+		inputs.host_enable_after_disabled = Host_HasEnableAfterDisabled();
+		inputs.feedback_initialized =
+			(j1_left.IsInited() && j2_left.IsInited() && j3_left.IsInited() &&
+			 j4_left.IsInited() && j5_left.IsInited() && j6_left.IsInited() &&
+			 j7_left.IsInited()) ? 1U : 0U;
+
+		const arm_safety_state_e next_state = arm_safety_state_update(&safety, &inputs);
+		if ((next_state != ARM_SAFETY_ARMED) && !holding)
+		{
+			holding = true;
+			ArmHold();
+			Host_ResetSafetyHandshake();
+		}
+		else if ((next_state == ARM_SAFETY_ARMED) && holding)
 		{
 			holding = false;
 			ArmResume();
+			Host_SetSafetyArmed(inputs.host_control);
 		}
 
-		osDelay(10);  // 10ms 轮询：与遥控/控制周期同量级，状态切换延迟可忽略
+		if (next_state != ARM_SAFETY_ARMED)
+		{
+			ArmFeedbackKeepAlive();  // 挂起期间保持角度反馈持续刷新，见函数注释
+		}
+
+		osDelay(10);  // MCU 侧命令租约为 100ms；本任务每 10ms 检查一次。
 	}
 }

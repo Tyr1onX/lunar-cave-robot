@@ -171,6 +171,11 @@ void Chaiss_Communication_RxEvent(uint16_t size)
 
 void Chaiss_Communication_UARTError(void)
 {
+    /* Never carry a pre-error fragment into the post-recovery byte stream. */
+    stream_length = 0u;
+    g_chaiss_communication.online = 0u;
+    g_chaiss_communication.last_frame_ms = 0u;
+    g_chaiss_communication.uart_error_count++;
     (void)HAL_UART_AbortReceive(&huart1);
     (void)HAL_UARTEx_ReceiveToIdle_DMA(&huart1,
                                        uart1_rx_dma,

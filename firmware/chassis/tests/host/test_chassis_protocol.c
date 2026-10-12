@@ -145,13 +145,17 @@ int main(void)
     command = command_snapshot();
     assert(command.linear_x != 0.25f);
 
-    /* Fault injection: a UART error re-arms DMA but the production parser retains a partial frame. */
+    /* Fault injection: UART error clears the partial frame before DMA is re-armed. */
     make_frame(frame, 0.2f, 0.0f, -0.3f);
     now_ms = 47u;
     const uint32_t accepted_before_uart_error = g_chaiss_communication.accepted_command_count;
     inject(frame, 7u);
     Chaiss_Communication_UARTError();
     inject(&frame[7], (uint16_t)(sizeof(frame) - 7u));
+    assert(g_chaiss_communication.accepted_command_count == accepted_before_uart_error);
+    assert(g_chaiss_communication.uart_error_count == 1u);
+    now_ms = 48u;
+    inject(frame, sizeof(frame));
     assert(g_chaiss_communication.accepted_command_count == accepted_before_uart_error + 1u);
     command = command_snapshot();
     assert(fabsf(command.linear_x - 0.2f) < 1.0e-6f);
