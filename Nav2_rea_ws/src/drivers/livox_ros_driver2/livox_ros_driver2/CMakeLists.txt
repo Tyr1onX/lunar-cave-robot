@@ -57,12 +57,26 @@ rosidl_generate_interfaces(${LIVOX_INTERFACES}
   LIBRARY_NAME ${PROJECT_NAME}
 )
 
-## make sure the livox_lidar_sdk_shared library is installed
-find_library(LIVOX_LIDAR_SDK_LIBRARY liblivox_lidar_sdk_shared.so /usr/local/lib REQUIRED)
+## Locate the installed Livox SDK2 library and headers.  CMake's positional
+## arguments to find_library() are library names, not search paths; use PATHS
+## explicitly so standard SDK2 installations under /usr/local are discoverable.
+set(LIVOX_SDK2_ROOT "" CACHE PATH "Prefix of an installed Livox SDK2")
+set(_LIVOX_SDK2_LIBRARY_PATHS /usr/local/lib)
+set(_LIVOX_SDK2_INCLUDE_PATHS /usr/local/include)
+if(LIVOX_SDK2_ROOT)
+  list(APPEND _LIVOX_SDK2_LIBRARY_PATHS "${LIVOX_SDK2_ROOT}/lib")
+  list(APPEND _LIVOX_SDK2_INCLUDE_PATHS "${LIVOX_SDK2_ROOT}/include")
+endif()
+
+find_library(LIVOX_LIDAR_SDK_LIBRARY
+  NAMES livox_lidar_sdk_shared
+  PATHS ${_LIVOX_SDK2_LIBRARY_PATHS}
+  REQUIRED)
 
 ##
 find_path(LIVOX_LIDAR_SDK_INCLUDE_DIR
-  NAMES "livox_lidar_api.h" "livox_lidar_def.h"
+  NAMES livox_lidar_api.h
+  PATHS ${_LIVOX_SDK2_INCLUDE_PATHS}
   REQUIRED)
 
 ## PCL library
@@ -90,8 +104,6 @@ ament_auto_add_library(${PROJECT_NAME} SHARED
   src/call_back/lidar_common_callback.cpp
   src/call_back/livox_lidar_callback.cpp
 )
-
-target_include_directories(${PROJECT_NAME} PRIVATE ${livox_sdk_INCLUDE_DIRS})
 
 rosidl_get_typesupport_target(cpp_typesupport_target
 ${LIVOX_INTERFACES} "rosidl_typesupport_cpp")
