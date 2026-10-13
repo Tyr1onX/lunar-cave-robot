@@ -2,6 +2,16 @@
 
 更新日期：2026-10-13。P9-E 审查时 GitHub main 基线为 6a48dc52f5d7f5b263845bdec0639f59144a4486；P9-E PR 只增加文档与主机侧 CI，不改变 ROS/固件源码。最近一次完整 P7/P8 离线套件使用代码 SHA 07a56c3a33882aa2866f1076d8597776e2579bcb，完整结果 12/12 通过。PR #8 仍开放。仓库保持 Private；团队自有工程授权仅用于该私有仓库内部归档，第三方组件仍遵循其原许可证。
 
+## P9-G NUC 与 Mac 控制台检查
+
+本轮检查开始时 GitHub `main` 为 `b1cfe617209a06d69000a515af82b9b95add62ef`。NUC `~/lunar-cave-robot` 为干净的 `main` `6a48dc52f5d7f5b263845bdec0639f59144a4486`，与远程相比落后 2 个提交对象；差异是 P9-E 合并与文档/主机 CI 文件，本轮没有同步或修改 NUC。NUC 未登记 `deployed-sha`。
+
+只读系统检查确认 Ubuntu 22.04.5、ROS 2 Humble、Nav2、rosbag2、Livox SDK2 库、14 GiB 内存和约 827 GiB 根分区空闲。ROS graph 没有活动节点，只看到 `/rosout` 和 `/parameter_events`；没有检查真实传感器反馈。NUC 两套 ROS 工作区的 PASS 记录位于 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`，P7/P8 完整套件记录是较旧且范围未知的 SHA `5124a68d398aa84b59a750e69636bf566f298a1c`。这些记录不是本轮对最新 `main` 的重跑。
+
+首次现场测试判断、依赖阻塞、观察主题和安全限制见 [`NUC_READINESS_ASSESSMENT.md`](NUC_READINESS_ASSESSMENT.md)。NUC 可准备 MID-360 单传感器静态采集，但当前有线网卡 DOWN，必须先确认现场网络和配置；Orbbec 驱动包未构建，YOLO 模型缺少未分发的 `best.bin`，真实相机/视觉/位姿链尚不可测。实体 STM32 版本、设备反馈和停止行为均未核验。
+
+Mac 端第一版只读界面位于 `tools/mac-console/`，复用 `device_status.sh` 并经固定 SSH 快照读取 NUC 主机与 ROS 图。源码、技术选型、运行方式和后续阶段见 [`MAC_CONSOLE_ARCHITECTURE.md`](MAC_CONSOLE_ARCHITECTURE.md)。当前页面只列 Topic 名称、不采样消息；不启动设备或发布控制指令。
+
 ## P9-E 当前源码与验证状态
 
 - P9-E 审查基线 SHA：6a48dc52f5d7f5b263845bdec0639f59144a4486。最近验证的可执行源码快照为 07a56c3a33882aa2866f1076d8597776e2579bcb；main 在该源码之后仅有文档提交。
