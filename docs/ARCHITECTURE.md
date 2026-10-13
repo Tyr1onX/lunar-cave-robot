@@ -142,7 +142,7 @@ Nav2 规划/控制                                                ↓
 | P4c | [安全审计与故障注入报告](P4c_control_safety_audit.md) 和 PTY 故障注入脚本归档；报告记录 4 项检查通过 | 安全整改未完成；原始提交 2964e87 来源待核实；未做实机安全验收 |
 | P5a / P9 | [底盘源码审计](p5a/chassis-source-audit.md)、13 项模型测试；P9 将团队底盘和机械臂 STM32 工程归档到 `firmware/` | P9-B 底盘 GCC 构建、解析器主机测试通过；机械臂缺生成文件；无物理串口/CAN 验收 |
 | P5b | [单向控制链路报告](p5b/chassis-ros2-integration.md) 和 [PTY 复验步骤](p5b/run-offline-validation.md)；历史 ROS 2 构建/集成通过 | 本次当前环境无法运行 ROS 2；无实车和完整闭环验收 |
-| GitHub 交付 | 当前 `main` 已汇总 P0～P8 ROS 2 主线与 P9-A 资产归档；P9-B 在独立 PR | ThinkBook 当前分支 ROS 构建/PTy 结果由设备状态记录显示；底盘可编译，机械臂未生成；实机未验收 |
+| GitHub 交付 | `main` SHA `07a56c3` 包含 P0～P8、P9-A 资产归档和已合并的 P9-B 审计；P9-C 固件安全策略在开放 PR #8 | ThinkBook P7/P8 12/12、ThinkBook/NUC ROS 工作区构建通过；底盘可交叉编译，机械臂缺 XRobot 生成输入；实机未验收 |
 
 当前仍未归档的资产包括 OpenVINO/YOLO 权重、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图和标定结果。可访问目录中没有找到 CAD、原理图/PCB、BOM 或接线图；厂商电机手册因再分发条件未确认留在原始 ZIP。已归档资产、来源和 SHA-256 见[项目资产清单](PROJECT_ASSETS.md)。密钥、运行日志和构建缓存不进入版本库。
 
