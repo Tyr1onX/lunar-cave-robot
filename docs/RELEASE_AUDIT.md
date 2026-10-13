@@ -3,7 +3,7 @@
 P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-build-and-safety-audit` 独立分支进行；完整构建日志和产物 SHA 见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
 
 - ThinkBook ARM GNU GCC 10.3.1 完整构建底盘 STM32 成功；修正 Linux 下头文件大小写，并将原 200 ms 命令年龄谓词抽为可单测函数但保持阈值不变。固件 ELF、MAP、HEX、BIN 保存在用户缓存，不提交。
-- ThinkBook 对 `Nav2_rea_ws` 2 个包与 `tzb_ws` 6 个包的独立 ROS 2 构建均通过；底盘生产解析器与命令租约主机测试通过。该 P9-B 源码快照的 P7/P8 12 场景及 P4f 六场景完整套件未通过；其具体失败和单场景结果仍按当时源码记录。P9-C 后续已在 `main` 修复并连续两轮通过 P7 全套，详见下节。
+- ThinkBook 对 `Nav2_rea_ws` 2 个包与 `tzb_ws` 6 个包的独立 ROS 2 构建均通过；底盘生产解析器与命令租约主机测试通过。P9-B 源码快照当时的结果为：P7/P8 12 场景及 P4f 六场景完整套件未通过；具体失败和单场景结果仍按当时源码记录。后续 P9-C/P9-D 完成了 P7/P8 12 场景完整套件的 12/12 通过复验。P9-C 后续已在 `main` 修复并连续两轮通过 P7 全套，详见下节。
 - 机械臂 CMake 找到 ARM GCC/G++ 后因 XRobot 生成的 `Modules/CMakeLists.txt` 缺失而停止；`User/xrobot_main.hpp` 也未找到。没有生成空文件或猜测产品配置。
 - 底盘主机侧测试直接编译生产 parser/command 逻辑并 mock HAL，结果 PASS；测试确认有限数据位翻转可穿过无 CRC 帧校验、UART 错误恢复会保留半帧。
 - ROS 2 到两套固件的静态协议字段已对照。机械臂 MCU 不消费主机任务序号，USB 失联和 ROS 取消没有固件停止确认；底盘初始化先发送驱动使能帧，缺少总线级停车确认。
@@ -13,7 +13,7 @@ P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-b
 
 ThinkBook 两轮 P7 完整离线场景各 12/12 通过；P4f/P6 构建、PTY 驱动、10 项逻辑/静态检查、规划取消竞态及六个 P6 场景通过。测试使用独立 ROS domain、新结果路径、PTY 和合成数据，不连接实体执行器。P7 的 DWB 离线地图配置与 Humble CLI daemon 清理原因、场景耗时、验证目录和源码 SHA-256 见 [P9-C 离线验证](P9C_OFFLINE_VALIDATION.md)。机械臂物理保持、实体急停、底盘制动和实机传感器链路仍未验收。
 
-P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`；P9-B PR #6 后续以 merge commit `07a56c3a33882aa2866f1076d8597776e2579bcb` 合入。STM32 安全状态机 PR #8 当前直接以 `main` 为基线并保持开放，等待缺失的机械臂 XRobot 产品输入及硬件负责人对电机失能、重力负载保持和独立急停策略的确认。ThinkBook 在 `main` SHA `07a56c3` 完成 P7/P8 12/12；ThinkBook 与 NUC 的 ROS 工作区均构建通过。主机测试与固件交叉编译不代表物理停止或保持已验证。
+P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`；P9-B PR #6 后续以 merge commit `07a56c3a33882aa2866f1076d8597776e2579bcb` 合入。STM32 安全状态机 PR #8 当前直接以 `main` 为基线并保持开放，等待缺失的机械臂 XRobot 产品输入及硬件负责人对电机失能、重力负载保持和独立急停策略的确认。ThinkBook 在 `main` SHA `07a56c3` 完成 P7/P8 12/12；ThinkBook 与 NUC 的 ROS 工作区均构建通过。主机测试与固件交叉编译不代表物理停止或保持已验证。P9-E 审查时 main tip 为 6a48dc52f5d7f5b263845bdec0639f59144a4486；其可执行代码与 P7/P8 最近 12/12 通过所用的 07a56c3a33882aa2866f1076d8597776e2579bcb 相同，之后只有文档提交。P9-E 对 PR #8 的时序审查见 P9E_PR8_INTEGRATION_REVIEW.md。
 
 以下 P9-A 和更早章节是历史审计记录；若与本节的后续构建结论冲突，以 P9-C 的验证记录为准。
 
