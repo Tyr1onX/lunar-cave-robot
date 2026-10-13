@@ -36,6 +36,7 @@ def main() -> int:
     from sensor_msgs.msg import CameraInfo, PointCloud2, PointField
     from geometry_msgs.msg import PoseStamped
     from yolo_node.msg import Detection, DetectionArray
+    from ament_index_python.packages import get_package_prefix
     from pose_estimator.pose_estimation_node import (
         _InvalidPointCloudError, pc2_roi_numpy, pc2_to_numpy)
 
@@ -51,7 +52,7 @@ def main() -> int:
         "pose": suffix + "/pose",
     }
     child_cmd = [
-        "ros2", "run", "pose_estimator", "pose_estimation_node", "--ros-args",
+        str(Path(get_package_prefix("pose_estimator")) / "lib/pose_estimator/pose_estimation_node"), "--ros-args",
         "--params-file", str(Path(args.params).expanduser().resolve()),
         "-p", f"model_path:={model_path}",
         "-p", f"pointcloud_topic:={topics['cloud']}",

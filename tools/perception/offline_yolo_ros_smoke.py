@@ -29,6 +29,7 @@ def main() -> int:
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from sensor_msgs.msg import Image
     from yolo_node.msg import DetectionArray
+    from ament_index_python.packages import get_package_prefix
 
     image = synthetic_blue_block_bgr()
     height, width = image.shape[:2]
@@ -37,7 +38,6 @@ def main() -> int:
     detections_topic = topic_suffix + "/detections"
     annotated_topic = topic_suffix + "/annotated"
     env = os.environ.copy()
-    ros_cli = "ros2"
     model_tmp = tempfile.TemporaryDirectory(prefix="lunar-p9i-appledouble-model-")
     model_bundle = Path(model_tmp.name) / "blue_block"
     model_bundle.mkdir()
@@ -48,7 +48,7 @@ def main() -> int:
     (model_bundle / "._decoy.xml").write_text("not an OpenVINO model", encoding="utf-8")
     (model_bundle / "._decoy.bin").write_bytes(b"not model weights")
     node_cmd = [
-        ros_cli, "run", "yolo_node", "yolo_detector.py", "--ros-args",
+        str(Path(get_package_prefix("yolo_node")) / "lib/yolo_node/yolo_detector.py"), "--ros-args",
         "-p", f"model_path:={model_bundle}",
         "-p", f"image_topic:={image_topic}",
         "-p", f"detection_topic:={detections_topic}",
