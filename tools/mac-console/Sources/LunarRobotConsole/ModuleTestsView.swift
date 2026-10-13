@@ -10,6 +10,7 @@ struct ModuleTestCatalog: Decodable {
 
 struct ModuleTestDefinition: Decodable, Identifiable {
     let id: String
+    let category: String
     let title: String
     let description: String
     let mode: String
@@ -159,7 +160,7 @@ final class ModuleTestsModel: ObservableObject {
                                          durationMs: nil, reason: nil)
                 self.logs = []
                 self.logCursor = 0
-                self.message = "NUC 已开始执行 · OFFLINE"
+                self.message = test.mode == "LIVE" ? "NUC 已开始只读巡检 · LIVE" : "NUC 已开始执行 · \(test.mode)"
                 self.runTask?.cancel()
                 self.runTask = Task { await self.pollRun(started.runId) }
             } catch {
@@ -274,12 +275,30 @@ private struct ModuleTestError: Decodable {
 struct ModuleTestsView: View {
     @ObservedObject var model: ModuleTestsModel
 
+    private struct TestGroup: Identifiable {
+        let name: String
+        let tests: [ModuleTestDefinition]
+        var id: String { name }
+    }
+
     private let lockedLiveTests: [(String, String, String)] = [
         ("相机实机", "camera", "相机驱动、序列号确认与图像验收流程尚未接入"),
         ("MID-360 实机", "sensor", "点云录制、时间同步与外参验收条件未确认"),
         ("底盘实机", "truck.box", "需独立的场地隔离、急停与实机审批证据"),
         ("机械臂实机", "move.3d", "需实机标定、工作区隔离与双人验收"),
     ]
+
+    private var testGroups: [TestGroup] {
+        guard let tests = model.catalog?.tests else { return [] }
+        let grouped = Dictionary(grouping: tests, by: \.category)
+        let preferredOrder = ["基础环境", "视觉离线测试", "底盘离线协议", "Nav2 / 任务离线测试", "机械臂离线模型", "只读设备巡检"]
+        return grouped.keys.sorted {
+            (preferredOrder.firstIndex(of: $0) ?? preferredOrder.count) <
+                (preferredOrder.firstIndex(of: $1) ?? preferredOrder.count)
+        }.map { name in
+            TestGroup(name: name, tests: grouped[name, default: []].sorted { $0.title < $1.title })
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
@@ -293,7 +312,8 @@ struct ModuleTestsView: View {
     }
 
     private var testList: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("可运行测试").font(.system(size: 15, weight: .semibold))
                 Spacer()
@@ -305,12 +325,18 @@ struct ModuleTestsView: View {
                 modeBadge("LIVE", color: Palette.danger)
                 Spacer()
             }
-            if let tests = model.catalog?.tests {
-                ForEach(tests) { test in
-                    Button { model.select(test) } label: {
-                        testRow(test)
+            if model.catalog != nil {
+                ForEach(testGroups) { group in
+                    Text(group.name.uppercased())
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Palette.muted)
+                        .padding(.top, 4)
+                    ForEach(group.tests) { test in
+                        Button { model.select(test) } label: {
+                            testRow(test)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             } else {
                 Text("正在连接受限测试服务…")
@@ -319,7 +345,7 @@ struct ModuleTestsView: View {
                     .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
             }
 
-            Text("后续实机项目").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
+            Text("后续实机运动验收").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
             ForEach(Array(lockedLiveTests.enumerated()), id: \.offset) { _index, item in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: item.1).foregroundStyle(Palette.muted).frame(width: 18)
@@ -334,9 +360,11 @@ struct ModuleTestsView: View {
                 }
                 .padding(12).background(Palette.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
             }
+            }
+            .padding(16)
+            .background(Palette.panel.opacity(0.55), in: RoundedRectangle(cornerRadius: 15))
         }
-        .padding(16)
-        .background(Palette.panel.opacity(0.55), in: RoundedRectangle(cornerRadius: 15))
+        .frame(maxHeight: 780)
     }
 
     private func testRow(_ test: ModuleTestDefinition) -> some View {
@@ -413,7 +441,7 @@ struct ModuleTestsView: View {
 
             if let run = model.run {
                 HStack(spacing: 16) {
-                    reportMetric("结果", value: resultLabel(run.result))
+                    reportMetric("结果", value: resultLabel(run.result, mode: model.selectedTest?.mode ?? "OFFLINE"))
                     reportMetric("耗时", value: run.durationMs.map { String(format: "%.2f 秒", Double($0) / 1000) } ?? "执行中")
                     reportMetric("代码 SHA", value: run.codeSha.map { String($0.prefix(12)) } ?? "记录中")
                     reportMetric("工作树", value: run.codeDirty == true ? "有未提交修改" : (run.codeDirty == false ? "干净" : "未知"))
@@ -450,7 +478,7 @@ struct ModuleTestsView: View {
                 .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
             }
 
-        Text("OFFLINE 通过只表示离线软件检查通过；SIMULATION 属于模拟环境；LIVE 项目在实体条件、标定与安全验收齐备前保持锁定。")
+        Text("OFFLINE 只表示离线软件检查通过；SIMULATION 使用合成数据。LIVE 连接巡检只读现有 ROS 状态，不启动设备；实机运动测试仍锁定。")
                 .font(.system(size: 10)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
         }
         .padding(18)
@@ -515,9 +543,9 @@ struct ModuleTestsView: View {
         return Palette.blue
     }
 
-    private func resultLabel(_ result: String) -> String {
+    private func resultLabel(_ result: String, mode: String) -> String {
         switch result {
-        case "passed": return "通过 · OFFLINE"
+        case "passed": return mode == "LIVE" ? "只读检查完成" : "通过 · \(mode)"
         case "failed": return "失败"
         case "cancelled": return "已停止"
         case "timed_out": return "超时"

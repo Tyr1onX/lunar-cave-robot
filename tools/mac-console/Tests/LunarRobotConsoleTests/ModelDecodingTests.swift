@@ -37,12 +37,13 @@ final class ModelDecodingTests: XCTestCase {
     }
 
     func testModuleTestCatalogAndSavedOfflineReportDecodeSnakeCase() throws {
-        let catalogData = Data(#"{"service":"lunar-console-module-test-runner","source":"nuc-restricted-module-test-runner","busy":false,"tests":[{"id":"arm_fk","title":"机械臂 FK / 运动学","description":"现有 URDF FK 检查","mode":"OFFLINE","state":"ready","reason":null,"input_source":"仓库 URDF 与固定六轴姿态","prerequisites":["现有 URDF"],"timeout_seconds":20}],"collected_at":"2026-10-13T05:00:00Z"}"#.utf8)
+        let catalogData = Data(#"{"service":"lunar-console-module-test-runner","source":"nuc-restricted-module-test-runner","busy":false,"tests":[{"id":"arm_fk","category":"机械臂离线模型","title":"机械臂 FK / 运动学","description":"现有 URDF FK 检查","mode":"OFFLINE","state":"ready","reason":null,"input_source":"仓库 URDF 与固定六轴姿态","prerequisites":["现有 URDF"],"timeout_seconds":20}],"collected_at":"2026-10-13T05:00:00Z"}"#.utf8)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let catalog = try decoder.decode(ModuleTestCatalog.self, from: catalogData)
         XCTAssertFalse(catalog.busy)
         XCTAssertEqual(catalog.tests.first?.id, "arm_fk")
+        XCTAssertEqual(catalog.tests.first?.category, "机械臂离线模型")
         XCTAssertEqual(catalog.tests.first?.mode, "OFFLINE")
         XCTAssertEqual(catalog.tests.first?.state, "ready")
 

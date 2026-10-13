@@ -25,6 +25,7 @@ PORT = 8769
 MAX_REQUEST_BYTES = 4096
 MAX_LOG_BYTES = 1_048_576
 MAX_RUNS = 40
+PROCESS_CLEANUP_GRACE_SECONDS = 8.0
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -97,6 +98,8 @@ class TestSpec:
     timeout_seconds: int
     command: Callable[[Path], tuple[list[str], dict[str, Any], str | None]]
     check: Callable[[Path], list[str]]
+    category: str = "基础检查"
+    ros_domain_id: int = 187
 
 
 def _script(repo: Path, relative: str) -> Path:
@@ -115,33 +118,123 @@ def _check_arm_fk(repo: Path) -> list[str]:
     return [f"缺少仓库文件：{', '.join(missing)}"] if missing else []
 
 
+def _field_lab_root() -> Path:
+    configured = os.environ.get("LUNAR_CONSOLE_FIELD_LAB_ROOT", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / "lunar-field-lab-p9i"
+
+
+def _yolo_model_dir() -> Path | None:
+    configured = os.environ.get("LUNAR_CONSOLE_YOLO_MODEL_DIR", "").strip()
+    if not configured:
+        config = Path.home() / ".config" / "lunar-console" / "yolo-model-dir"
+        try:
+            configured = config.read_text(encoding="utf-8").splitlines()[0].strip()
+        except (OSError, IndexError):
+            configured = ""
+    if configured:
+        return Path(configured).expanduser()
+    discovered = _field_lab_root() / "models" / "blue_block"
+    return discovered if discovered.is_dir() else None
+
+
+def _check_script_files(repo: Path, relative_paths: tuple[str, ...]) -> list[str]:
+    missing = [path for path in relative_paths if not _script(repo, path).is_file()]
+    return [f"缺少仓库文件：{', '.join(missing)}"] if missing else []
+
+
+def _check_ros_suite(repo: Path, script: str) -> list[str]:
+    issues = _check_script_files(repo, (script,))
+    if not Path("/opt/ros/humble/setup.bash").is_file():
+        issues.append("缺少 ROS 2 Humble：/opt/ros/humble/setup.bash")
+    if shutil.which("colcon") is None:
+        issues.append("缺少 colcon；不会自动安装依赖")
+    return issues
+
+
+def _check_chassis_protocol(repo: Path) -> list[str]:
+    issues = _check_script_files(repo, (
+        "tools/module-tests/scripts/run_chassis_protocol_checks.py",
+        "tools/p5a_offline/test_chassis_control_path.py",
+        "tools/p5b_validate_configuration.py",
+    ))
+    if importlib.util.find_spec("yaml") is None:
+        issues.append("当前 Python 环境缺少 PyYAML；不会自动安装")
+    return issues
+
+
+def _check_p6_scenarios(repo: Path) -> list[str]:
+    issues = _check_ros_suite(repo, "tools/p6_offline/validate_scenarios.sh")
+    for relative in ("Nav2_rea_ws/src/p6_autonomous_mission", "tzb_ws/src/lite_motion_planner"):
+        if not _script(repo, relative).is_dir():
+            issues.append(f"缺少 P6 离线包目录：{relative}")
+    return issues
+
+
+def _check_p7_scenarios(repo: Path) -> list[str]:
+    issues = _check_ros_suite(repo, "tools/p7_offline/validate_scenarios.sh")
+    for relative in ("Nav2_rea_ws/src/p6_autonomous_mission", "Nav2_rea_ws/src/drivers/serial/driver", "tzb_ws/src/lite_motion_planner", "tzb_ws/src/serial/driver"):
+        if not _script(repo, relative).is_dir():
+            issues.append(f"缺少 P7 离线包目录：{relative}")
+    return issues
+
+
+def _check_device_observer(repo: Path) -> list[str]:
+    issues = _check_script_files(repo, ("tools/module-tests/scripts/observe_ros_device.py",))
+    if not Path("/opt/ros/humble/setup.bash").is_file():
+        issues.append("缺少 ROS 2 Humble：/opt/ros/humble/setup.bash")
+    try:
+        rclpy_available = importlib.util.find_spec("rclpy") is not None
+    except (ImportError, ValueError):
+        rclpy_available = False
+    if not rclpy_available:
+        issues.append("当前服务没有可用的 ROS 2 Python 运行时")
+    return issues
+
+
+def _check_python_modules(python: Path, modules: tuple[str, ...]) -> list[str]:
+    probe = "import importlib.util,sys; missing=[name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]; print(','.join(missing)); raise SystemExit(bool(missing))"
+    try:
+        result = subprocess.run([str(python), "-c", probe, *modules], check=False, capture_output=True, text=True, timeout=3.0)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"无法检查现有 Python 环境：{type(exc).__name__}"]
+    missing = result.stdout.strip()
+    if result.returncode:
+        return [f"现有 Python 环境缺少模块：{missing or '运行时检查失败'}"]
+    return []
+
+
 def _check_yolo(repo: Path) -> list[str]:
+    # These probes inspect the existing environment only; they never install packages.
     issues: list[str] = []
-    script = _script(repo, "tools/perception/offline_yolo_ros_smoke.py")
-    if not script.is_file():
-        issues.append(f"缺少离线推理脚本：{script.relative_to(repo)}")
-    model_value = os.environ.get("LUNAR_CONSOLE_YOLO_MODEL_DIR", "").strip()
-    if not model_value:
-        issues.append("未配置 NUC 环境变量 LUNAR_CONSOLE_YOLO_MODEL_DIR（模型目录不随 Git 分发）")
+    issues.extend(_check_script_files(repo, ("tools/perception/offline_yolo_ros_smoke.py", "tools/module-tests/scripts/run_yolo_offline.sh")))
+    field_lab = _field_lab_root()
+    model = _yolo_model_dir()
+    if model is None:
+        issues.append("未找到模型目录；配置 LUNAR_CONSOLE_YOLO_MODEL_DIR 或准备 lunar-field-lab-p9i/models/blue_block")
     else:
-        model = Path(model_value).expanduser()
         required = ("metadata.yaml", "yoloe-26l-seg.xml", "yoloe-26l-seg.bin")
         missing = [name for name in required if not (model / name).is_file()]
         if missing:
-            issues.append(f"模型目录缺少：{', '.join(missing)}")
-    for package in ("rclpy", "ament_index_python", "cv2", "ultralytics", "numpy"):
-        try:
-            available = importlib.util.find_spec(package) is not None
-        except (ImportError, ValueError):
-            available = False
-        if not available:
-            issues.append(f"NUC Python 环境缺少模块：{package}")
-    try:
-        from ament_index_python.packages import get_package_prefix
-        for package in ("yolo_node", "sensor_msgs", "std_msgs"):
-            get_package_prefix(package)
-    except Exception:
-        issues.append("ROS overlay 中缺少 yolo_node、sensor_msgs 或 std_msgs 包")
+            issues.append(f"模型目录 {model} 缺少：{', '.join(missing)}")
+    python = field_lab / "venv" / "bin" / "python"
+    setup = field_lab / "build" / "tzb" / "install" / "setup.bash"
+    yolo_prefix = field_lab / "build" / "tzb" / "install" / "yolo_node"
+    if not python.is_file() or not os.access(python, os.X_OK):
+        issues.append(f"缺少可用的现成 Python 环境：{python}")
+    else:
+        issues.extend(_check_python_modules(python, ("rclpy", "ament_index_python", "cv2", "ultralytics", "numpy", "openvino")))
+    if not Path("/opt/ros/humble/setup.bash").is_file():
+        issues.append("缺少 ROS 2 Humble：/opt/ros/humble/setup.bash")
+    if not setup.is_file():
+        issues.append(f"缺少已构建 ROS overlay：{setup}")
+    for relative in ("lib/yolo_node/yolo_detector.py", "share/yolo_node/package.xml", "share/ament_index/resource_index/packages/yolo_node"):
+        if not (yolo_prefix / relative).is_file():
+            issues.append(f"现有 overlay 缺少 yolo_node 文件：{relative}")
+    if not any(yolo_prefix.glob("lib/python*/site-packages/yolo_node/msg/_detection_array.py")):
+        issues.append("现有 overlay 缺少 yolo_node/msg/DetectionArray 生成消息")
+    for package in ("sensor_msgs", "std_msgs"):
+        if not Path("/opt/ros/humble/share", package, "package.xml").is_file():
+            issues.append(f"ROS Humble overlay 缺少 {package} 包")
     return issues
 
 
@@ -162,31 +255,103 @@ def _fk_command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
 
 
 def _yolo_command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
-    model = Path(os.environ["LUNAR_CONSOLE_YOLO_MODEL_DIR"]).expanduser().resolve()
-    return [sys.executable, str(_script(repo, "tools/perception/offline_yolo_ros_smoke.py")), "--model", str(model), "--timeout", "90"], {
+    model = _yolo_model_dir()
+    if model is None:
+        raise RuntimeError("YOLO model directory disappeared after preflight")
+    field_lab = _field_lab_root()
+    wrapper = _script(repo, "tools/module-tests/scripts/run_yolo_offline.sh")
+    return ["/bin/bash", str(wrapper)], {
         "input": "synthetic blue-block image generated by tools/perception/offline_test_data.py",
-        "model_dir": str(model),
+        "model_dir": str(model.resolve()),
+        "ros_overlay_setup": str((field_lab / "build/tzb/install/setup.bash").resolve()),
+        "python_environment": str((field_lab / "venv/bin/python").resolve()),
         "inference_device": "CPU",
         "timeout_seconds": 90,
     }, str(model)
+
+
+def _chassis_protocol_command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
+    return [sys.executable, str(_script(repo, "tools/module-tests/scripts/run_chassis_protocol_checks.py"))], {
+        "checks": ["p5a offline 14-byte protocol model", "p5b static ROS/STM32 source and configuration contract"],
+        "device_access": "none; source and software model only",
+    }, None
+
+
+def _fixed_script_command(relative: str, parameters: dict[str, Any]) -> Callable[[Path], tuple[list[str], dict[str, Any], str | None]]:
+    def command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
+        return ["/bin/bash", str(_script(repo, relative))], dict(parameters), None
+    return command
+
+
+def _device_command(device: str) -> Callable[[Path], tuple[list[str], dict[str, Any], str | None]]:
+    def command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
+        return [sys.executable, str(_script(repo, "tools/module-tests/scripts/observe_ros_device.py")), "--device", device], {
+            "device_profile": device,
+            "ros_domain_id": 0,
+            "ros_localhost_only": "1",
+            "observation": "existing ROS graph and fixed low-bandwidth status topics; no driver, publisher, service client, or control topic",
+        }, None
+    return command
+
+
+def _device_spec(test_id: str, title: str, device: str, description: str, topics: tuple[str, ...]) -> TestSpec:
+    return TestSpec(
+        id=test_id, title=title, description=description, mode="LIVE",
+        input_source="NUC 当前本机 ROS Domain 0 的只读图巡检；localhost-only",
+        prerequisites=("ROS 2 Humble 已运行", "只发现既有 Topic/发布者；不启动硬件驱动", *topics),
+        timeout_seconds=12, command=_device_command(device), check=_check_device_observer,
+        category="只读设备巡检", ros_domain_id=0,
+    )
 
 
 DEFAULT_TESTS: tuple[TestSpec, ...] = (
     TestSpec(
         id="ros_environment", title="ROS 环境检查", description="检查 ROS 2 Humble、Python rclpy 与本地隔离测试环境。",
         mode="OFFLINE", input_source="NUC 软件环境与本地 ROS 配置", prerequisites=("检查目标：ROS 2 Humble / rclpy", "隔离环境：ROS Domain 187 / localhost-only"),
-        timeout_seconds=20, command=_ros_command, check=_check_ros_environment,
+        timeout_seconds=20, command=_ros_command, check=_check_ros_environment, category="基础环境",
     ),
     TestSpec(
         id="arm_fk", title="机械臂 FK / 运动学", description="复用仓库现有六轴 URDF 正向运动学与轴方向检查。",
         mode="OFFLINE", input_source="仓库 tzb_description URDF 与固定六轴测试姿态", prerequisites=("现有 tzb_description URDF", "Python 3 标准库"),
-        timeout_seconds=20, command=_fk_command, check=_check_arm_fk,
+        timeout_seconds=20, command=_fk_command, check=_check_arm_fk, category="机械臂离线模型",
     ),
     TestSpec(
         id="yolo_offline", title="YOLO 离线推理", description="复用现有 ROS 离线烟雾测试，在合成蓝色方块帧上做 CPU 推理。",
         mode="OFFLINE", input_source="合成测试帧；不读取相机，不代表真实场景精度", prerequisites=("NUC OpenVINO 模型目录", "已构建 yolo_node overlay", "OpenCV / Ultralytics / ROS Python"),
-        timeout_seconds=120, command=_yolo_command, check=_check_yolo,
+        timeout_seconds=180, command=_yolo_command, check=_check_yolo, category="视觉离线测试",
     ),
+    TestSpec(
+        id="chassis_protocol", title="底盘串口协议 / 静态合同", description="运行现有 14 字节协议离线模型并核对 ROS 桥接源码、参数和帧格式；不打开串口。",
+        mode="OFFLINE", input_source="仓库 P5a/P5b 协议模型、桥接源码与 YAML 配置", prerequisites=("Python 3 标准库", "PyYAML", "仅 PTY/源码离线检查；无真实 UART"),
+        timeout_seconds=20, command=_chassis_protocol_command,
+        check=_check_chassis_protocol,
+        category="底盘离线协议",
+    ),
+    TestSpec(
+        id="p6_unit", title="P6 任务协调单元测试", description="复用现有任务状态机和故障处理单元测试。",
+        mode="OFFLINE", input_source="P6 自带 unittest 场景与故障用例", prerequisites=("仓库 P6 包与测试文件", "Python 3 标准库", "不启动 ROS 节点或硬件"),
+        timeout_seconds=30, command=_fixed_script_command("tools/p6_offline/run_unit_tests.sh", {"suite": "p6_autonomous_mission unittest"}),
+        check=lambda repo: _check_script_files(repo, ("tools/p6_offline/run_unit_tests.sh", "Nav2_rea_ws/src/p6_autonomous_mission/test/test_mission_logic.py")),
+        category="Nav2 / 任务离线测试",
+    ),
+    TestSpec(
+        id="p6_scenarios", title="P6 Nav2 + 机械臂路径规划场景", description="复用六场景隔离仿真，覆盖 Nav2 导航、机械臂 IK/RRTConnect 路径、取消和故障终止；复用 ROS 依赖，并针对当前仓库源码增量构建测试工作区。",
+        mode="SIMULATION", input_source="P6 静态地图、合成 LaserScan/里程计/目标与机械臂反馈", prerequisites=("ROS 2 Humble 与 colcon", "localhost-only 隔离 Domain", "脚本不会启动串口桥、传感器或实体控制"),
+        timeout_seconds=3600, command=_fixed_script_command("tools/p6_offline/validate_scenarios.sh", {"suite": "six P6 simulation scenarios", "workspace_build": "incremental colcon build from this checkout", "dependency_install": False, "hardware_access": "none"}),
+        check=_check_p6_scenarios,
+        category="Nav2 / 任务离线测试",
+    ),
+    TestSpec(
+        id="p7_scenarios", title="P7 底盘 / 机械臂 PTY 离线验收", description="复用 12 个离线故障场景和 PTY STM32/机械臂模拟器；无真实串口、电机或传感器。",
+        mode="SIMULATION", input_source="P7 固定场景输入、临时 PTY 和合成反馈", prerequisites=("ROS 2 Humble 与 colcon", "localhost-only ROS Domain", "只构建仓库软件包，不触碰物理设备"),
+        timeout_seconds=5400, command=_fixed_script_command("tools/p7_offline/validate_scenarios.sh", {"suite": "12 P7 PTY simulation scenarios", "workspace_build": "incremental colcon build from this checkout", "dependency_install": False, "hardware_access": "none"}),
+        check=_check_p7_scenarios,
+        category="Nav2 / 任务离线测试",
+    ),
+    _device_spec("camera_readonly", "相机 ROS 只读连接", "camera", "检查现有相机图像/CameraInfo Topic 发布者、低带宽 CameraInfo 频率及诊断状态；不订阅图像流。", ("/camera/color/image_raw", "/camera/depth/image_rect_raw", "/camera/color/camera_info", "/diagnostics")),
+    _device_spec("mid360_readonly", "MID-360 ROS 只读连接", "mid360", "检查现有雷达点云/IMU Topic 发布者、低带宽 IMU 频率及诊断状态；不订阅点云。", ("/livox/lidar", "/livox/lidar/pointcloud", "/livox/imu", "/diagnostics")),
+    _device_spec("chassis_readonly", "底盘控制器只读状态", "chassis", "只读检查串口桥状态 Topic、消息频率和错误文本；不发布速度或打开串口。", ("/chassis/serial_link_status", "/diagnostics")),
+    _device_spec("arm_readonly", "机械臂控制器只读状态", "arm", "只读检查机械臂安全状态与关节反馈 Topic、消息频率和故障文本；不发运动命令。", ("/serial/arm_safety/status", "/joint_states", "/diagnostics")),
 )
 
 
@@ -205,6 +370,7 @@ class TestManager:
             tests.append({
                 "id": spec.id,
                 "title": spec.title,
+                "category": spec.category,
                 "description": spec.description,
                 "mode": spec.mode,
                 "state": "ready" if not reasons else "locked",
@@ -265,7 +431,12 @@ class TestManager:
             except OSError as exc:
                 self._runs.pop(run_id, None)
                 return None, f"无法创建本地报告目录：{type(exc).__name__}", 507
-            self._write_log(run_id, "[SIMULATION/OFFLINE] 此任务为软件离线测试；不连接实体设备。\n")
+            mode_note = {
+                "SIMULATION": "使用合成数据和隔离仿真；不连接实体设备。",
+                "OFFLINE": "软件离线检查；不连接实体设备。",
+                "LIVE": "只读检查既有本机 ROS Topic；不启动驱动或发送控制。",
+            }.get(spec.mode, "")
+            self._write_log(run_id, f"[{spec.mode}] {mode_note}\n")
             worker = threading.Thread(target=self._execute, args=(run_id,), name=f"module-test-{spec.id}", daemon=True)
             run["thread"] = worker
             worker.start()
@@ -321,7 +492,7 @@ class TestManager:
         return_code: int | None = None
         deadline = started_mono + spec.timeout_seconds
         child_env = os.environ.copy()
-        child_env["ROS_DOMAIN_ID"] = "187"
+        child_env["ROS_DOMAIN_ID"] = str(spec.ros_domain_id)
         child_env["ROS_LOCALHOST_ONLY"] = "1"
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         child_env["YOLO_AUTOINSTALL"] = "false"
@@ -424,7 +595,7 @@ class TestManager:
         except ProcessLookupError:
             pass
         try:
-            child.wait(timeout=2.0)
+            child.wait(timeout=PROCESS_CLEANUP_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(child.pid, signal.SIGKILL)

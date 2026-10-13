@@ -131,6 +131,42 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(yolo["state"], "locked")
         self.assertIn("模型目录", yolo["reason"])
 
+    def test_catalog_registers_expanded_offline_and_readonly_profiles(self) -> None:
+        from console_agent.module_tests import DEFAULT_TESTS
+
+        manager = TestManager(repo=self.root, state_root=self.root / "reports", specs=DEFAULT_TESTS)
+        catalog = {item["id"]: item for item in manager.catalog()["tests"]}
+        self.assertTrue({"chassis_protocol", "p6_unit", "p6_scenarios", "p7_scenarios"}.issubset(catalog))
+        self.assertEqual(catalog["p6_scenarios"]["mode"], "SIMULATION")
+        self.assertEqual(catalog["p7_scenarios"]["mode"], "SIMULATION")
+        for test_id in ("camera_readonly", "mid360_readonly", "chassis_readonly", "arm_readonly"):
+            self.assertEqual(catalog[test_id]["mode"], "LIVE")
+            self.assertEqual(catalog[test_id]["category"], "只读设备巡检")
+
+    def test_yolo_discovers_existing_field_lab_model_without_an_env_override(self) -> None:
+        from unittest.mock import patch
+        from console_agent import module_tests
+
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_YOLO_MODEL_DIR": ""}, clear=False), \
+             patch.object(module_tests, "_field_lab_root", return_value=self.root / "lunar-field-lab-p9i"), \
+             patch.object(module_tests.Path, "home", return_value=self.root):
+            model = self.root / "lunar-field-lab-p9i" / "models" / "blue_block"
+            model.mkdir(parents=True)
+            self.assertEqual(module_tests._yolo_model_dir(), model)
+
+    def test_live_commands_are_fixed_readonly_profiles(self) -> None:
+        from console_agent.module_tests import DEFAULT_TESTS
+
+        specs = {item.id: item for item in DEFAULT_TESTS}
+        for test_id, device in (("camera_readonly", "camera"), ("mid360_readonly", "mid360"),
+                                ("chassis_readonly", "chassis"), ("arm_readonly", "arm")):
+            spec_item = specs[test_id]
+            command, parameters, _model = spec_item.command(self.root)
+            self.assertEqual(command[-2:], ["--device", device])
+            self.assertEqual(spec_item.ros_domain_id, 0)
+            self.assertEqual(parameters["ros_localhost_only"], "1")
+            self.assertIn("no driver", parameters["observation"])
+
     def test_runner_rejects_non_loopback_bind_configuration(self) -> None:
         from unittest.mock import patch
 
