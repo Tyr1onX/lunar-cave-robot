@@ -22,7 +22,7 @@ body = "\n".join([
     "",
     "[Service]",
     "Type=simple",
-    f"WorkingDirectory={quoted(agent_dir)}",
+    f"WorkingDirectory={agent_dir}",
     f"Environment=LUNAR_CONSOLE_REPO={quoted(repo_root)}",
     "Environment=LUNAR_CONSOLE_TEST_BIND=127.0.0.1",
     "Environment=ROS_DOMAIN_ID=187",
