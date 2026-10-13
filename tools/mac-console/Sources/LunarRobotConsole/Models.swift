@@ -163,6 +163,52 @@ struct HealthReading: Decodable {
     let collectedAt: String
 }
 
+enum VisionStreamID: String, CaseIterable, Identifiable {
+    case rgb
+    case depth
+    case yolo
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .rgb: return "RGB"
+        case .depth: return "深度"
+        case .yolo: return "YOLO"
+        }
+    }
+}
+
+struct VisionStreamReading: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let topic: String
+    let topicType: String?
+    let status: String
+    let reason: String?
+    let publisherCount: Int
+    let width: Int?
+    let height: Int?
+    let encoding: String?
+    let frameRateHz: Double?
+    let frameAgeMs: Int?
+    let sourceStamp: String?
+    let headerToAgentMs: Double?
+    let receivedAt: String?
+    let gapEvents: Int
+}
+
+struct VisionReading: Decodable {
+    let status: String
+    let source: String
+    let collectedAt: String
+    let reason: String?
+    let streams: [VisionStreamReading]
+
+    func stream(_ id: VisionStreamID) -> VisionStreamReading? {
+        streams.first { $0.id == id.rawValue }
+    }
+}
+
 extension Int64 {
     var formattedBytes: String {
         ByteCountFormatter.string(fromByteCount: self, countStyle: .file)

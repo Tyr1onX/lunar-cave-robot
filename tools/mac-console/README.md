@@ -1,6 +1,6 @@
 # Lunar Robot Console for macOS
 
-Native SwiftUI read-only console for Apple Silicon. The first release exposes only Overview, System Diagnostics, and History. It does not install ROS 2 on the Mac and does not contain motion, service-call, deployment, or shell-command controls.
+Native SwiftUI read-only console for Apple Silicon. The default screen is the Test Cockpit, with System Diagnostics and History as supporting pages. It does not install ROS 2 on the Mac and does not contain motion, service-call, deployment, or shell-command controls.
 
 ## Connection contract
 
@@ -37,8 +37,10 @@ The Swift package test target can be run with `swift test` on a matching SwiftPM
 
 ## Screens and state meaning
 
-- **总览:** live CPU, memory, root disk, available thermal sensors, three version sources, ROS graph counts, safety evidence and recent ROS log lines. Log entries label the containing file's modification time, not an event time.
-- **系统诊断:** runtime-discovered ROS nodes/topics and the origin/status of each system metric.
+- **测试驾驶舱:** RGB, registered depth, and YOLO annotated-image views backed by fixed NUC ROS Image topics. FPS and freshness come from Agent receive times; the GUI reports its local HTTP round trip separately. A stale source clears the image and shows a disconnect state. YOLO image freshness proves the output stream is alive, not that detection accuracy has been validated. Depth display is normalized per frame for viewing and is not a measurement scale.
+- **系统诊断:** the V0.1 CPU, memory, disk, temperature, Git/deployment version, ROS graph, safety evidence, log, and test-record details. Log entries label the containing file's modification time, not an event time.
 - **历史记录:** existing YAML records under the NUC user's `$XDG_STATE_HOME/lunar-cave-robot/tests/` (default `~/.local/state/lunar-cave-robot/tests/`). The app never creates or edits records.
 
 “未知” is used when a source is absent, unreadable, or unverified. ROS graph presence is not reported as device health; physical E-stop status remains unknown without a verified input. `HOST_WRITE_OK` is not used as controller feedback.
+
+The live-camera audit and current runtime limitations are recorded in [`acceptance/v0.2-camera-audit.md`](acceptance/v0.2-camera-audit.md). A repository topic declaration is not treated as proof that the camera is connected or publishing.

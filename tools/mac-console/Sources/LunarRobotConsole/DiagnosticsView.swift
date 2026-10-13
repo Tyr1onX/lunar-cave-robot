@@ -6,6 +6,7 @@ struct DiagnosticsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
+            OverviewView(model: model)
             HStack(spacing: 15) {
                 DiagnosticCard(title: "Agent 状态", value: model.agentOnline ? "在线" : "不可用", note: model.agentMessage, tint: model.agentOnline ? Palette.accent : Palette.warning)
                 DiagnosticCard(title: "系统", value: snapshot?.host.operatingSystem ?? "未知", note: snapshot?.host.platform ?? "等待设备", tint: Palette.blue)
