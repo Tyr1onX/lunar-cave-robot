@@ -34,7 +34,9 @@ body = "\n".join([
     "PrivateTmp=true",
     "ProtectSystem=full",
     "LockPersonality=true",
-    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+    # Fast DDS uses getifaddrs()/NETLINK to enumerate local interfaces even
+    # when ROS_LOCALHOST_ONLY is set. Keep packet sockets unavailable.
+    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
     "",
     "[Install]",
     "WantedBy=default.target",

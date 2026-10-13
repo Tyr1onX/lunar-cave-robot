@@ -174,6 +174,13 @@ class ModuleTestHTTPTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 serve()
 
+    def test_module_test_service_allows_ros_interface_discovery_without_packet_sockets(self) -> None:
+        repo = Path(__file__).resolve().parents[3]
+        installer = (repo / "tools/console-agent/install-module-test-service.sh").read_text(encoding="utf-8")
+        families = next(line for line in installer.splitlines() if '"RestrictAddressFamilies=' in line)
+        self.assertIn("AF_NETLINK", families)
+        self.assertNotIn("AF_PACKET", families)
+
     def test_report_captures_model_digest_when_a_registered_test_uses_one(self) -> None:
         model_dir = self.root / "model"
         model_dir.mkdir()
