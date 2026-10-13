@@ -124,7 +124,7 @@ struct TestCockpitView: View {
                         VStack(alignment: .leading, spacing: 11) {
                             ReservedRow(title: "MID-360 点云 / IMU", reason: "尚未接入可验证的只读可视化流")
                             ReservedRow(title: "机械臂姿态 / 模块测试", reason: "等待独立数据契约与验收")
-                            ReservedRow(title: "WASD / 实体运动", reason: "本版本关闭；未开放控制接口")
+                            ReservedRow(title: "实体运动控制", reason: "保持锁定；WASD 仅在单独的模拟驾驶区可用")
                         }
                     }
 

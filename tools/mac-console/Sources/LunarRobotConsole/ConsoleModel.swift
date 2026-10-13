@@ -29,6 +29,7 @@ private final class SSHDiagnosticBuffer: @unchecked Sendable {
 final class ConsoleModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case cockpit = "测试驾驶舱"
+        case simulation = "模拟驾驶"
         case diagnostics = "系统诊断"
         case history = "历史记录"
 
@@ -37,6 +38,7 @@ final class ConsoleModel: ObservableObject {
         var symbol: String {
             switch self {
             case .cockpit: return "viewfinder"
+            case .simulation: return "gamecontroller.fill"
             case .diagnostics: return "waveform.path.ecg"
             case .history: return "clock.arrow.circlepath"
             }
