@@ -37,7 +37,7 @@ The Swift package test target can be run with `swift test` on a matching SwiftPM
 
 ## Screens and state meaning
 
-- **总览:** live CPU, memory, root disk, available thermal sensors, three version sources, ROS graph counts, safety evidence and recent ROS log lines.
+- **总览:** live CPU, memory, root disk, available thermal sensors, three version sources, ROS graph counts, safety evidence and recent ROS log lines. Log entries label the containing file's modification time, not an event time.
 - **系统诊断:** runtime-discovered ROS nodes/topics and the origin/status of each system metric.
 - **历史记录:** existing YAML records under the NUC user's `$XDG_STATE_HOME/lunar-cave-robot/tests/` (default `~/.local/state/lunar-cave-robot/tests/`). The app never creates or edits records.
 

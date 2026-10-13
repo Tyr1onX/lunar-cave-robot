@@ -143,8 +143,8 @@ struct HostReading: Decodable {
 }
 
 struct LogEntry: Decodable, Identifiable {
-    var id: String { "\(timestamp)-\(source)-\(message)" }
-    let timestamp: String
+    var id: String { "\(fileModifiedAt)-\(source)-\(message)" }
+    let fileModifiedAt: String
     let severity: String
     let message: String
     let source: String

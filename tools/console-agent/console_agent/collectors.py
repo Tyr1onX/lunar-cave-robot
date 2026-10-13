@@ -382,14 +382,14 @@ def collect_logs(limit: int = 100) -> dict[str, Any]:
                 size = stream.tell()
                 stream.seek(max(0, size - 262144))
                 lines = stream.read().decode("utf-8", errors="replace").splitlines()[-limit:]
-            modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            file_modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
             for line in lines:
                 if not line.strip():
                     continue
                 upper = line.upper()
                 severity = "error" if "[ERROR]" in upper or " FATAL" in upper else "warning" if "[WARN]" in upper else "info"
-                entries.append({"timestamp": modified, "severity": severity, "message": line[-2000:], "source": path.name})
+                entries.append({"file_modified_at": file_modified_at, "severity": severity, "message": line[-2000:], "source": path.name})
         except OSError:
             continue
-    entries.sort(key=lambda item: item["timestamp"], reverse=True)
+    entries.sort(key=lambda item: item["file_modified_at"], reverse=True)
     return {"status": "ok", "entries": entries[:limit], "source": str(root)}

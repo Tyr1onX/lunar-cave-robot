@@ -14,4 +14,13 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(snapshot.tests.records.first?.scope, "Nav2_rea_ws")
         XCTAssertEqual(snapshot.safety.control, "disabled")
     }
+
+    func testLogEntryDecodesFileModificationTimeAsMetadata() throws {
+        let data = Data(#"{"file_modified_at":"2026-10-12T23:45:00Z","severity":"info","message":"started","source":"node.log"}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let entry = try decoder.decode(LogEntry.self, from: data)
+        XCTAssertEqual(entry.fileModifiedAt, "2026-10-12T23:45:00Z")
+        XCTAssertEqual(entry.source, "node.log")
+    }
 }

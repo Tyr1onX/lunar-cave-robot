@@ -22,7 +22,7 @@ The HTTP listener is fixed to `127.0.0.1:8765`. `LUNAR_CONSOLE_REPO` and `XDG_ST
 
 - `GET /health` returns service liveness and schema version.
 - `GET /v1/snapshot` returns a versioned JSON snapshot with source, UTC collection time, metric status/reason, Git and deployment sources, runtime ROS graph, existing test records, and explicit unknown safety evidence.
-- `GET /v1/logs?limit=100` returns the latest available ROS log lines, capped at 200.
+- `GET /v1/logs?limit=100` returns the latest available ROS log lines, capped at 200. Each entry's `file_modified_at` is the containing file's modification time; it is not the event time of that line.
 - Every other path is `404`; POST/PUT/PATCH/DELETE/OPTIONS return `405` with `Allow: GET`.
 
 CPU is sampled from `/proc/stat`; memory from `/proc/meminfo`; disk from the root filesystem; temperature only from readable Linux thermal sysfs sensors. Missing data is `unknown` with a reason. An empty ROS graph is a valid empty list. No source-code topic declarations are reported as live topics.

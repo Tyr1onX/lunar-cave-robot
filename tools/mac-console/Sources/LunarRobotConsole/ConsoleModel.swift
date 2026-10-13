@@ -57,6 +57,7 @@ final class ConsoleModel: ObservableObject {
     private var tunnel: Process?
     private var tunnelErrorPipe: Pipe?
     private var refreshTask: Task<Void, Never>?
+    private(set) var agentSession = 0
     private var isRefreshing = false
     private var isReadingGitHub = false
     private var isReadingLogs = false
@@ -86,6 +87,7 @@ final class ConsoleModel: ObservableObject {
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        invalidateAgentData(message: "NUC Agent 已停止")
         tunnel?.terminationHandler = nil
         if tunnel?.isRunning == true { tunnel?.terminate() }
         tunnel = nil
@@ -95,6 +97,7 @@ final class ConsoleModel: ObservableObject {
     }
 
     func reconnect() {
+        invalidateAgentData(message: "正在重新连接 NUC Agent")
         tunnel?.terminationHandler = nil
         if tunnel?.isRunning == true { tunnel?.terminate() }
         tunnel = nil
@@ -140,10 +143,7 @@ final class ConsoleModel: ObservableObject {
                 guard let self, self.tunnel === terminated else { return }
                 self.tunnelRunning = false
                 self.connectionMessage = diagnostic ?? "SSH 隧道已退出（状态 \(terminated.terminationStatus)）"
-                self.snapshot = nil
-                self.logs = nil
-                self.agentOnline = false
-                self.agentMessage = "等待 NUC Agent"
+                self.invalidateAgentData(message: "等待 NUC Agent")
             }
         }
         do {
@@ -165,20 +165,22 @@ final class ConsoleModel: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
         ensureTunnel()
+        let requestSession = agentSession
 
         do {
             let (healthData, _) = try await session.data(from: apiRoot.appendingPathComponent("health"))
+            guard requestSession == agentSession else { return }
             let healthDecoder = JSONDecoder()
             healthDecoder.keyDecodingStrategy = .convertFromSnakeCase
             let health = try healthDecoder.decode(HealthReading.self, from: healthData)
             guard health.ok, health.schemaVersion == 1 else {
                 throw URLError(.cannotParseResponse)
             }
-            agentOnline = true
-            agentMessage = "Agent 在线 · \(health.collectedAt)"
+            markAgentAvailable(message: "Agent 在线 · \(health.collectedAt)")
             connectionMessage = "SSH 转发可用 · nuc"
 
             let (data, _) = try await session.data(from: apiRoot.appendingPathComponent("v1/snapshot"))
+            guard requestSession == agentSession else { return }
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let received = try decoder.decode(ConsoleSnapshot.self, from: data)
@@ -190,26 +192,45 @@ final class ConsoleModel: ObservableObject {
             agentMessage = "真实快照已更新 · \(received.collectedAt)"
             if Date().timeIntervalSince(lastLogRead) > 6 { refreshLogs() }
         } catch {
-            agentOnline = false
-            agentMessage = "Agent 暂不可用 · \(error.localizedDescription)"
-            snapshot = nil
-            logs = nil
+            guard requestSession == agentSession else { return }
+            invalidateAgentData(message: "Agent 暂不可用 · \(error.localizedDescription)")
         }
+    }
+
+    func markAgentAvailable(message: String) {
+        agentOnline = true
+        agentMessage = message
+    }
+
+    func invalidateAgentData(message: String) {
+        agentSession += 1
+        agentOnline = false
+        agentMessage = message
+        snapshot = nil
+        logs = nil
+    }
+
+    func applyLogReading(_ reading: LogReading, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession else { return }
+        logs = reading
     }
 
     private func refreshLogs() {
         guard !isReadingLogs else { return }
         isReadingLogs = true
         lastLogRead = Date()
+        let requestSession = agentSession
         Task {
             defer { isReadingLogs = false }
             do {
                 let (data, _) = try await session.data(from: apiRoot.appendingPathComponent("v1/logs"))
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
-                logs = try decoder.decode(LogReading.self, from: data)
+                let reading = try decoder.decode(LogReading.self, from: data)
+                applyLogReading(reading, requestSession: requestSession)
             } catch {
-                logs = LogReading(status: "unknown", reason: error.localizedDescription, entries: [], source: nil)
+                let reading = LogReading(status: "unknown", reason: error.localizedDescription, entries: [], source: nil)
+                applyLogReading(reading, requestSession: requestSession)
             }
         }
     }

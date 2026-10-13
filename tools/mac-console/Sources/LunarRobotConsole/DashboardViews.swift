@@ -239,7 +239,7 @@ private struct LogsPanel: View {
                                 .foregroundStyle(severityColor(entry.severity)).frame(width: 43, alignment: .leading)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.message).font(.system(size: 10, design: .monospaced)).lineLimit(2)
-                                Text("\(entry.source) · \(entry.timestamp)").font(.system(size: 8)).foregroundStyle(Palette.muted)
+                                Text("\(entry.source) · 文件修改 \(entry.fileModifiedAt)").font(.system(size: 8)).foregroundStyle(Palette.muted)
                             }
                         }
                     }
