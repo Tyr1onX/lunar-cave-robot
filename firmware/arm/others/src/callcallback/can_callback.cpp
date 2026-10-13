@@ -16,7 +16,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 	UNUSED(RxFifo0ITs);
 	if (hfdcan == abc_can3.handle)  // friendly
 	{
-		abc_can3.Receive();
+		if (!abc_can3.Receive()) return;
 		switch (abc_can3.rx_header.Identifier)
 		{
 		case 0x11:

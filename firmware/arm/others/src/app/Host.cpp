@@ -98,6 +98,7 @@ namespace
 	volatile uint8_t host_disabled_since_reset = 0U;
 	volatile uint8_t host_enable_after_disabled = 0U;
 	volatile uint8_t host_safety_disable_event = 0U;
+	volatile uint8_t host_command_expired = 0U;
 
 	/* ---- 下行帧偏移（46B） ---- */
 	constexpr uint16_t rx_chassis = 1U;   /* 3 × float32 底盘速度：解析后丢弃 */
@@ -128,6 +129,18 @@ namespace
 
 	/* 帧里以关节角表达的轴数（j1..j6）；第 7 轴 j7 走夹爪命令字节 */
 	constexpr uint8_t host_axis_count = static_cast<uint8_t>(Joint_N::dof - 1U);
+
+	void LatchCommandLeaseExpiry(const uint32_t now)
+	{
+		if ((host_command_seen != 0U) &&
+			((now - host_command_tick) > HOST_COMMAND_LEASE_MS))
+		{
+			host_command_seen = 0U;
+			host_safety_armed = 0U;
+			host_command_expired = 1U;
+			host_safety_disable_event = 1U;
+		}
+	}
 
 	bool TargetsAreFinite(const uint8_t* const frame)
 	{
@@ -428,6 +441,9 @@ extern "C" void Host_Poll(void)
 {
 	uint8_t rx_frame[HOST_RX_FRAME_LEN] {};
 	uint8_t head = 0U;
+	taskENTER_CRITICAL();
+	LatchCommandLeaseExpiry(HAL_GetTick());
+	taskEXIT_CRITICAL();
 
 	while (host_usb_queue.Get(head))
 	{
@@ -455,6 +471,8 @@ extern "C" void Host_Poll(void)
 
 		/* A zero enable byte is a stop/latch request without changing frame layout. */
 		taskENTER_CRITICAL();
+		const uint32_t now = HAL_GetTick();
+		LatchCommandLeaseExpiry(now);
 		if (rx_frame[rx_enable] == 0U)
 		{
 			host_safety_armed = 0U;
@@ -462,7 +480,8 @@ extern "C" void Host_Poll(void)
 			host_disabled_since_reset = 1U;
 			host_safety_disable_event = 1U;
 		}
-		else if ((host_disabled_since_reset != 0U) &&
+		else if ((host_command_expired == 0U) &&
+			(host_disabled_since_reset != 0U) &&
 			(Remote_IsHostControl() != 0U) && TargetsAreFinite(rx_frame))
 		{
 			host_enable_after_disabled = 1U;
@@ -502,8 +521,8 @@ extern "C" uint8_t Host_IsCommandFresh(void)
 {
 	uint8_t fresh;
 	taskENTER_CRITICAL();
-	fresh = (host_command_seen != 0U &&
-		(HAL_GetTick() - host_command_tick) <= HOST_COMMAND_LEASE_MS) ? 1U : 0U;
+	LatchCommandLeaseExpiry(HAL_GetTick());
+	fresh = (host_command_seen != 0U && host_command_expired == 0U) ? 1U : 0U;
 	taskEXIT_CRITICAL();
 	return fresh;
 }
@@ -517,12 +536,15 @@ extern "C" void Host_ResetSafetyHandshake(void)
 	host_disabled_since_reset = 0U;
 	host_enable_after_disabled = 0U;
 	host_safety_disable_event = 0U;
+	host_command_expired = 0U;
 	taskEXIT_CRITICAL();
 }
 
 extern "C" void Host_SetSafetyArmed(uint8_t armed)
 {
+	taskENTER_CRITICAL();
 	host_safety_armed = (armed != 0U) ? 1U : 0U;
+	taskEXIT_CRITICAL();
 }
 
 extern "C" uint8_t Host_HasDisabledSinceSafetyReset(void)

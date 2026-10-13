@@ -15,6 +15,12 @@ ThinkBook 两轮 P7 完整离线场景各 12/12 通过；P4f/P6 构建、PTY 驱
 
 P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`；P9-B PR #6 后续以 merge commit `07a56c3a33882aa2866f1076d8597776e2579bcb` 合入。STM32 安全状态机 PR #8 当前直接以 `main` 为基线并保持开放，等待缺失的机械臂 XRobot 产品输入及硬件负责人对电机失能、重力负载保持和独立急停策略的确认。ThinkBook 在 `main` SHA `07a56c3` 完成 P7/P8 12/12；ThinkBook 与 NUC 的 ROS 工作区均构建通过。主机测试与固件交叉编译不代表物理停止或保持已验证。P9-E 审查时 main tip 为 6a48dc52f5d7f5b263845bdec0639f59144a4486；其可执行代码与 P7/P8 最近 12/12 通过所用的 07a56c3a33882aa2866f1076d8597776e2579bcb 相同，之后只有文档提交。P9-E 对 PR #8 的时序审查见 P9E_PR8_INTEGRATION_REVIEW.md。
 
+# P9-F 安全集成与主机验证 — 2026-10-13
+
+P9-F 在独立分支上基于最新 `main` `b1cfe617209a06d69000a515af82b9b95add62ef` 和 PR #8 head `c441e8dd2f666dfdca000f3b4e94826f14204209`。ThinkBook Ubuntu/GCC 11.4 上，底盘协议和安全状态机、机械臂状态机、Host/FreeRTOS 恢复集成、CAN 故障注入，以及生产 `Remote.c`→输出门→`Joint::ControlStep()` 快速模式切换链路全部通过。Humble 隔离工作区中 `arm2nav_msgs`、`lite_motion_msgs`、`lite_motion_planner` 3 个包构建通过。GitHub Actions 的必需 FSM/集成检查要求测试脚本存在并直接运行。
+
+P9-F 在 Motor_DM 控制出口复核 Host 租约、遥控模式、七轴反馈与 CAN 健康；租约过期锁存；恢复流程分批重验授权并等待真实协议状态帧。仿真测试使用 mock HAL/USB/RTOS/CAN 应答，不能证明真实 MCU 调度时延、电机应答、失能制动、负载保持或独立急停。机械臂完整 STM32 工程仍因 XRobot 产品生成输入缺失而不能构建。P7/P8 12/12 的最近记录仍是历史 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`，本轮未重跑 12 场景全套。PR #8 保持开放；剩余条件见 [P9-F 集成记录](P9F_ARM_SAFETY_INTEGRATION.md)。
+
 以下 P9-A 和更早章节是历史审计记录；若与本节的后续构建结论冲突，以 P9-C 的验证记录为准。
 
 # P9-A 当前归档结论 — 2026-10-12

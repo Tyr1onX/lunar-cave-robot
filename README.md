@@ -1,6 +1,6 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。P9-E 审查时的 main 基线为 6a48dc52f5d7f5b263845bdec0639f59144a4486；最近完整 P7/P8 离线套件在代码 SHA 07a56c3a33882aa2866f1076d8597776e2579bcb 上通过 12/12，main 后续只有文档提交。PR #8 安全状态机仍开放，P9-E 审查发现若干机械臂控制时序缺口。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 main 基线为 `b1cfe617209a06d69000a515af82b9b95add62ef`；最近完整 P7/P8 离线套件在代码 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb` 上通过 12/12。PR #8 仍开放；P9-F 独立分支已修复其机械臂输出许可、租约和恢复时序缺陷，并补充集成主机测试。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
 
 ## 源码地图
 
@@ -34,11 +34,11 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 
 - P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
 - P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
-- ThinkBook GCC 11.4 本轮复跑 main 底盘协议主机测试和 PR #8 精确 head 的底盘/机械臂纯状态机主机测试均通过；此前底盘 ARM GNU GCC 10.3.1 交叉编译通过。机械臂完整固件因 XRobot 输入缺失而未构建。P9-E 审查发现机械臂接入中的租约过期、控制模式切换、恢复复核和反馈健康缺口，PR #8 继续开放。详见 [PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md) 与 [XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)。
+- ThinkBook Ubuntu/GCC 11.4 已通过 P9-F 底盘解析器与状态机、机械臂状态机、Host/恢复集成、CAN 故障注入，以及生产 `Remote.c`→安全输出门→`Joint::ControlStep()` 快速模式切换集成测试；Humble 隔离构建也通过 `lite_motion_planner` 与两个消息依赖包。机械臂完整固件仍因 XRobot 生成输入缺失而未构建。测试细节与硬件边界见 [P9-F 机械臂安全集成记录](docs/P9F_ARM_SAFETY_INTEGRATION.md)；P9-E 问题清单保留为历史审查 [记录](docs/P9E_PR8_INTEGRATION_REVIEW.md)。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 
-新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
+新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[P9-F 安全集成记录](docs/P9F_ARM_SAFETY_INTEGRATION.md)、[PR #8 历史接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
 
 ## 开发与离线验证
 
@@ -51,7 +51,7 @@ P7_SIMULATED_OPERATOR_ACTION=enable-offline-simulator ./tools/p7_offline/run.sh
 ```
 
 完整的 12 项离线故障场景可通过 `./tools/run_offline_validation.sh` 运行。脚本只调用仓库内隔离 PTY 测试，并把测试结果写入用户状态目录；不会启动设备驱动或实体机器人。源码和脚本自身的完整性检查入口为 `python3 tools/verify_project_assets.py`。
-GitHub Actions 在 PR 与 main push 上自动运行底盘生产协议解析器主机测试，并在相应安全 FSM 测试脚本存在的分支上运行状态机测试；工作流不连接 STM32 或电机。
+GitHub Actions 在 PR 与 main push 上强制运行底盘生产协议解析器、底盘安全状态机、机械臂安全状态机、机械臂 Host/恢复集成和真实 `Joint::ControlStep` 输出门测试；所需测试缺失时工作流失败。工作流不连接 STM32 或电机。
 
 固件编译入口（构建目录和日志位于用户缓存目录，不会连接控制器）：
 

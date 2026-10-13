@@ -26,19 +26,13 @@ jobs:
           export XDG_STATE_HOME="$RUNNER_TEMP/lunar-cave-ci-state"
           firmware/chassis/tests/host/run.sh "$RUNNER_TEMP/lunar-cave-chassis-host"
 
-      - name: Run safety FSM tests when present
+      - name: Run required safety and integration tests
         shell: bash
         run: |
           set -euo pipefail
           export XDG_STATE_HOME="$RUNNER_TEMP/lunar-cave-ci-state"
-          if [[ -f firmware/chassis/tests/host/test_chassis_safety.c ]]; then
-            cc -std=c11 -Wall -Wextra -Werror -pedantic -Ifirmware/chassis/User/APP -Ifirmware/chassis/User/Bsp firmware/chassis/tests/host/test_chassis_safety.c firmware/chassis/User/APP/chassis_safety.c -o "$RUNNER_TEMP/lunar-cave-chassis-safety"
-            "$RUNNER_TEMP/lunar-cave-chassis-safety"
-          else
-            echo "Chassis safety FSM test is not present on this revision."
-          fi
-          if [[ -x firmware/arm/tests/host/run_safety_state_tests.sh ]]; then
-            firmware/arm/tests/host/run_safety_state_tests.sh "$RUNNER_TEMP/lunar-cave-arm-safety"
-          else
-            echo "Arm safety FSM host runner is not present on this revision."
-          fi
+          test -f firmware/chassis/tests/host/test_chassis_safety.c
+          test -x firmware/arm/tests/host/run_safety_state_tests.sh
+          test -x firmware/arm/tests/host/run_integration_tests.sh
+          firmware/arm/tests/host/run_safety_state_tests.sh "$RUNNER_TEMP/lunar-cave-arm-safety"
+          firmware/arm/tests/host/run_integration_tests.sh "$RUNNER_TEMP/lunar-cave-arm-integration"

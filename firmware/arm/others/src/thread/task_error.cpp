@@ -3,6 +3,9 @@
 #include "Remote.h"
 #include "Host.h"
 #include "arm_safety_state.h"
+#include "arm_output_gate.h"
+#include "bsp_can.hpp"
+#include "main.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +27,60 @@ extern Joint j4_left;
 extern Joint j5_left;
 extern Joint j6_left;
 extern Joint j7_left;
+extern Bsp_CAN abc_can3;
+
+namespace
+{
+constexpr uint32_t arm_feedback_stale_after_ms = HOST_COMMAND_LEASE_MS;
+constexpr uint32_t arm_resume_ack_timeout_ms = 100U;
+
+Joint* const arm_joints[7U] =
+{
+	&j1_left, &j2_left, &j3_left, &j4_left, &j5_left, &j6_left, &j7_left
+};
+
+bool ArmFeedbackHealthy(const uint32_t now)
+{
+	for (Joint* const joint : arm_joints)
+	{
+		if (!joint->FeedbackHealthy(now, arm_feedback_stale_after_ms)) return false;
+	}
+	return true;
+}
+
+bool ArmResumeAuthorizationCurrent(void)
+{
+	return arm_output_gate_authorization_current() != 0U &&
+		!abc_can3.IsBusOff() && ArmFeedbackHealthy(HAL_GetTick());
+}
+
+bool WaitForFeedbackAfter(const uint16_t before[7U], const bool require_enabled)
+{
+	const uint32_t start_tick = HAL_GetTick();
+	for (;;)
+	{
+		if (!ArmResumeAuthorizationCurrent()) return false;
+		bool all_updated = true;
+		bool all_enabled = true;
+		for (uint8_t i = 0U; i < 7U; ++i)
+		{
+			all_updated = all_updated && arm_joints[i]->FeedbackUpdatedAfter(before[i]);
+			all_enabled = all_enabled && arm_joints[i]->DriverEnabled();
+		}
+		if (all_updated && (!require_enabled || all_enabled)) return true;
+		if ((HAL_GetTick() - start_tick) >= arm_resume_ack_timeout_ms) return false;
+		osDelay(1U);
+	}
+}
+
+bool SendRecoveryCommand(Joint& joint, const Motor_DM_N::order_byte_e command,
+	const uint8_t feedback_index, uint16_t before[7U])
+{
+	if (!ArmResumeAuthorizationCurrent()) return false;
+	before[feedback_index] = joint.FeedbackCount();
+	return joint.Ctrl(command) && ArmResumeAuthorizationCurrent();
+}
+}
 
 /* 挂起：先挂住执行任务（不再发命令），再失能全部电机。
    遥控接收由 UART 中断完成，Error_tasks 自身不能挂起，否则无法检测恢复。 */
@@ -69,30 +126,51 @@ static void ArmFeedbackKeepAlive()
 /* 解挂起：清错 -> 全部关节缓启动 -> 使能 -> 恢复执行任务。
    顺序很重要：缓启动必须在使能之前、且在执行任务挂起期间做，
    这样恢复后的第一帧控制命令就是从当前实测位置起算的，不会因挂起期间的位置漂移而猛冲。 */
-static void ArmResume()
+static bool ArmResume(const uint8_t host_control, const uint32_t remote_mode_generation,
+	const can_health_snapshot_s& can_baseline)
 {
 	using namespace Motor_DM_N;
-	j1_left.Ctrl(order_byte_e::clear_error);
-	j2_left.Ctrl(order_byte_e::clear_error);
-	j3_left.Ctrl(order_byte_e::clear_error);
-	j4_left.Ctrl(order_byte_e::clear_error);
+	if (arm_output_gate_begin_resume(host_control, remote_mode_generation,
+		can_baseline.tx_failure_count,
+		can_baseline.rx_failure_count, can_baseline.error_event_count) == 0U ||
+		!ArmResumeAuthorizationCurrent())
+	{
+		return false;
+	}
+	uint16_t feedback_before[7U] {};
+	if (!SendRecoveryCommand(j1_left, order_byte_e::clear_error, 0U, feedback_before) ||
+		!SendRecoveryCommand(j2_left, order_byte_e::clear_error, 1U, feedback_before) ||
+		!SendRecoveryCommand(j3_left, order_byte_e::clear_error, 2U, feedback_before) ||
+		!SendRecoveryCommand(j4_left, order_byte_e::clear_error, 3U, feedback_before)) return false;
 	osDelay(1);
-	j5_left.Ctrl(order_byte_e::clear_error);
-	j6_left.Ctrl(order_byte_e::clear_error);
-	j7_left.Ctrl(order_byte_e::clear_error);
+	if (!SendRecoveryCommand(j5_left, order_byte_e::clear_error, 4U, feedback_before) ||
+		!SendRecoveryCommand(j6_left, order_byte_e::clear_error, 5U, feedback_before) ||
+		!SendRecoveryCommand(j7_left, order_byte_e::clear_error, 6U, feedback_before)) return false;
 	osDelay(1);
+	if (!WaitForFeedbackAfter(feedback_before, false)) return false;
+	if (!ArmResumeAuthorizationCurrent()) return false;
 	Joint_SoftStartAll();  // 起点取最新反馈，终点保留急停前保存的位置
 	osDelay(1);
-	j1_left.Ctrl(order_byte_e::enable);
-	j2_left.Ctrl(order_byte_e::enable);
-	j3_left.Ctrl(order_byte_e::enable);
-	j4_left.Ctrl(order_byte_e::enable);
+	if (!ArmResumeAuthorizationCurrent()) return false;
+	const uint16_t before_enable[7U] =
+	{
+		j1_left.FeedbackCount(), j2_left.FeedbackCount(), j3_left.FeedbackCount(),
+		j4_left.FeedbackCount(), j5_left.FeedbackCount(), j6_left.FeedbackCount(),
+		j7_left.FeedbackCount()
+	};
+	if (!SendRecoveryCommand(j1_left, order_byte_e::enable, 0U, feedback_before) ||
+		!SendRecoveryCommand(j2_left, order_byte_e::enable, 1U, feedback_before) ||
+		!SendRecoveryCommand(j3_left, order_byte_e::enable, 2U, feedback_before) ||
+		!SendRecoveryCommand(j4_left, order_byte_e::enable, 3U, feedback_before)) return false;
 	osDelay(1);
-	j5_left.Ctrl(order_byte_e::enable);
-	j6_left.Ctrl(order_byte_e::enable);
-	j7_left.Ctrl(order_byte_e::enable);
+	if (!ArmResumeAuthorizationCurrent()) return false;
+	if (!SendRecoveryCommand(j5_left, order_byte_e::enable, 4U, feedback_before) ||
+		!SendRecoveryCommand(j6_left, order_byte_e::enable, 5U, feedback_before) ||
+		!SendRecoveryCommand(j7_left, order_byte_e::enable, 6U, feedback_before)) return false;
 	osDelay(1);
-	osThreadResume(roboARMHandle);
+	for (uint8_t i = 0U; i < 7U; ++i) feedback_before[i] = before_enable[i];
+	if (!WaitForFeedbackAfter(feedback_before, true)) return false;
+	return ArmResumeAuthorizationCurrent();
 }
 
 /* implements the CubeMX "Error" thread (weak stub in freertos.c)
@@ -108,12 +186,14 @@ static void ArmResume()
 void Error_tasks(void *argument)
 {
 	UNUSED(argument);
-	bool holding = false;
+	bool holding = true;
 	arm_safety_state_t safety;
 	arm_safety_state_init(&safety);
+	arm_output_gate_revoke();
+	Host_SetSafetyArmed(0U);
 	ArmHold();
 	Host_ResetSafetyHandshake();
-	holding = true;
+	can_health_snapshot_s previous_can_health = abc_can3.HealthSnapshot();
 
 	for (;;)
 	{
@@ -124,36 +204,61 @@ void Error_tasks(void *argument)
 
 		arm_safety_inputs_t inputs = {};
 		inputs.rc_online = Remote_IsOnline();
-		inputs.host_control = Remote_IsHostControl();
+		uint32_t remote_mode_generation = 0U;
+		inputs.host_control = Remote_HostControlSnapshot(&remote_mode_generation);
 		inputs.hold_requested =
 			(Remote_IsHoldRequested() != 0U || inputs.rc_online == 0U) ? 1U : 0U;
-		inputs.host_disable_event = Host_ConsumeSafetyDisableEvent();
 		inputs.manual_rearm_action = Remote_ConsumeManualRearmRequest();
 		if (inputs.manual_rearm_action != 0U)
 		{
 			/* A manual re-arm first invalidates every pre-fault host command/edge. */
+			arm_output_gate_revoke();
+			Host_SetSafetyArmed(0U);
 			Host_ResetSafetyHandshake();
 		}
+		inputs.host_disable_event = Host_ConsumeSafetyDisableEvent();
 		inputs.host_command_fresh = Host_IsCommandFresh();
 		inputs.host_disabled_seen = Host_HasDisabledSinceSafetyReset();
 		inputs.host_enable_after_disabled = Host_HasEnableAfterDisabled();
-		inputs.feedback_initialized =
-			(j1_left.IsInited() && j2_left.IsInited() && j3_left.IsInited() &&
-			 j4_left.IsInited() && j5_left.IsInited() && j6_left.IsInited() &&
-			 j7_left.IsInited()) ? 1U : 0U;
+		inputs.feedback_healthy = ArmFeedbackHealthy(HAL_GetTick()) ? 1U : 0U;
+		const can_health_snapshot_s current_can_health = abc_can3.HealthSnapshot();
+		inputs.can_healthy = (current_can_health.bus_off == 0U &&
+			current_can_health.tx_failure_count == previous_can_health.tx_failure_count &&
+			current_can_health.rx_failure_count == previous_can_health.rx_failure_count &&
+			current_can_health.error_event_count == previous_can_health.error_event_count) ? 1U : 0U;
+		previous_can_health = current_can_health;
 
-		const arm_safety_state_e next_state = arm_safety_state_update(&safety, &inputs);
+		arm_safety_state_e next_state = arm_safety_state_update(&safety, &inputs);
 		if ((next_state != ARM_SAFETY_ARMED) && !holding)
 		{
+			arm_output_gate_revoke();
+			Host_SetSafetyArmed(0U);
 			holding = true;
 			ArmHold();
 			Host_ResetSafetyHandshake();
 		}
 		else if ((next_state == ARM_SAFETY_ARMED) && holding)
 		{
-			holding = false;
-			ArmResume();
-			Host_SetSafetyArmed(inputs.host_control);
+			bool resume_ok = ArmResume(inputs.host_control, remote_mode_generation, current_can_health);
+			if (resume_ok)
+			{
+				Host_SetSafetyArmed(inputs.host_control);
+				resume_ok = arm_output_gate_activate() != 0U;
+			}
+			if (resume_ok)
+			{
+				osThreadResume(roboARMHandle);
+				holding = false;
+			}
+			else
+			{
+				arm_output_gate_trip();
+				Host_SetSafetyArmed(0U);
+				Host_ResetSafetyHandshake();
+				arm_safety_state_latch_fault(&safety);
+				next_state = ARM_SAFETY_FAULT_LATCHED;
+				ArmHold();
+			}
 		}
 
 		if (next_state != ARM_SAFETY_ARMED)

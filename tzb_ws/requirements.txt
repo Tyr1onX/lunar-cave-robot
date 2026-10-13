@@ -47,7 +47,7 @@ openvino>=2024.0,<2026
 #      ros-humble-diagnostic-msgs ros-humble-camera-calibration-parsers \
 #      ros-humble-moveit ros-humble-moveit-msgs \
 #      ros-humble-geometric-shapes ros-humble-pinocchio \
-#      ros-humble-coal ros-humble-ruckig ros-humble-ompl \
+#      ros-humble-coal ros-humble-ompl \
 #      ros-humble-serial-driver ros-humble-io-context \
 #      ros-humble-orbbec-camera
 #    The workspace includes a source checkout of OrbbecSDK_ROS2, so the

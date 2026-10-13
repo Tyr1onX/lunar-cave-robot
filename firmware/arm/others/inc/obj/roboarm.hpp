@@ -181,6 +181,12 @@ class Joint : public Motor_DM
 	   各轴不同的常量，**不用于上位机协议**。 */
 	float Theta() const { return angle.theta; }
 	bool IsInited() const { return inited; }
+	bool FeedbackHealthy(uint32_t now_, uint32_t stale_after_ms_) const;
+	bool FeedbackUpdatedAfter(uint16_t previous_count_) const;
+	bool DriverEnabled() const
+	{
+		return DriverStatus() == Motor_DM_N::error_state_e::enabled;
+	}
 
 	private:
 	void ApplyLimit();    // 把 target_pos 钳到（圈次对齐后的）关节限位内
@@ -211,7 +217,8 @@ class Joint : public Motor_DM
 	float vel_ref;                    // 规划输出速度（前馈速度）
 	float acc_ref;                    // 规划输出加速度（惯性前馈用）
 	bool target_dirty;                // 位置模式需要重规划；仅控制任务读写
-	bool inited;                      // 是否已收到有效反馈
+	volatile bool inited;             // 是否已收到有效反馈
+	volatile uint32_t feedback_tick{0U}; // 最近一次有效电机反馈的 HAL tick
 	bool plan_inited;                 // 规划是否已用实测位置初始化（缓启动标志）
 	Route_Plan_N::velocity_plan_s velocity_planner{};
 	float velocity_cmd{0.f};

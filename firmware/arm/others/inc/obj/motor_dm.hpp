@@ -55,17 +55,24 @@ class Motor_DM
 
 	/* 反馈入口：CAN 接收回调里调用 */
 	void UpdateFeedback(const uint8_t* data_);
+	Motor_DM_N::error_state_e DriverStatus() const { return error; }
+	bool HasDriverFault() const
+	{
+		return error != Motor_DM_N::error_state_e::disabled &&
+			error != Motor_DM_N::error_state_e::enabled;
+	}
+	uint16_t FeedbackCount() const { return rx_cnt; }
 
 	/* MIT 命令：kp/kd 是直接打包进 12 位字段的原始值，不是物理增益 */
-	void Ctrl(float pos_, float vel_, uint16_t kp_, uint16_t kd_, float torque_ff_) const;
+	bool Ctrl(float pos_, float vel_, uint16_t kp_, uint16_t kd_, float torque_ff_) const;
 
 	/* 单字节命令：使能 / 失能 / 清错 */
-	void Ctrl(Motor_DM_N::order_byte_e order_) const;
+	bool Ctrl(Motor_DM_N::order_byte_e order_) const;
 
 	protected:
 	const uint8_t host_id;
 	const uint8_t motor_id;
-	Motor_DM_N::error_state_e error;  // 电机上报的故障状态（当前只解码，未做保护动作）
+	volatile Motor_DM_N::error_state_e error;  // 电机反馈的状态/故障码
 	float pos;                        // rad
 	float vel;                        // rad/s
 	float torque;                     // Nm
@@ -74,5 +81,5 @@ class Motor_DM
 	const Motor_DM_N::param_factor_s& facs;
 	Bsp_CAN& can;
 	mutable uint16_t tx_cnt;  // 在 const 方法里也会自增
-	uint16_t rx_cnt;
+	volatile uint16_t rx_cnt;
 };

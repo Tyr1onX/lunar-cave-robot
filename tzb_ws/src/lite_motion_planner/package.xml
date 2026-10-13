@@ -3,7 +3,7 @@
 <package format="3">
   <name>lite_motion_planner</name>
   <version>0.1.0</version>
-  <description>Lightweight C++ motion planning framework based on Pinocchio, hpp-fcl, OMPL, and Ruckig.</description>
+  <description>Lightweight C++ motion planning framework based on Pinocchio, hpp-fcl, and OMPL.</description>
   <maintainer email="dev@example.com">dev</maintainer>
   <license>BSD-3-Clause</license>
 
@@ -28,7 +28,6 @@
   <depend>coal</depend>
   <depend>geometric_shapes</depend>
   <depend>ompl</depend>
-  <depend>ruckig</depend>
   <depend>eigen</depend>
   <depend>tinyxml2_vendor</depend>
 

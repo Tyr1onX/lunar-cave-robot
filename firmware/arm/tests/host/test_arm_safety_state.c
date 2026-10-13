@@ -9,7 +9,8 @@ static arm_safety_inputs_t ready_inputs(void)
     arm_safety_inputs_t inputs;
     memset(&inputs, 0, sizeof(inputs));
     inputs.rc_online = 1u;
-    inputs.feedback_initialized = 1u;
+    inputs.feedback_healthy = 1u;
+    inputs.can_healthy = 1u;
     return inputs;
 }
 
@@ -77,8 +78,16 @@ int main(void)
     assert(arm_safety_state_update(&safety, &inputs) == ARM_SAFETY_FAULT_LATCHED);
     inputs.rc_online = 1u;
     inputs.manual_rearm_action = 1u;
-    inputs.feedback_initialized = 0u;
+    inputs.feedback_healthy = 0u;
     assert(arm_safety_state_update(&safety, &inputs) == ARM_SAFETY_FAULT_LATCHED);
+
+    inputs.feedback_healthy = 1u;
+    inputs.can_healthy = 0u;
+    assert(arm_safety_state_update(&safety, &inputs) == ARM_SAFETY_FAULT_LATCHED);
+
+    arm_safety_state_latch_fault(&safety);
+    assert(safety.state == ARM_SAFETY_FAULT_LATCHED);
+    assert(safety.manual_rearm_seen == 0u);
 
     puts("PASS arm firmware safety-state host tests");
     return 0;

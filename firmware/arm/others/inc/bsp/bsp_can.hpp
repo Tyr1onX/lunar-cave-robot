@@ -20,7 +20,15 @@ struct can_err_s
 	uint32_t last_protocol_error;
 	uint32_t tx_error_cnt;
 	uint32_t rx_error_cnt;
+	volatile uint32_t bus_off;
+};
+
+struct can_health_snapshot_s
+{
 	uint32_t bus_off;
+	uint32_t tx_failure_count;
+	uint32_t rx_failure_count;
+	uint32_t error_event_count;
 };
 
 /* FDCAN 收发：只负责帧的搬运与错误现场记录，不含任何业务逻辑。
@@ -33,7 +41,7 @@ class Bsp_CAN
 	: handle(hcan_), tx_header {0, is_extended_ ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID,
 		FDCAN_DATA_FRAME, 8, FDCAN_ESI_ACTIVE,
 		is_brs_ ? FDCAN_BRS_ON : FDCAN_BRS_OFF, is_fd_ ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
-		FDCAN_NO_TX_EVENTS, 0}, error_count(0), error{}
+		FDCAN_NO_TX_EVENTS, 0}, error_count(0), tx_failure_count(0U), rx_failure_count(0U), error{}
 	{}
 
 	void FilterConfig(bool is_extended_ = false) const;
@@ -45,8 +53,22 @@ class Bsp_CAN
 			FDCAN_IT_ERROR_PASSIVE | FDCAN_IT_ERROR_WARNING, 0);
 	}
 
-	void Transmit(uint32_t id_, const uint8_t* data_, uint8_t length_ = 8);
-	void Receive() { HAL_FDCAN_GetRxMessage(handle, FDCAN_RX_FIFO0, &rx_header, rx_buffer); }
+	bool Transmit(uint32_t id_, const uint8_t* data_, uint8_t length_ = 8);
+	bool Receive()
+	{
+		if ((HAL_FDCAN_GetRxMessage(handle, FDCAN_RX_FIFO0, &rx_header, rx_buffer) != HAL_OK) ||
+			(rx_header.DataLength != FDCAN_DLC_BYTES_8))
+		{
+			++rx_failure_count;
+			return false;
+		}
+		return true;
+	}
+	bool IsBusOff() const;
+	uint32_t TxFailureCount() const;
+	uint32_t RxFailureCount() const;
+	uint32_t ErrorEventCount() const;
+	can_health_snapshot_s HealthSnapshot() const;
 
 	/* 接收与错误回调需要直接读写帧缓冲/错误现场，故声明为友元 */
 	friend void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* hfdcan, uint32_t RxFifo0ITs);
@@ -57,6 +79,8 @@ class Bsp_CAN
 	FDCAN_TxHeaderTypeDef tx_header;  // 发送头（接收走 RX FIFO0）
 	FDCAN_RxHeaderTypeDef rx_header {};
 	uint8_t rx_buffer[8] {};
-	uint8_t error_count;  // 进入错误回调的累计次数
+	volatile uint32_t error_count;  // FDCAN warning/passive/bus-off callback events
+	volatile uint32_t tx_failure_count;
+	volatile uint32_t rx_failure_count;
 	can_err_s error;
 };
