@@ -93,5 +93,11 @@ openvino>=2024.0,<2026
 #    ros2 launch pose_estimator perception_bringup.launch.py
 #
 # The checked-in src/openvino/yoloe-11l-seg.bin is only a 134-byte placeholder
-# and cannot be loaded. The default launch now uses src/best_openvino_model,
-# whose XML/BIN pair is complete. Supply model_path:=... to use another export.
+# and cannot be loaded. The default yolo_node launch selects
+# src/best_openvino_model/blue_block, but the matching .bin and prompt assets
+# are not checked in. A similarly named model found in an older NUC workspace
+# failed segmentation postprocessing on the tested Ultralytics/OpenVINO stack;
+# it is not a verified runtime model. The root best.xml model has a different
+# class (haomu) and is not a substitute. Provide an approved, tested OpenVINO
+# export with model_path:=... or TZB_OPENVINO_MODEL=/path/to/model_directory.
+# See ../docs/P9H_PERCEPTION_READINESS.md for measured versions and limitations.
