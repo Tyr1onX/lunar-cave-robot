@@ -51,6 +51,7 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var visionMessage: String?
     @Published private(set) var visionFrameMessage: String?
     @Published private(set) var visionFrameRoundTripMs: Double?
+    @Published private(set) var macFrameUpdateHz: Double?
     @Published private(set) var selectedVisionStream: VisionStreamID = .rgb
     @Published private(set) var tunnelRunning = false
     @Published private(set) var agentOnline = false
@@ -72,6 +73,7 @@ final class ConsoleModel: ObservableObject {
     private var isReadingVision = false
     private var isReadingVisionFrame = false
     private var lastLogRead = Date.distantPast
+    private var lastFrameUpdateUptime: TimeInterval?
 
     private let apiRoot = URL(string: "http://127.0.0.1:18765")!
     private let session: URLSession = {
@@ -234,6 +236,8 @@ final class ConsoleModel: ObservableObject {
         visionFrame = nil
         visionFrameMessage = nil
         visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     func invalidateAgentData(message: String) {
@@ -247,6 +251,8 @@ final class ConsoleModel: ObservableObject {
         visionMessage = nil
         visionFrameMessage = nil
         visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     func applyLogReading(_ reading: LogReading, requestSession: Int) {
@@ -261,6 +267,8 @@ final class ConsoleModel: ObservableObject {
         guard reading.stream(selectedVisionStream)?.status == "streaming" else {
             visionFrame = nil
             visionFrameRoundTripMs = nil
+            macFrameUpdateHz = nil
+            lastFrameUpdateUptime = nil
             visionFrameMessage = reading.stream(selectedVisionStream)?.reason
             return
         }
@@ -269,6 +277,11 @@ final class ConsoleModel: ObservableObject {
     func applyVisionFrame(_ data: Data, streamID: VisionStreamID, requestSession: Int, roundTripMs: Double) {
         guard agentOnline, requestSession == agentSession, selectedVisionStream == streamID,
               vision?.stream(streamID)?.status == "streaming" else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let lastFrameUpdateUptime, now > lastFrameUpdateUptime {
+            macFrameUpdateHz = 1 / (now - lastFrameUpdateUptime)
+        }
+        lastFrameUpdateUptime = now
         visionFrame = data
         visionFrameMessage = nil
         visionFrameRoundTripMs = roundTripMs
@@ -281,6 +294,8 @@ final class ConsoleModel: ObservableObject {
         visionMessage = message
         visionFrameMessage = message
         visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     func applyVisionFrameError(_ message: String, streamID: VisionStreamID, requestSession: Int) {
@@ -288,6 +303,8 @@ final class ConsoleModel: ObservableObject {
         visionFrame = nil
         visionFrameMessage = message
         visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     private func refreshLogs() {
@@ -341,6 +358,8 @@ final class ConsoleModel: ObservableObject {
         guard source.status == "streaming" else {
             visionFrame = nil
             visionFrameRoundTripMs = nil
+            macFrameUpdateHz = nil
+            lastFrameUpdateUptime = nil
             visionFrameMessage = source.reason
             return
         }

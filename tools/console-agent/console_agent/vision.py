@@ -79,19 +79,34 @@ def encode_image_png(frame: dict[str, Any]) -> tuple[bytes, str | None]:
         rows = _rows(data, width, height, step, 1)
         color_type = 0
     elif encoding in {"16uc1", "mono16"}:
-        source_rows = _rows(data, width, height, step, 2)
-        byte_order = "big" if frame.get("is_bigendian") else "little"
-        values = [int.from_bytes(source[index:index + 2], byte_order) for source in source_rows for index in range(0, len(source), 2)]
-        valid = [value for value in values if value > 0]
-        low, high = (min(valid), max(valid)) if valid else (0, 0)
+        if step < width * 2 or len(data) < step * height:
+            raise ValueError("Image data is shorter than its declared dimensions")
+        # Preview only: bound both conversion time and transient memory for large depth frames.
+        stride_x = max(1, (width + 1023) // 1024)
+        stride_y = max(1, (height + 1023) // 1024)
+        big_endian = bool(frame.get("is_bigendian"))
+
+        def sample(row_offset: int, x: int) -> int:
+            pos = row_offset + x * 2
+            return (data[pos] << 8 | data[pos + 1]) if big_endian else (data[pos] | data[pos + 1] << 8)
+
+        low, high = 65535, 0
+        for y in range(0, height, stride_y):
+            offset = y * step
+            for x in range(0, width, stride_x):
+                value = sample(offset, x)
+                if value:
+                    low, high = min(low, value), max(high, value)
         span = max(1, high - low)
         rows = []
-        for source in source_rows:
-            row = bytearray(width)
-            for pixel in range(width):
-                value = int.from_bytes(source[pixel * 2:pixel * 2 + 2], byte_order)
-                row[pixel] = 0 if value == 0 else max(0, min(255, round((value - low) * 255 / span)))
+        for y in range(0, height, stride_y):
+            offset = y * step
+            row = bytearray()
+            for x in range(0, width, stride_x):
+                value = sample(offset, x)
+                row.append(0 if value == 0 else max(0, min(255, round((value - low) * 255 / span))))
             rows.append(bytes(row))
+        width, height = len(rows[0]), len(rows)
         color_type = 0
         note = "16 位深度按当前帧有效范围拉伸为灰度；亮度不可跨帧比较，也不是距离刻度"
     else:
@@ -120,7 +135,11 @@ class VisionObserver:
         if stream_id not in STREAMS:
             return
         with self._lock:
-            self._publishers[stream_id] = (len(types) if publisher_count is None else publisher_count, sorted(set(types)))
+            count = len(types) if publisher_count is None else publisher_count
+            self._publishers[stream_id] = (count, sorted(set(types)))
+            if count == 0 or IMAGE_TYPE not in types:
+                self._frames.pop(stream_id, None)
+                self._received[stream_id].clear()
 
     def graph_available(self) -> None:
         with self._lock:
@@ -174,6 +193,7 @@ class VisionObserver:
                 "stamp_seconds": seconds,
                 "stamp_nanoseconds": nanoseconds,
                 "source_stamp": _stamp_iso(seconds, nanoseconds),
+                "frame_id": str(getattr(message.header, "frame_id", ""))[:120],
                 "received_at": _utc_now(),
                 "received_epoch": now_wall,
                 "received_mono": now_mono,
@@ -234,6 +254,7 @@ class VisionObserver:
                     "frame_rate_hz": fps,
                     "frame_age_ms": age_ms,
                     "source_stamp": visible_frame["source_stamp"] if visible_frame else None,
+                    "frame_id": visible_frame["frame_id"] if visible_frame else None,
                     "header_to_agent_ms": stamp_delta_ms,
                     "received_at": visible_frame["received_at"] if visible_frame else None,
                     "gap_events": self._gap_events[stream_id],

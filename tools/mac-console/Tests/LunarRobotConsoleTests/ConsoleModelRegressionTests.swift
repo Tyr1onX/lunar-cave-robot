@@ -60,13 +60,28 @@ final class ConsoleModelRegressionTests: XCTestCase {
         XCTAssertNil(model.visionFrame, "A delayed image from a disconnected Agent session must not be shown as live")
         model.applyVisionFrame(Data([2]), streamID: .rgb, requestSession: currentSession, roundTripMs: 5)
         XCTAssertEqual(model.visionFrame, Data([2]), "A fresh image from the recovered session must be accepted")
+        XCTAssertNil(model.macFrameUpdateHz, "One accepted frame cannot establish Mac update FPS")
+    }
+
+    func testFrameUpdateRateIsLocalAndClearedOnSwitchAndDisconnect() {
+        let model = ConsoleModel()
+        model.markAgentAvailable(message: "Agent 在线")
+        model.applyVisionReading(streamingVisionReading(), requestSession: model.agentSession)
+        model.applyVisionFrame(Data([1]), streamID: .rgb, requestSession: model.agentSession, roundTripMs: 3)
+        model.applyVisionFrame(Data([2]), streamID: .rgb, requestSession: model.agentSession, roundTripMs: 3)
+        XCTAssertNotNil(model.macFrameUpdateHz)
+        model.selectVisionStream(.depth)
+        XCTAssertNil(model.visionFrame)
+        XCTAssertNil(model.macFrameUpdateHz)
+        model.invalidateAgentData(message: "Agent 断开")
+        XCTAssertNil(model.macFrameUpdateHz)
     }
 
     private func streamingVisionReading() -> VisionReading {
         let stream = VisionStreamReading(
             id: "rgb", label: "RGB", topic: "/camera/color/image_raw", topicType: "sensor_msgs/msg/Image",
             status: "streaming", reason: nil, publisherCount: 1, width: 640, height: 480, encoding: "rgb8",
-            frameRateHz: 30, frameAgeMs: 12, sourceStamp: "2026-10-13T05:00:00Z", headerToAgentMs: nil,
+            frameRateHz: 30, frameAgeMs: 12, sourceStamp: "2026-10-13T05:00:00Z", frameId: "lunar-v0.2a-synthetic/rgb", headerToAgentMs: nil,
             receivedAt: "2026-10-13T05:00:00Z", gapEvents: 0
         )
         return VisionReading(status: "ok", source: "nuc-ros2-read-only-subscriber", collectedAt: "2026-10-13T05:00:00Z", reason: nil, streams: [stream])

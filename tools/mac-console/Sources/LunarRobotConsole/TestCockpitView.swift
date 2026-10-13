@@ -6,6 +6,7 @@ struct TestCockpitView: View {
 
     private var source: VisionStreamReading? { model.vision?.stream(model.selectedVisionStream) }
     private var isLive: Bool { model.agentOnline && source?.status == "streaming" && model.visionFrame != nil }
+    private var isSynthetic: Bool { source?.frameId?.hasPrefix("lunar-v0.2a-synthetic/") == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -18,7 +19,7 @@ struct TestCockpitView: View {
                 Spacer()
                 HStack(spacing: 7) {
                     StatusDot(isOn: isLive)
-                    Text(isLive ? "实时数据" : "只读观测")
+                    Text(isLive ? (isSynthetic ? "合成测试流" : "ROS 图像流") : "只读观测")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(isLive ? Palette.accent : Palette.warning)
                 }
@@ -58,7 +59,7 @@ struct TestCockpitView: View {
                                     .padding(8)
                                 HStack(spacing: 6) {
                                     Circle().fill(Palette.danger).frame(width: 7, height: 7)
-                                    Text("LIVE").font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    Text(isSynthetic ? "SYNTHETIC" : "ROS LIVE").font(.system(size: 9, weight: .bold, design: .monospaced))
                                 }
                                 .padding(.horizontal, 9).padding(.vertical, 6)
                                 .background(.black.opacity(0.72), in: Capsule())
@@ -79,7 +80,8 @@ struct TestCockpitView: View {
                         .aspectRatio(16 / 9, contentMode: .fit)
 
                         HStack(spacing: 0) {
-                            VisionMetric(title: "帧率", value: source?.frameRateHz.map { String(format: "%.1f FPS", $0) } ?? "未知")
+                            VisionMetric(title: "NUC 接收", value: source?.frameRateHz.map { String(format: "%.1f FPS", $0) } ?? "未知")
+                            VisionMetric(title: "Mac 更新", value: model.macFrameUpdateHz.map { String(format: "%.1f FPS", $0) } ?? "未知")
                             VisionMetric(title: "帧新鲜度", value: source?.frameAgeMs.map { "\($0) ms" } ?? "未知")
                             VisionMetric(title: "传输往返", value: model.visionFrameRoundTripMs.map { String(format: "%.0f ms", $0) } ?? "未知")
                             VisionMetric(title: "编码 / 分辨率", value: imageFormat)
@@ -177,7 +179,7 @@ struct TestCockpitView: View {
         guard model.agentOnline else { return "未连接" }
         guard model.visionMessage == nil else { return "视觉接口不可用" }
         switch source?.status {
-        case "streaming": return model.selectedVisionStream == .yolo ? "检测输出图像正在更新" : "相机帧正在更新"
+        case "streaming": return isSynthetic ? "合成测试图像正在更新" : "ROS 图像正在更新（实机未验收）"
         case "stale": return "数据流断开"
         case "waiting": return "Topic 存在，尚未收到帧"
         case "unavailable": return "未发现数据发布者"
@@ -187,6 +189,7 @@ struct TestCockpitView: View {
     }
 
     private var moduleHealthDetail: String {
+        if isSynthetic { return "独立 ROS Domain 合成数据；不代表真实相机、深度测距或 YOLO 推理通过验收。" }
         if model.selectedVisionStream == .yolo && source?.status == "streaming" {
             return "检测标注图在更新；这证明输出流存活，不代表识别精度已验收。"
         }

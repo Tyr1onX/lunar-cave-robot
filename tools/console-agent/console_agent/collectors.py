@@ -407,6 +407,7 @@ def collect_vision() -> dict[str, Any]:
                 "frame_rate_hz": None,
                 "frame_age_ms": None,
                 "source_stamp": None,
+                "frame_id": None,
                 "header_to_agent_ms": None,
                 "received_at": None,
                 "gap_events": 0,

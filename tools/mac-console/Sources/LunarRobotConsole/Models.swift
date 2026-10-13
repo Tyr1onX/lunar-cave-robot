@@ -192,6 +192,7 @@ struct VisionStreamReading: Decodable, Identifiable {
     let frameRateHz: Double?
     let frameAgeMs: Int?
     let sourceStamp: String?
+    let frameId: String?
     let headerToAgentMs: Double?
     let receivedAt: String?
     let gapEvents: Int
