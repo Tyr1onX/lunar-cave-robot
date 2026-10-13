@@ -1,6 +1,6 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。P9-E 审查时的 main 基线为 6a48dc52f5d7f5b263845bdec0639f59144a4486；最近完整 P7/P8 离线套件在代码 SHA 07a56c3a33882aa2866f1076d8597776e2579bcb 上通过 12/12，main 后续只有文档提交。PR #8 安全状态机仍开放，P9-E 审查发现若干机械臂控制时序缺口。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。本轮检查开始时 GitHub `main` 为 `b1cfe617209a06d69000a515af82b9b95add62ef`；NUC 统一工作树仍在 `6a48dc52f5d7f5b263845bdec0639f59144a4486`，未提交修改为 0，尚未同步。最近完整 P7/P8 离线套件历史结果为 12/12（源码 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`），不代表最新 NUC 快照重新验收。PR #8 安全状态机仍开放，P9-E 审查发现若干机械臂控制时序缺口。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
 
 ## 源码地图
 
@@ -12,6 +12,7 @@
 | [`firmware/chassis/`](firmware/chassis/) | STM32H723 六轮底盘工程；含 CubeMX、CMake、Keil、HAL/CMSIS、FreeRTOS 与团队控制源码 |
 | [`hardware/`](hardware/) | 机械 CAD、电气/PCB、接线、BOM 和设备资料归档入口；当前仅放资产接收说明，未找到可归档原始设计文件 |
 | [`tools/`](tools/) | P4～P8 离线验证、源码完整性检查、三端状态查询与安全同步入口 |
+| [`tools/mac-console/`](tools/mac-console/) | Mac 上运行的 Lunar Robot Console 只读状态界面 |
 | [docs/](docs/) | [新人技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
 | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 第三方源码及许可证来源摘要；各依赖原始许可文件保留在对应源码目录 |
 
@@ -75,6 +76,17 @@ GitHub `main` 是源码版本来源。Mac 连接 ThinkBook 和 NUC 后，在仓�
 状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。默认统一目录为 ThinkBook `~/lunar-cave-robot`、NUC `~/lunar-cave-robot`；原有 P0～P8 工作空间不移动、不覆盖。可以通过 `THINKBOOK_REPO`、`NUC_REPO` 环境变量更改目标路径。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问；同步还需要 Mac SSH agent 中已授权 GitHub 的密钥，密钥不会复制到设备。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)与[设备状态](docs/DEVICE_STATUS.md)。
 
 状态查询会分别显示 P7/P8 全套、单场景、两个 ROS 工作区构建以及两套 STM32 固件构建记录。单场景通过 `./tools/run_p7_scenario.sh normal` 运行并单独记账，不会覆盖完整套件结果；两个 ROS 工作区可用 `./tools/build_ros2_offline_workspaces.sh` 独立构建并自动记录各自结果。测试记录附带执行时 SHA、分支、时间和测试范围；未运行显示“未记录”。
+
+### Mac 图形化只读监控
+
+首次运行要求 Mac 已安装 Node.js 20+，并配置现有 `nuc`、`thinkbook` SSH 别名和 GitHub 私有仓库读取权限：
+
+```bash
+cd tools/mac-console
+npm start
+```
+
+浏览器打开 `http://127.0.0.1:4173`。也可在 Finder 双击 `tools/mac-console/Open Lunar Robot Console.command`。界面读取真实 NUC CPU/内存/磁盘、Git 版本、ROS 节点/Topic 名称、设备状态和最近构建日志。SSH 可达、ROS 节点存在、Topic 消息流和真实设备反馈是不同状态；当前版本只读 Topic 名称，未订阅数据，也没有传感器启动、测试执行或执行器控制入口。技术选型、分阶段计划和边界见[控制台架构](docs/MAC_CONSOLE_ARCHITECTURE.md)。
 
 ## 仓库及分享边界
 

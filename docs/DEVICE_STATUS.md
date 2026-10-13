@@ -20,6 +20,8 @@ GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是源码版本来源�
 
 独立记录保存在设备各自 `$XDG_STATE_HOME/lunar-cave-robot/tests/`（默认 `$HOME/.local/state/lunar-cave-robot/tests/`）：`ros-offline-suite.yaml`、`p7-scenario.yaml`、`ros-nav-build.yaml`、`ros-arm-build.yaml`、`firmware-chassis-protocol-test.yaml`、`firmware-chassis-build.yaml` 和 `firmware-arm-build.yaml`。每条记录由脚本从执行时 Git 工作树自动写入时间、结果、SHA、分支和范围；单场景状态不会覆盖完整 P7/P8 套件状态。旧版 `latest-test.yaml` 仍作为无范围历史记录读取。`./tools/device_status.sh` 对缺失记录显示“未记录”，不会把未运行推断为通过。部署版本记录只有在部署负责人确认后才可以手动写入 `deployed-sha`；代码同步脚本不写入它。
 
+Mac 上的图形化只读面板见 [`tools/mac-console/`](../tools/mac-console/) 和[控制台架构](MAC_CONSOLE_ARCHITECTURE.md)。它复用本脚本提供版本/测试记录，再用固定 SSH 快照读取主机资源和 ROS graph；不会启动传感器或控制任务。面板列出 Topic 名称但不订阅消息，因此仍不能显示 Topic 数据健康或物理设备反馈。
+
 ## 已知基线与限制
 
 P8 验收报告记录两台设备旧工作区 `~/lunar-cave-p8-validation`、`~/lunar-cave-p8` 的 HEAD 为 `f6005a076997a7e05e079408f7e84e1b6b9bdb8f`，并有 12 个 PTY 离线场景通过记录。此为 P8 的历史验收 SHA；P9 新统一目录的实时状态以脚本输出为准。NUC 另有 MID-360 驱动构建通过记录，未启动雷达采集。

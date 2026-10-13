@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Lunar Robot Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">L</div>
+          <div>
+            <div class="eyebrow">吉甲大师战队 · 机器人开发平台</div>
+            <h1>Lunar Robot Console</h1>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span class="mode-pill"><span class="mode-dot"></span>只读模式</span>
+          <button id="refresh" class="refresh-button" type="button">
+            <span aria-hidden="true">↻</span> 刷新状态
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-row">
+          <div>
+            <p class="eyebrow">车载主控 · ThinkBook / NUC 状态来源</p>
+            <h2>系统总览</h2>
+            <p class="subline">通过现有 SSH 配置读取实际设备信息。此版本没有启动、停止或运动控制入口。</p>
+          </div>
+          <div id="refresh-time" class="refresh-time">尚未读取设备</div>
+        </section>
+
+        <div id="notice" class="notice hidden" role="status"></div>
+
+        <section class="status-grid" aria-label="设备状态">
+          <article class="status-card connection-card">
+            <div class="card-heading"><span class="icon">⌁</span><span>SSH 连接</span></div>
+            <div id="ssh-state" class="metric-state pending">等待读取</div>
+            <div id="host-name" class="muted">NUC · nuc</div>
+            <div class="status-foot">只说明 SSH 可达，不代表 ROS 或硬件健康</div>
+          </article>
+          <article class="status-card">
+            <div class="card-heading"><span class="icon">◫</span><span>ROS 2 图</span></div>
+            <div id="ros-state" class="metric-state pending">等待读取</div>
+            <div id="ros-detail" class="muted">节点与 Topic 图信息</div>
+            <div class="status-foot">节点存在不等于 Topic 有数据</div>
+          </article>
+          <article class="status-card">
+            <div class="card-heading"><span class="icon">⌖</span><span>Topic 数据流</span></div>
+            <div id="topic-flow-state" class="metric-state warning">未采样</div>
+            <div id="topic-flow-detail" class="muted">本轮只列出 Topic 名称</div>
+            <div class="status-foot">不订阅传感器，不以节点存在推断数据正常</div>
+          </article>
+          <article class="status-card">
+            <div class="card-heading"><span class="icon">◉</span><span>实体反馈</span></div>
+            <div class="metric-state warning">未核验</div>
+            <div class="muted">未连接控制器或执行器</div>
+            <div class="status-foot">软件状态不代表物理急停或制动状态</div>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel">
+            <div class="panel-title"><div><p class="eyebrow">设备资源</p><h3>NUC 主机</h3></div><span id="os-label" class="tag">—</span></div>
+            <div class="resource-grid">
+              <div class="resource-item"><span>处理器</span><strong id="cpu-label">—</strong></div>
+              <div class="resource-item"><span>负载 / 核数</span><strong id="load-label">—</strong></div>
+              <div class="resource-item"><span>内存</span><strong id="memory-label">—</strong></div>
+              <div class="resource-item"><span>根分区</span><strong id="disk-label">—</strong></div>
+              <div class="resource-item"><span>运行时间</span><strong id="uptime-label">—</strong></div>
+              <div class="resource-item"><span>温度传感器</span><strong id="thermal-label">—</strong></div>
+            </div>
+            <div class="resource-bottom"><span>网络接口</span><div id="network-links" class="chip-list">—</div></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-title"><div><p class="eyebrow">版本状态</p><h3>源码与部署</h3></div><span id="sync-state" class="tag">—</span></div>
+            <div class="version-row"><span>GitHub main</span><code id="github-sha">—</code></div>
+            <div class="version-row"><span>NUC 工作树</span><code id="nuc-sha">—</code></div>
+            <div class="version-row"><span>分支 / 本地修改</span><strong id="nuc-worktree">—</strong></div>
+            <div class="version-row"><span>部署版本</span><strong id="deployed-sha">—</strong></div>
+            <div class="version-note">源码版本不会自动记作部署版本；本地状态来自 GitHub 与设备读取结果。</div>
+          </article>
+        </section>
+
+        <section class="content-grid lower-grid">
+          <article class="panel">
+            <div class="panel-title"><div><p class="eyebrow">运行图</p><h3>ROS 节点与 Topic</h3></div><span id="ros-distro" class="tag">ROS 2 未知</span></div>
+            <div class="list-columns">
+              <div><h4>节点 <span id="node-count" class="count">0</span></h4><ul id="node-list" class="plain-list"><li class="empty">暂无数据</li></ul></div>
+              <div><h4>Topic <span id="topic-count" class="count">0</span></h4><ul id="topic-list" class="plain-list"><li class="empty">暂无数据</li></ul></div>
+            </div>
+            <p id="graph-note" class="small-note">ROS 图只反映发现信息；Topic 消息频率与真实设备回执尚未检查。</p>
+          </article>
+
+          <article class="panel">
+            <div class="panel-title"><div><p class="eyebrow">软件准备</p><h3>工作区与设备依赖</h3></div><span class="tag">只读检查</span></div>
+            <div id="workspace-list" class="workspace-list"><p class="empty">等待读取安装信息</p></div>
+            <div id="component-list" class="component-list"></div>
+          </article>
+        </section>
+
+        <section class="content-grid lower-grid">
+          <article class="panel wide-panel">
+            <div class="panel-title"><div><p class="eyebrow">最近记录</p><h3>测试状态与构建日志</h3></div><span class="tag">来自 NUC 本地记录</span></div>
+            <div id="test-records" class="record-list"><p class="empty">等待读取测试记录</p></div>
+            <details class="log-details">
+              <summary>查看最近构建日志片段</summary>
+              <div id="build-logs" class="log-list"><p class="empty">尚无日志片段</p></div>
+            </details>
+          </article>
+        </section>
+      </main>
+
+      <footer>
+        <span>连接方式：Mac 本地页面 → SSH → NUC；不暴露 ROS 2 DDS。</span>
+        <span>当前版本不包含传感器启动、测试执行或电机控制。</span>
+      </footer>
+    </div>
+  </body>
+</html>
