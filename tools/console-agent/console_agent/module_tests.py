@@ -222,7 +222,7 @@ class TestManager:
         if spec is None:
             return None, "unknown test id", 404
         with self._lock:
-            if any(run["status"] in {"running", "cancelling"} for run in self._runs.values()):
+            if any(run["record"]["status"] in {"running", "cancelling"} for run in self._runs.values()):
                 return None, "another test is already running", 409
             reasons = spec.check(self.repo)
             if reasons:

@@ -84,6 +84,16 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(report_status, 200)
         self.assertEqual(json.loads(report_body)["result"], "passed")
 
+    def test_rejects_second_run_while_one_is_active(self) -> None:
+        self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
+        status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
+        self.assertEqual(status, 202)
+        run_id = json.loads(body)["run_id"]
+        status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
+        self.assertEqual(status, 409)
+        self.assertIn("already running", json.loads(body)["error"])
+        self.wait_for(run_id, {"passed"})
+
     def test_cancellation_terminates_child_and_records_cancelled(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
         status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
