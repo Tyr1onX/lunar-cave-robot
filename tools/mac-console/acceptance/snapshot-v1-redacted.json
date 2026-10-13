@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "collected_at": "2026-10-13T06:53:07.961Z",
+  "source": "nuc-read-only-agent",
+  "host": {
+    "hostname": "NUC-REDACTED",
+    "platform": "x86_64",
+    "os_release": [
+      "PRETTY_NAME=\"Ubuntu 22.04.5 LTS\"",
+      "NAME=\"Ubuntu\"",
+      "VERSION_ID=\"22.04\"",
+      "VERSION=\"22.04.5 LTS (Jammy Jellyfish)\"",
+      "VERSION_CODENAME=jammy",
+      "ID=ubuntu",
+      "ID_LIKE=debian",
+      "HOME_URL=\"https://www.ubuntu.com/\"",
+      "SUPPORT_URL=\"https://help.ubuntu.com/\"",
+      "BUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"",
+      "PRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"",
+      "UBUNTU_CODENAME=jammy"
+    ]
+  },
+  "system": {
+    "cpu": {
+      "status": "ok",
+      "percent": 0.4,
+      "source": "/proc/stat"
+    },
+    "memory": {
+      "status": "ok",
+      "total_bytes": 16040222720,
+      "available_bytes": 13076385792,
+      "used_percent": 18.5,
+      "source": "/proc/meminfo"
+    },
+    "disk": {
+      "status": "ok",
+      "path": "/",
+      "total_bytes": 982820896768,
+      "used_bytes": 96271159296,
+      "free_bytes": 886549737472,
+      "used_percent": 9.8
+    },
+    "temperature": {
+      "status": "ok",
+      "readings": [
+        {
+          "label": "acpitz",
+          "celsius": 40.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "acpitz",
+          "celsius": 41.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "INT3400 Thermal",
+          "celsius": 20.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "TCPU",
+          "celsius": 45.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "TCPU_PCI",
+          "celsius": 45.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "iwlwifi_1",
+          "celsius": 36.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        },
+        {
+          "label": "x86_pkg_temp",
+          "celsius": 45.0,
+          "source": "/sys/class/thermal/thermal_zone*/temp"
+        }
+      ]
+    }
+  },
+  "git": {
+    "status": "ok",
+    "head_sha": "REDACTED",
+    "branch": "main",
+    "dirty": false,
+    "dirty_files": 0,
+    "repository_path": "/home/<user>/lunar-cave-robot"
+  },
+  "deployment": {
+    "status": "unknown",
+    "reason": "deployed-sha has not been recorded by a deployment owner"
+  },
+  "ros": {
+    "status": "ok",
+    "domain_id": 0,
+    "nodes": [],
+    "topics": [],
+    "discovery": "rclpy runtime graph · read-only observer"
+  },
+  "tests": {
+    "status": "ok",
+    "records": [
+      {
+        "id": "ros-arm-build",
+        "timestamp": "2026-10-12T23:47:15Z",
+        "result": "PASS",
+        "test": "colcon_build",
+        "scope": "<user>_ws_lite_motion_planner_rm_serial_driver",
+        "sha": "REDACTED",
+        "branch": "main",
+        "artifact": "/home/<user>/lunar-cave-robot/<user>_ws/log/latest_build",
+        "record_path": "/home/<user>/.local/state/lunar-cave-robot/tests/ros-arm-build.yaml"
+      },
+      {
+        "id": "ros-nav-build",
+        "timestamp": "2026-10-12T23:46:03Z",
+        "result": "PASS",
+        "test": "colcon_build",
+        "scope": "Nav2_rea_ws_p6_autonomous_mission_chassis_serial_bridge",
+        "sha": "REDACTED",
+        "branch": "main",
+        "artifact": "/home/<user>/lunar-cave-robot/Nav2_rea_ws/log/latest_build",
+        "record_path": "/home/<user>/.local/state/lunar-cave-robot/tests/ros-nav-build.yaml"
+      }
+    ],
+    "source": "/home/<user>/.local/state/lunar-cave-robot/tests"
+  },
+  "safety": {
+    "physical_estop": {
+      "status": "unknown",
+      "reason": "no verified physical E-stop input is connected to this read-only agent"
+    },
+    "hardware_health": {
+      "status": "unknown",
+      "reason": "ROS graph presence is not hardware-health evidence"
+    },
+    "control": "disabled"
+  }
+}
