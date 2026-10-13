@@ -1,3 +1,13 @@
+# P9-I 感知源码与离线验证归档审计 — 2026-10-13
+
+本节记录当前独立 PR 分支，不表示已进入 `main`。仓库仍为 Private；没有把模型权重、SDK 二进制、训练数据或 ROS Bag 纳入 Git。blue-block 外部模型 metadata 标注 AGPL-3.0；测试通过不能自动证明权重可再分发，部署与团队分发仍按其原许可及来源记录办理。没有新增第三方源码；PR 所带的 P9-H 基础提交只在 `THIRD_PARTY_NOTICES.md` 补充了 Orbbec wrapper 的本地 SDK 路径修改说明，保留上游 notices 和许可证。
+
+- 审计范围含 YOLOE metadata 兼容修复、YOLO OpenVINO 目录别名、PoseEstimator PointCloud2 校验、隔离 build/install 测试脚本、ROS 依赖固定及感知状态文档。未改 P7/P8 导航/控制流程、固件、Mac GUI、设备设置或启动生产运动链。
+- 外部 blue-block 模型原始 XML/BIN、提示词和 embedding 的 SHA-256，以及 metadata 遗漏 `end2end: true` 导致 `13×294` 对 `32×25600` 失败的复现记录，见 [P9-I 感知离线验证](P9I_VISION_OFFLINE_VALIDATION.md)。仓库只包含经过路径脱敏的 metadata，不含 111,726,400 字节 BIN。
+- ROS 2 实际节点仅使用明确标记的合成 RGB/点云输入。YOLO 发布 `DetectionArray`/标注图像、PoseEstimator 发布 `PoseStamped`、负输入拒绝与节点恢复均按报告记录。它不是准确率、真实相机/深度定位或实机通过证明。
+- NUC 隔离环境构建 Livox 1.2.4、Orbbec 2.9.3、YOLO 1.0.0、PoseEstimator 1.0.0 通过；检查 Orbbec 安装前缀搬迁、Livox 非 symlink 安装动态依赖及关闭 udev 规则安装。测试没有改动 NUC 正式工作区。
+- 代码安全检查没有提交模型/SDK二进制、构建目录、缓存、日志、数据录制、凭据或设备专用 IP。仓库保持 Private。固件、电机与实体传感器均未连接/启动；外部模型的实机表现和可分发权利仍未在 Git 中确认。
+
 # P9-B 固件构建与安全结论 — 2026-10-12
 
 P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-build-and-safety-audit` 独立分支进行；完整构建日志和产物 SHA 见[STM32 构建审计](STM32_BUILD_AUDIT.md)。

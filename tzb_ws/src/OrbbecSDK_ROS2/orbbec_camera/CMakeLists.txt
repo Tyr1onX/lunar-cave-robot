@@ -136,8 +136,12 @@ if(NOT _ORBBEC_SDK_LIBRARY)
     message(FATAL_ERROR "OrbbecSDK library not found in '${ORBBEC_LIBS_DIR}'")
 endif()
 
-set(CMAKE_BUILD_RPATH "${CMAKE_BUILD_RPATH}:${ORBBEC_LIBS_DIR}")
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}:${ORBBEC_LIBS_DIR}")
+# Build-tree binaries use the separately supplied SDK, while installed binaries
+# resolve the SDK copy installed beside them under <prefix>/lib. Do not retain
+# an ephemeral SDK extraction path in the installed RPATH.
+set(CMAKE_BUILD_RPATH "${ORBBEC_LIBS_DIR}")
+set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/..")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 if(USE_NV_HW_DECODER)
     set(JETSON_MULTI_MEDIA_API_DIR /usr/src/jetson_multimedia_api)
     set(JETSON_MULTI_MEDIA_API_CLASS_DIR ${JETSON_MULTI_MEDIA_API_DIR}/samples/common/classes)
@@ -306,8 +310,8 @@ if(INSTALL_UDEV_RULES)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules
             DESTINATION share/${PROJECT_NAME}/udev)
 endif()
-if(DEFINED ENV{BUILDING_PACKAGE})
-    # Install udev rules
+if(DEFINED ENV{BUILDING_PACKAGE} AND INSTALL_UDEV_RULES)
+    # Keep the legacy package-build install path behind the same explicit opt-in.
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules DESTINATION /etc/udev/rules.d)
 endif()
 

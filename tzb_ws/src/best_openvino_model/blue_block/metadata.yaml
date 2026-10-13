@@ -1,9 +1,17 @@
 author: Ultralytics
-license: AGPL-3.0
+license: AGPL-3.0 License (https://ultralytics.com/license)
+version: 8.4.164
+stride: 32
 task: segment
+head: YOLOESegment26
+batch: 1
+imgsz: [640, 640]
+channels: 3
+end2end: true
 names:
   0: blue_block
   1: blue block
 model: yoloe-26l-seg.xml
 weights: yoloe-26l-seg.bin
-# Weights are not distributed.
+# Prompt embeddings are baked into the OpenVINO graph. The matching source
+# prompt and embedding artifacts are retained with the external model bundle.

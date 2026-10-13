@@ -13,11 +13,11 @@ opencv-python-headless>=4.5,<5
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.1.2+cpu
 torchvision==0.16.2+cpu
-ultralytics>=8.2,<9
-openvino>=2024.0,<2026
+ultralytics==8.4.164
+openvino==2025.4.1
 
 # ---------------------------------------------------------------------------
-# Environment setup (run from the workspace root: /home/tzb/tzb_ws)
+# Environment setup (run from the workspace root: "$HOME/tzb_ws")
 # ---------------------------------------------------------------------------
 # 1) ROS 2 Humble and compiler tools (Ubuntu 22.04):
 #    sudo apt update
@@ -79,9 +79,9 @@ openvino>=2024.0,<2026
 #    If ament reports that an existing path cannot be replaced by a symlink,
 #    clean generated artifacts once and rebuild (these are not source files):
 #    find build install log -depth -delete
-#    (nav2arm additionally requires the external tzb_state_test package; if it
-#    is installed in /home/tzb/nav_ws, source it before launching nav2arm.)
-#    source /home/tzb/nav_ws/install/setup.bash
+#    (nav2arm additionally requires the external tzb_state_test package.)
+#    NAV2_WORKSPACE=/path/to/nav_ws
+#    source "$NAV2_WORKSPACE/install/setup.bash"
 #
 # 6) Default launch selections after setup:
 #    robot_model:=tzb_description
@@ -93,11 +93,12 @@ openvino>=2024.0,<2026
 #    ros2 launch pose_estimator perception_bringup.launch.py
 #
 # The checked-in src/openvino/yoloe-11l-seg.bin is only a 134-byte placeholder
-# and cannot be loaded. The default yolo_node launch selects
-# src/best_openvino_model/blue_block, but the matching .bin and prompt assets
-# are not checked in. A similarly named model found in an older NUC workspace
-# failed segmentation postprocessing on the tested Ultralytics/OpenVINO stack;
-# it is not a verified runtime model. The root best.xml model has a different
-# class (haomu) and is not a substitute. Provide an approved, tested OpenVINO
-# export with model_path:=... or TZB_OPENVINO_MODEL=/path/to/model_directory.
-# See ../docs/P9H_PERCEPTION_READINESS.md for measured versions and limitations.
+# and cannot be loaded. The tested blue_block YOLOE export is external because
+# its 111 MB BIN is not stored in Git. Its sanitized metadata must retain
+# end2end: true; Ultralytics 8.4.164 then handles its [1,300,38] detections and
+# [1,32,160,160] mask prototypes. A synthetic ROS smoke test passed on NUC,
+# but this is not target-accuracy or camera validation. The separate root
+# best.xml model is class haomu and is not a substitute. Supply the authorized
+# blue_block bundle via model_path:=... or TZB_OPENVINO_MODEL=... . Exact
+# hashes, reproduction commands and validation limits are in
+# ../docs/P9I_VISION_OFFLINE_VALIDATION.md.

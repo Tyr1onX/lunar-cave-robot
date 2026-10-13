@@ -49,7 +49,8 @@ ThinkBook 的 P4f 历史工作树仍保留着本地未提交修改，部分差�
 ### P9-H 感知构建与本地模型
 
 - NUC `~/tzb_ws/src/best_openvino_model/` 有根 `best.xml/.bin`、blue-block `yoloe-26l-seg.xml/.bin`、`metadata.yaml`、`prompts.txt` 和 `prompt_embeddings.npz`。模型包来自 NUC 旧的 `tzb_ws` 工作区，本次未将权重或 prompt 二进制复制进 Git。
-- 根模型可做单帧 OpenVINO 推理，但类别名为 `haomu`，不是当前配置的 `blue_block`。Blue-block 模型在 NUC 的 Ultralytics 8.4.164 / OpenVINO 2025.4.1 分割后处理因输出维度不一致失败；其训练 checkpoint 与可复现导出记录未找到。详细哈希、影响和需要提供的重导出材料见 [`P9H_PERCEPTION_READINESS.md`](P9H_PERCEPTION_READINESS.md)。
+- P9-H 首次试验误报 blue-block 推理不可用；P9-I 查明运行 metadata 省略导出属性 `end2end: true`，修复后 Ultralytics 8.4.164 / OpenVINO 2025.4.1 推理和合成 ROS 检测节点 smoke 通过。旧报告保留为历史记录；当前哈希、输出张量、类别和测试边界见 [`P9I_VISION_OFFLINE_VALIDATION.md`](P9I_VISION_OFFLINE_VALIDATION.md)。
+- 模型 BIN、prompt 和 embedding 二进制仍留在 NUC 历史工作区并仅复制到本轮 `/tmp` 测试目录，没有放进仓库；根 `best` 的类别仍是 `haomu`，不是 `blue_block`，不可相互替代。模型 metadata 声明 AGPL-3.0；本 PR 只归档 sanitized metadata 与测试脚本，外部模型包仍需按其许可和团队分发规则管理。
 - Orbbec 官方 SDK v2.9.3 和 Livox SDK2 仅用于隔离构建，均未进入仓库。Orbbec SDK v2.9.3 官方发行文件 SHA-256 为 `8516081b2201f841b1aa444dd203975e06891d73a2694dd2b3d864254f89ff0d`；第三方库仍需部署时单独获取。
 - 在目标仓库和检查过的 NUC ROS 工作区中没有找到场景 ROS Bag。用于目标检测 smoke 的 Orbbec 源码示例 RGB 图像未复制或入库。
 

@@ -1,6 +1,6 @@
 # 新成员技术总览
 
-审查记录基线：GitHub main **6a48dc52f5d7f5b263845bdec0639f59144a4486**。本页按该基线的仓库源码说明系统，不把仿真和离线模拟结果说成实机能力。
+主线基线：GitHub `main` **38b9578a66015d02fe637a5c9a2b424af6a247a7**（P9-I 分支开始时）。下文描述仓库已有能力；P9-I 新增的感知修复和测试仍在独立 PR，不能视为已经合入 `main`。本页不把仿真和离线模拟结果说成实机能力。
 
 ## 项目由哪些部分组成
 
@@ -22,8 +22,8 @@
 | Nav2 配置 | rm_navigation/params/nav2_params.yaml 配置 DWB 局部控制器和 NavFn 全局规划器。P6/P7 离线任务另用 SmacPlanner2D 和 DWB 的 p6_autonomous_mission/config/nav2_offline.yaml | Nav2_rea_ws/src/navigation/rm_navigation/params/nav2_params.yaml；Nav2_rea_ws/src/p6_autonomous_mission/config/nav2_offline.yaml | 离线完整 12 场景通过记录来自合成场景；Nav2 配置不等于真实洞穴导航验收 |
 | 底盘串口桥 | 将 /cmd_vel 转成固定长度 UART 命令；限制无效/越界速度，失联后发送零速帧 | Nav2_rea_ws/src/drivers/serial/driver/src/chassis_serial_bridge_node.cpp；其 config/serial_params.yaml | PTY 模拟、故障注入和离线场景有通过记录；实体 UART 未接 |
 | 任务协调 | ROS 无关的任务模型限制单次触发和非法状态跳转；协调器等待 Nav2 结果、确认停车、检查新鲜目标位姿，并等待抓取结果；失败进入 ABORTED | Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_logic.py、mission_coordinator.py | 单元/静态合同和模拟任务场景通过；抓放成功不等于实物抓取 |
-| 相机与检测 | Orbbec ROS 2 驱动包装发布图像、点云和相机信息；YOLO 节点给出检测框和类别 | tzb_ws/src/OrbbecSDK_ROS2/、tzb_ws/src/yolo_node/ | ROS 包源码存在；模型权重与相机采集/标定另行提供，实机图像链路未验收 |
-| 目标位姿 | 从检测 ROI 裁剪点云，降采样；FPFH/RANSAC 产生一个初始 6DoF 位姿，再用 trust-region point-to-point ICP 细配准；质量评分对场景点和变换后的完整物体表面计算，并保留上一帧位姿跟踪 | tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py | 这是源码实现；合成/静态检查不证明真实目标姿态精度。依赖相机内参、外参、目标模型及实际点云 |
+| 相机与检测 | Orbbec ROS 2 驱动包装发布图像、点云和相机信息；YOLO 节点给出检测框和类别 | tzb_ws/src/OrbbecSDK_ROS2/、tzb_ws/src/yolo_node/ | P9-I 分支修复 blue-block YOLOE `end2end` metadata 兼容，并以外置权重通过合成 ROS 节点 smoke；没有真实相机采集或准确率验收，见 [P9-I 报告](P9I_VISION_OFFLINE_VALIDATION.md) |
+| 目标位姿 | 从检测 ROI 裁剪点云，降采样；FPFH/RANSAC 产生一个初始 6DoF 位姿，再用 trust-region point-to-point ICP 细配准；质量评分对场景点和变换后的完整物体表面计算，并保留上一帧位姿跟踪 | tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py | P9-I 分支以合成消息验证接口、PoseStamped 坐标/时间戳和错误点云拒绝；不证明真实目标姿态精度。依赖相机内参、外参、目标模型及实际点云 |
 | 机械臂运动规划 | Pinocchio 读取 URDF 和关节模型；阻尼伪逆 Jacobian IK、多起点解算、关节与笛卡尔轨迹生成；碰撞场景由 hpp-fcl 检查；稀疏笛卡尔路径后由 Ruckig 做时间参数化 | tzb_ws/src/lite_motion_planner/src/kinematics_solver.cpp、planning_node.cpp、collision_scene.cpp | ROS 规划包有 ThinkBook/NUC 构建记录及离线取消竞争检查；关节零位、模型精度、碰撞几何和真实轨迹尚需硬件验证 |
 | 机械臂主机通信 | 将 ROS 关节目标与反馈映射为机械臂 USB/串口消息，并用命令租约、反馈新鲜度、取消/恢复门保护主机流程 | tzb_ws/src/serial/driver/、tzb_ws/src/lite_motion_planner/、相关 arm2nav/ 协调包 | PTY 协议和软件模拟有验证；实体控制器 ACK、端口映射和安全失效行为未知 |
 | 机械臂固件 | 归档的七轴应用包含关节轨迹、速度/位置纠偏和重力/惯性前馈；XRobot 生成产品入口与模块依赖缺失，完整固件不能编译 | firmware/arm/others/src/、Core/、User/ | 纯 C 状态逻辑主机测试曾通过 PR #8；完整 ARM 固件未构建，且状态机与 RTOS 控制出口存在审查缺口 |
@@ -45,6 +45,7 @@ STM32 仓库代码的 Git SHA 是源码版本，不代表实体板上的已烧�
 - ThinkBook 上 P7/P8 命名的完整 PTY 离线故障套件在源码 SHA **07a56c3a33882aa2866f1076d8597776e2579bcb** 记录 12/12 通过；同一份记录还保留此前一次真实失败。完整套件结果见 [P9-C 验证记录](P9C_OFFLINE_VALIDATION.md)。
 - ThinkBook 和 NUC 两套 ROS 工作空间构建结果、底盘 STM32 交叉编译及主机协议测试有独立记录。
 - PR #8 有底盘和机械臂纯状态机主机测试；状态机接入审查及剩余时序风险见 [PR #8 审查](P9E_PR8_INTEGRATION_REVIEW.md)。
+- P9-I 仍未合并；其 NUC 隔离构建、blue-block YOLOE 直接/ROS 推理、PoseEstimator 合成消息回环和传感器安装目录搬迁检查记录见 [P9-I 报告](P9I_VISION_OFFLINE_VALIDATION.md)。模型 BIN 与 SDK 均不在仓库，也没有真实 RGB-D/Livox 数据验收。
 
 **仍未完成或不能据现有证据确认：**
 

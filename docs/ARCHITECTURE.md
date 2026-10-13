@@ -1,6 +1,6 @@
 # 机器人系统架构与成员接手指南
 
-> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜截至 2026-10-12，`main` 包含 P0～P8 ROS 2 主线和 P9 固件/资产归档。本文保留模块入口索引，接口与源码细节须结合当前 P8 软件实现核对。
+> 仓库：`Tyr1onX/lunar-cave-robot`（内部 Private）｜P9-I 分支开始时的 `main` 为 `38b9578a66015d02fe637a5c9a2b424af6a247a7`，包含 P0～P8 ROS 2 主线、固件/资产归档和只读 Mac 控制台。P9-I 感知修复仍在独立 PR；本文保留模块入口索引，接口与源码细节须结合当前软件实现核对。
 > **本页主要供定位模块和接口，不等于实机验收。** P7/P8 最新离线结论见 [P8 验收报告](P8_VALIDATION_REPORT.md)；涉及硬件、串口、运动控制或启动文件的修改须先由设备负责人核对。
 
 ## 1. 一分钟认识项目
@@ -45,9 +45,9 @@ Nav2 规划/控制                                                ↓
 
 | 模块/ROS 包 | 作用 | 首选源码入口 |
 | --- | --- | --- |
-| `OrbbecSDK_ROS2/orbbec_camera`、`orbbec_camera_msgs`、`orbbec_description` | Orbbec 相机驱动、消息与模型；SDK 二进制文件未随仓库提供，P9-H 在 NUC 用外置 v2.9.3 成功隔离构建 | [相机选择配置](../tzb_ws/src/pose_estimator/config/camera_switch.yaml)、[相机切换启动](../tzb_ws/src/pose_estimator/launch/camera_switch.launch.py) |
-| `yolo_node` | 读取 RGB、输出目标检测框；运行需要单独授权的模型及 Python 推理依赖 | [启动文件](../tzb_ws/src/yolo_node/launch/yolo_node.launch.py) |
-| `pose_estimator` | 结合检测框、点云和相机参数估计目标位姿，提供配准可视化 | [联合感知启动](../tzb_ws/src/pose_estimator/launch/perception_bringup.launch.py)、[参数](../tzb_ws/src/pose_estimator/config/params.yaml) |
+| `OrbbecSDK_ROS2/orbbec_camera`、`orbbec_camera_msgs`、`orbbec_description` | Orbbec 相机驱动、消息与模型；SDK 二进制文件未随仓库提供，P9-I 在 NUC 使用外置 v2.9.3 隔离构建，并通过完整安装目录搬迁后的动态库检查 | [相机选择配置](../tzb_ws/src/pose_estimator/config/camera_switch.yaml)、[相机切换启动](../tzb_ws/src/pose_estimator/launch/camera_switch.launch.py) |
+| `yolo_node` | 读取 RGB、输出目标检测框；P9-I 修复 YOLOE 导出 metadata 中缺少 `end2end: true` 的兼容问题，NUC 上实际 ROS 节点已通过合成图像消息测试。运行仍需外置 blue-block 权重 | [启动文件](../tzb_ws/src/yolo_node/launch/yolo_node.launch.py)、[P9-I 测试报告](P9I_VISION_OFFLINE_VALIDATION.md) |
+| `pose_estimator` | 根据检测框、组织化点云与相机内参估计目标位姿；P9-I 修复了错误 PointCloud2 的 XYZ 字段校验，并用合成 ROS 消息完成接口与负向输入 smoke 测试 | [联合感知启动](../tzb_ws/src/pose_estimator/launch/perception_bringup.launch.py)、[参数](../tzb_ws/src/pose_estimator/config/params.yaml) |
 | `tzb_description`、`engineer_0520_description` | 机械臂 URDF/网格及模型变体 | [模型选择入口](../tzb_ws/src/lite_motion_planner/launch/tzb_catch.launch.py) |
 | `lite_motion_planner`、`lite_motion_msgs` | 机械臂 IK/路径与碰撞规划、`planning_node`、`tzb_catch` 抓放协调、自定义消息 | [抓放启动](../tzb_ws/src/lite_motion_planner/launch/tzb_catch.launch.py)、[规划节点启动](../tzb_ws/src/lite_motion_planner/launch/planning_node.launch.py) |
 | `serial/driver`、`serial/msgs` | 与 STM32 的机械臂命令、关节反馈和夹爪通信 | [串口参数](../tzb_ws/src/serial/driver/config/serial_params.yaml) |
@@ -121,7 +121,7 @@ Nav2 规划/控制                                                ↓
 | --- | --- | --- |
 | **安全、已验证的机械臂软件测试** | `tzb_ws/tools/p2_offline/run.sh` → `lite_motion_planner/launch/p2_offline.launch.py` | 只启动本机隔离 ROS domain 187、合成关节反馈与 `/p2_offline/*`；不连接真实硬件 |
 | 机械臂实机组合入口（未验收） | `tzb_ws/src/lite_motion_planner/launch/bring_launch.launch.py` | 按顺序组合相机、YOLO、位姿估计和抓放；默认启用串口驱动，**勿当作离线测试命令** |
-| 视觉链单独启动 | `tzb_ws/src/pose_estimator/launch/perception_bringup.launch.py` | 相机可切换；SDK 二进制需另行提供；当前 blue-block OpenVINO 权重运行时分割输出维度不兼容，检测节点不能启动 |
+| 视觉链单独启动 | `tzb_ws/src/pose_estimator/launch/perception_bringup.launch.py` | 相机可切换；SDK 与 blue-block BIN 权重需从外部提供。P9-I 离线 ROS smoke 已通过，但尚无真实相机/深度 Bag 或准确率验收；现场运行需设置 `TZB_OPENVINO_MODEL` 指向外部模型目录 |
 | 单 MID-360 建图 | `Nav2_rea_ws/src/bringup/launch/mapping_single_lidar.launch.py` | 组合 LiDAR、IMU、Point-LIO 和 RViz；需要真实 SDK/硬件 |
 | 单 MID-360 在线地图 + Nav2 | `Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py` | 包含在线地图与导航链路；**未通过本仓库的完整实机验收** |
 | 旧的导航/多雷达方案 | `Nav2_rea_ws/src/bringup/launch/bringup.launch.py`、`mapping.launch.py` | 保留参考；存在已排除的原有地图和旧参数路径，不保证开箱可启动 |
@@ -144,7 +144,7 @@ Nav2 规划/控制                                                ↓
 | P5b | [单向控制链路报告](p5b/chassis-ros2-integration.md) 和 [PTY 复验步骤](p5b/run-offline-validation.md)；历史 ROS 2 构建/集成通过 | 本次当前环境无法运行 ROS 2；无实车和完整闭环验收 |
 | GitHub 交付 | `main` 包含 P0～P8、P9-A 资产归档和已合并的 P9-B 审计；P9-C 固件安全策略在开放 PR #8 | ThinkBook P7/P8 12/12、ThinkBook/NUC ROS 工作区构建通过；底盘可交叉编译，机械臂缺 XRobot 生成输入；实机未验收 |
 
-当前仍未归档的资产包括 OpenVINO/YOLO 权重、Orbbec/Livox SDK 二进制库、真实 bag、PCD/PGM 地图和标定结果；`pose_estimator` 运行所需的 `half_block.pcd` 目标模型模板已在 P9-H 归档，但它不是场景数据。可访问目录中没有找到 CAD、原理图/PCB、BOM 或接线图；厂商电机手册因再分发条件未确认留在原始 ZIP。已归档资产、来源和 SHA-256 见[项目资产清单](PROJECT_ASSETS.md)。密钥、运行日志和构建缓存不进入版本库。
+当前仍未归档的运行资产包括 blue-block YOLOE BIN 权重、Orbbec/Livox SDK 二进制库、真实 RGB-D Bag、PCD/PGM 地图和标定结果；NUC 旧工作区找到的 blue-block 模型可在 P9-I 固定版本和 metadata 下完成合成推理，但其权重不在仓库，检测准确率和实机位姿尚未验证。`pose_estimator` 运行所需的 `half_block.pcd` 目标模型模板已在 P9-H 归档，但它不是场景数据。可访问目录中没有找到 CAD、原理图/PCB、BOM 或接线图；厂商电机手册因再分发条件未确认留在原始 ZIP。已归档资产、来源和 SHA-256 见[项目资产清单](PROJECT_ASSETS.md)。密钥、运行日志和构建缓存不进入版本库。
 
 另外已有**至少 24 个源文件**包含旧主机绝对路径；`localization/alignment/config/config.yaml` 是直观例子。机械臂原始 YAML、老导航 launch、地图路径以及外部 `tzb_state_test` 依赖需要逐项清理或重新配置。第三方 GPL/Apache/MIT/BSD/AGPL 等信息见 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)，发布边界见 [`RELEASE_AUDIT.md`](RELEASE_AUDIT.md)。
 

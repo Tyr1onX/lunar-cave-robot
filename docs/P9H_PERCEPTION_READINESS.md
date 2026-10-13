@@ -2,6 +2,8 @@
 
 日期：2026-10-13。本文记录从 PR #14 源码快照进行的 NUC 隔离构建和离线检查，不代表传感器或实机验收。
 
+> **历史状态说明：** 本报告中的 blue-block 模型“后处理失败、YOLO 节点未就绪”是 P9-H 当时的真实结果。P9-I 随后查明是 metadata 遗漏 `end2end: true`，已在不改任务类型的情况下修复，并通过直接推理和实际 ROS 节点合成图像 smoke。当前结果、模型哈希和可复跑步骤以 [P9-I 感知离线验证](P9I_VISION_OFFLINE_VALIDATION.md) 为准。
+
 ## 范围与隔离
 
 - 起始 Git 源码：PR #14 head `1ab8641777a5fd574b6c3f90a3103de6d778f15f`，其基线为 `main` `b1cfe617209a06d69000a515af82b9b95add62ef`。
