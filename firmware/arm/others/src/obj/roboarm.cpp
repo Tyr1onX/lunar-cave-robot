@@ -1,5 +1,6 @@
 #include "roboarm.hpp"
 #include "mathetics.hpp"
+#include "main.h"
 
 
 /* ============ 反馈入口（CAN 回调）→ 控制出口（控制任务） ============
@@ -11,7 +12,9 @@
    注意：**不要**在这里写规划器/PID 状态（本函数运行在中断上下文）。 */
 void Joint::UpdateFeedback(const uint8_t* data_)
 {
+	if (data_ == nullptr) return;
 	Motor_DM::UpdateFeedback(data_);  // 显式限定：本函数隐藏了基类同名函数
+	feedback_tick = HAL_GetTick();
 	if (!inited)
 	{
 		pos_unwrapped = UnwrapRadNear(pos, offset);
@@ -30,6 +33,17 @@ void Joint::UpdateFeedback(const uint8_t* data_)
 		pos_wrapped_last = pos;
 	}
 	angle.theta = mdh.theta_offset + pos_unwrapped - offset;
+}
+
+bool Joint::FeedbackHealthy(const uint32_t now_, const uint32_t stale_after_ms_) const
+{
+	return inited && ((now_ - feedback_tick) <= stale_after_ms_) && !HasDriverFault();
+}
+
+bool Joint::FeedbackUpdatedAfter(const uint16_t previous_count_) const
+{
+	const uint16_t delta = static_cast<uint16_t>(FeedbackCount() - previous_count_);
+	return (delta != 0U) && (delta < 0x8000U);
 }
 
 /* 把 target_pos 钳到关节限位内。
@@ -475,11 +489,7 @@ void Joint::UpdateReference()
 /* 控制出口：UpdateReference → 全轴 Solve → 分组调用本函数。 */
 void Joint::ControlStep()
 {
-	if (!inited)
-	{
-		Ctrl(Motor_DM_N::order_byte_e::enable);
-		return;
-	}
+	if (!inited) return;
 	if (!plan_inited) return;  // 挂起可能发生在两组发送之间；恢复先等下一拍重建参考
 	// 发送前再取一致的反馈快照，覆盖规划后、CAN 分组发送前才触限的情况。
 	const uint32_t primask = __get_PRIMASK();

@@ -1,4 +1,5 @@
 #include "motor_dm.hpp"
+#include "arm_output_gate.h"
 #include <cstring>
 
 
@@ -22,9 +23,16 @@ void Motor_DM::UpdateFeedback(const uint8_t* const data_)
  * _pos / _vel / _torque_ff 的取值范围由主机决定
  * _kp 范围 [0, 500]，_kd 范围 [0, 5]（直接打包的原始值，不是物理增益）
  */
-void Motor_DM::Ctrl(const float pos_, const float vel_, const uint16_t kp_, const uint16_t kd_,
+bool Motor_DM::Ctrl(const float pos_, const float vel_, const uint16_t kp_, const uint16_t kd_,
 	const float torque_ff_) const
 {
+	if (arm_output_gate_begin(ARM_OUTPUT_MOTION) == 0U) return false;
+	if (can.IsBusOff())
+	{
+		arm_output_gate_end();
+		arm_output_gate_trip();
+		return false;
+	}
 	const auto angle = static_cast<uint16_t>(pos_ * facs.pos_to_bit + 32767.5f);
 	const auto speed = static_cast<uint16_t>(vel_ * facs.vel_to_bit + 2047.5f);
 	const auto torque_ff = static_cast<uint16_t>(torque_ff_ * facs.torque_to_bit + 2047.5f);
@@ -32,14 +40,30 @@ void Motor_DM::Ctrl(const float pos_, const float vel_, const uint16_t kp_, cons
         static_cast<uint8_t>(speed >> 4), static_cast<uint8_t>((speed & 0xF) << 4 | (kp_ >> 8 & 0xF)),
         static_cast<uint8_t>(kp_), static_cast<uint8_t>(kd_ >> 4),
         static_cast<uint8_t>((kd_ & 0xF) << 4 | (torque_ff >> 8 & 0xF)), static_cast<uint8_t>(torque_ff)};
-	can.Transmit(motor_id, tx_data);
+	const bool sent = can.Transmit(motor_id, tx_data);
+	arm_output_gate_end();
+	if (!sent) arm_output_gate_trip();
+	if (!sent) return false;
 	++tx_cnt;
+	return true;
 }
 
 /* 单字节命令（使能 / 失能 / 清错） */
-void Motor_DM::Ctrl(const order_byte_e order_) const
+bool Motor_DM::Ctrl(const order_byte_e order_) const
 {
+	const bool gated = order_ != order_byte_e::disable;
+	if (gated && arm_output_gate_begin(ARM_OUTPUT_RECOVERY) == 0U) return false;
+	if (gated && can.IsBusOff())
+	{
+		arm_output_gate_end();
+		arm_output_gate_trip();
+		return false;
+	}
 	const uint8_t tx_data[8] {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, static_cast<uint8_t>(order_)};
-	can.Transmit(motor_id, tx_data);
+	const bool sent = can.Transmit(motor_id, tx_data);
+	if (gated) arm_output_gate_end();
+	if (!sent) arm_output_gate_trip();
+	if (!sent) return false;
 	++tx_cnt;
+	return true;
 }

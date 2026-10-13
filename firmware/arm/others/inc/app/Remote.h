@@ -91,6 +91,10 @@ uint8_t Remote_IsHoldRequested(void);
    位置目标由上位机经 Joint::SetTarget() 下发。Host 模块据此决定是否采纳下行目标。 */
 uint8_t Remote_IsHostControl(void);
 
+/* Atomic host-mode snapshot plus a generation counter that changes whenever
+   either physical selector changes, including a fast away-and-back transition. */
+uint8_t Remote_HostControlSnapshot(uint32_t *mode_generation);
+
 /* Deliberate re-arm gesture: with neutral sticks, move S1 and S2 to DOWN/DOWN,
    then move S1 to MID and select S2 DOWN (manual RC) or UP (host control). */
 uint8_t Remote_ConsumeManualRearmRequest(void);

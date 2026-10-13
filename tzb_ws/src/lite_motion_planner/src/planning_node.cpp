@@ -4194,7 +4194,7 @@ void PlanningNode::handlePlanRequest(
 
       RCLCPP_INFO(
         this->get_logger(),
-        "Cartesian path accepted with %zu IK waypoint(s); passing sparse waypoints to Ruckig time parameterization",
+        "Cartesian path accepted with %zu IK waypoint(s); assigning velocity-limit waypoint durations",
         cartesian_path.size() - 1);
 
       q_goal = cartesian_path.back();

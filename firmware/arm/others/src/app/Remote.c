@@ -18,6 +18,7 @@ volatile RC_Status_t rc_status;
 __attribute__((section(".dma_buffer"), aligned(32)))
 static uint8_t rc_rx_buf[RC_RX_BUF_LENGTH];
 static uint8_t manual_rearm_hold_seen;
+static volatile uint32_t remote_mode_generation;
 
 /* 整帧快照，避免 UART 中断更新到一半时混用通道与拨杆。 */
 static RC_Ctrl_t Remote_Snapshot(void)
@@ -108,6 +109,9 @@ static uint8_t Remote_DecodeFrame(const uint8_t *f)
     rc_ctrl.rc.ch2 = (int16_t)(((f[2] >> 6) | (f[3] << 2) | (f[4] << 10)) & 0x07FF) - RC_CH_VALUE_MID;
     rc_ctrl.rc.ch3 = (int16_t)(((f[4] >> 1) | (f[5] << 7)) & 0x07FF) - RC_CH_VALUE_MID;
 
+    if ((rc_ctrl.rc.s1 != s1) || (rc_ctrl.rc.s2 != s2)) {
+        ++remote_mode_generation;
+    }
     rc_ctrl.rc.s1 = s1;
     rc_ctrl.rc.s2 = s2;
 
@@ -132,6 +136,7 @@ void Remote_Init(void)
     memset(rc_rx_buf, 0, sizeof(rc_rx_buf));
     rc_ctrl.update_tick = HAL_GetTick() - RC_TICK_INIT_OFFSET;
     manual_rearm_hold_seen = 0U;
+    remote_mode_generation = 0U;
 
     __HAL_UART_CLEAR_IDLEFLAG(&huart5);
     (void)Remote_StartReceive();
@@ -168,6 +173,22 @@ uint8_t Remote_IsHoldRequested(void)
 uint8_t Remote_IsHostControl(void)
 {
     const RC_Ctrl_t snapshot = Remote_Snapshot();
+    return (((HAL_GetTick() - snapshot.update_tick) <= RC_ONLINE_TIMEOUT_MS) &&
+            (snapshot.rc.s2 == RC_SW_UP)) ? 1U : 0U;
+}
+
+uint8_t Remote_HostControlSnapshot(uint32_t *mode_generation)
+{
+    RC_Ctrl_t snapshot;
+    uint32_t generation;
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    snapshot = rc_ctrl;
+    generation = remote_mode_generation;
+    __set_PRIMASK(primask);
+    if (mode_generation != NULL) {
+        *mode_generation = generation;
+    }
     return (((HAL_GetTick() - snapshot.update_tick) <= RC_ONLINE_TIMEOUT_MS) &&
             (snapshot.rc.s2 == RC_SW_UP)) ? 1U : 0U;
 }

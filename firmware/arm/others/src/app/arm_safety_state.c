@@ -11,6 +11,17 @@ void arm_safety_state_init(arm_safety_state_t *safety)
     safety->armed_host_control = 0u;
 }
 
+void arm_safety_state_latch_fault(arm_safety_state_t *safety)
+{
+    if (safety == 0)
+    {
+        return;
+    }
+    safety->state = ARM_SAFETY_FAULT_LATCHED;
+    safety->manual_rearm_seen = 0u;
+    safety->armed_host_control = 0u;
+}
+
 arm_safety_state_e arm_safety_state_update(
     arm_safety_state_t *safety, const arm_safety_inputs_t *inputs)
 {
@@ -19,10 +30,10 @@ arm_safety_state_e arm_safety_state_update(
         return ARM_SAFETY_FAULT_LATCHED;
     }
 
-    if ((inputs->rc_online == 0u) || (inputs->hold_requested != 0u))
+    if ((inputs->rc_online == 0u) || (inputs->hold_requested != 0u) ||
+        (inputs->feedback_healthy == 0u) || (inputs->can_healthy == 0u))
     {
-        safety->state = ARM_SAFETY_FAULT_LATCHED;
-        safety->manual_rearm_seen = 0u;
+        arm_safety_state_latch_fault(safety);
         return safety->state;
     }
 
@@ -46,7 +57,7 @@ arm_safety_state_e arm_safety_state_update(
     }
 
     if ((safety->manual_rearm_seen == 0u) ||
-        (inputs->feedback_initialized == 0u))
+        (inputs->feedback_healthy == 0u) || (inputs->can_healthy == 0u))
     {
         return safety->state;
     }

@@ -37,7 +37,6 @@ if(NOT TinyXML2_FOUND)
   find_package(tinyxml2 REQUIRED)
 endif()
 
-find_package(ruckig REQUIRED)
 
 include_directories(include)
 
@@ -67,11 +66,6 @@ elseif(TARGET tinyxml2)
   target_link_libraries(${PROJECT_NAME}_core tinyxml2)
 endif()
 
-if(TARGET ruckig::ruckig)
-  target_link_libraries(${PROJECT_NAME}_core ruckig::ruckig)
-elseif(TARGET ruckig)
-  target_link_libraries(${PROJECT_NAME}_core ruckig)
-endif()
 
 ament_target_dependencies(${PROJECT_NAME}_core
   ament_index_cpp

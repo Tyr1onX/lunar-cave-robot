@@ -162,12 +162,7 @@ extern "C" void Gripper_Command(const uint8_t close_target_)
    （与在达妙调参软件里发一条位置指令等价）。 */
 void Gripper_Update(void)
 {
-	if (!j7_left.IsInited())
-	{
-		/* 与 Joint::ControlStep() 的使能时序一致：收到第一帧反馈之前持续发使能 */
-		j7_left.Ctrl(Motor_DM_N::order_byte_e::enable);
-		return;
-	}
+	if (!j7_left.IsInited()) return;
 
 	/* 预设位就是 pos_des 本身（rad，与达妙上位机显示的位置同一把尺子），参数在文件顶部登记；
 	   再钳到量程内留 1e-3 余量：超出会让 16 位字段绕回，指令会跑到反方向去。 */

@@ -3,7 +3,7 @@
 P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-build-and-safety-audit` 独立分支进行；完整构建日志和产物 SHA 见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
 
 - ThinkBook ARM GNU GCC 10.3.1 完整构建底盘 STM32 成功；修正 Linux 下头文件大小写，并将原 200 ms 命令年龄谓词抽为可单测函数但保持阈值不变。固件 ELF、MAP、HEX、BIN 保存在用户缓存，不提交。
-- ThinkBook 对 `Nav2_rea_ws` 2 个包与 `tzb_ws` 6 个包的独立 ROS 2 构建均通过；底盘生产解析器与命令租约主机测试通过。该 P9-B 源码快照的 P7/P8 12 场景及 P4f 六场景完整套件未通过；其具体失败和单场景结果仍按当时源码记录。P9-C 后续已在 `main` 修复并连续两轮通过 P7 全套，详见下节。
+- ThinkBook 对 `Nav2_rea_ws` 2 个包与 `tzb_ws` 6 个包的独立 ROS 2 构建均通过；底盘生产解析器与命令租约主机测试通过。P9-B 源码快照当时的结果为：P7/P8 12 场景及 P4f 六场景完整套件未通过；具体失败和单场景结果仍按当时源码记录。后续 P9-C/P9-D 完成了 P7/P8 12 场景完整套件的 12/12 通过复验。P9-C 后续已在 `main` 修复并连续两轮通过 P7 全套，详见下节。
 - 机械臂 CMake 找到 ARM GCC/G++ 后因 XRobot 生成的 `Modules/CMakeLists.txt` 缺失而停止；`User/xrobot_main.hpp` 也未找到。没有生成空文件或猜测产品配置。
 - 底盘主机侧测试直接编译生产 parser/command 逻辑并 mock HAL，结果 PASS；测试确认有限数据位翻转可穿过无 CRC 帧校验、UART 错误恢复会保留半帧。
 - ROS 2 到两套固件的静态协议字段已对照。机械臂 MCU 不消费主机任务序号，USB 失联和 ROS 取消没有固件停止确认；底盘初始化先发送驱动使能帧，缺少总线级停车确认。
@@ -13,7 +13,13 @@ P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-b
 
 ThinkBook 两轮 P7 完整离线场景各 12/12 通过；P4f/P6 构建、PTY 驱动、10 项逻辑/静态检查、规划取消竞态及六个 P6 场景通过。测试使用独立 ROS domain、新结果路径、PTY 和合成数据，不连接实体执行器。P7 的 DWB 离线地图配置与 Humble CLI daemon 清理原因、场景耗时、验证目录和源码 SHA-256 见 [P9-C 离线验证](P9C_OFFLINE_VALIDATION.md)。机械臂物理保持、实体急停、底盘制动和实机传感器链路仍未验收。
 
-P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`。STM32 安全状态机 PR #8 仍基于 P9-B PR #6 独立等待硬件负责人审查；主机测试与底盘交叉编译不代表物理停止或保持已验证。
+P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`；P9-B PR #6 后续以 merge commit `07a56c3a33882aa2866f1076d8597776e2579bcb` 合入。STM32 安全状态机 PR #8 当前直接以 `main` 为基线并保持开放，等待缺失的机械臂 XRobot 产品输入及硬件负责人对电机失能、重力负载保持和独立急停策略的确认。ThinkBook 在 `main` SHA `07a56c3` 完成 P7/P8 12/12；ThinkBook 与 NUC 的 ROS 工作区均构建通过。主机测试与固件交叉编译不代表物理停止或保持已验证。P9-E 审查时 main tip 为 6a48dc52f5d7f5b263845bdec0639f59144a4486；其可执行代码与 P7/P8 最近 12/12 通过所用的 07a56c3a33882aa2866f1076d8597776e2579bcb 相同，之后只有文档提交。P9-E 对 PR #8 的时序审查见 P9E_PR8_INTEGRATION_REVIEW.md。
+
+# P9-F 安全集成与主机验证 — 2026-10-13
+
+P9-F 在独立分支上基于最新 `main` `b1cfe617209a06d69000a515af82b9b95add62ef` 和 PR #8 head `c441e8dd2f666dfdca000f3b4e94826f14204209`，由堆叠 PR [#11](https://github.com/Tyr1onX/lunar-cave-robot/pull/11) 提交。ThinkBook Ubuntu/GCC 11.4 上，底盘协议和安全状态机、机械臂状态机、Host/FreeRTOS 恢复集成、CAN 故障注入，以及生产 `Remote.c`→输出门→`Joint::ControlStep()` 快速模式切换链路全部通过。Humble 隔离工作区中 `arm2nav_msgs`、`lite_motion_msgs`、`lite_motion_planner` 3 个包构建通过。GitHub Actions `Firmware host tests` 在代码 head `c891f83b68b30dd0f7ea14c70040aadfc66a0627`（run 3）和状态更新 head `7f1405120f7f21c18f84d3328e6d436190ae8aba`（run 4）均通过。
+
+P9-F 在 Motor_DM 控制出口复核 Host 租约、遥控模式、七轴反馈与 CAN 健康；租约过期锁存；恢复流程分批重验授权并等待真实协议状态帧。仿真测试使用 mock HAL/USB/RTOS/CAN 应答，不能证明真实 MCU 调度时延、电机应答、失能制动、负载保持或独立急停。机械臂完整 STM32 工程仍因 XRobot 产品生成输入缺失而不能构建。P7/P8 12/12 的最近记录仍是历史 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`，本轮未重跑 12 场景全套。PR #8 保持开放；剩余条件见 [P9-F 集成记录](P9F_ARM_SAFETY_INTEGRATION.md)。
 
 以下 P9-A 和更早章节是历史审计记录；若与本节的后续构建结论冲突，以 P9-C 的验证记录为准。
 
