@@ -29,6 +29,7 @@ private final class SSHDiagnosticBuffer: @unchecked Sendable {
 final class ConsoleModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case cockpit = "测试驾驶舱"
+        case moduleTests = "模块测试"
         case simulation = "模拟驾驶"
         case armPreview = "机械臂预览"
         case diagnostics = "系统诊断"
@@ -39,6 +40,7 @@ final class ConsoleModel: ObservableObject {
         var symbol: String {
             switch self {
             case .cockpit: return "viewfinder"
+            case .moduleTests: return "checklist"
             case .simulation: return "gamecontroller.fill"
             case .armPreview: return "cube.transparent"
             case .diagnostics: return "waveform.path.ecg"
@@ -150,6 +152,7 @@ final class ConsoleModel: ObservableObject {
         process.arguments = [
             "-N", "-T",
             "-L", "127.0.0.1:18765:127.0.0.1:8765",
+            "-L", "127.0.0.1:18769:127.0.0.1:8769",
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=5",
             "-o", "ExitOnForwardFailure=yes",

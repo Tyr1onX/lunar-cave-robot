@@ -2,6 +2,8 @@
 
 Python 3.10 agent for Ubuntu 22.04 / ROS 2 Humble. It exposes read-only HTTP `GET` routes and binds strictly to `127.0.0.1:8765`. Do not add a LAN bind option, write route, shell-command endpoint, ROS publisher, service/action client, or device-control operation.
 
+The V0.3c module test runner is a separate service process in `console_agent.module_tests`, with its own loopback listener at `127.0.0.1:8769`. It is not an Agent write route. Install and start it using [`install-module-test-service.sh`](install-module-test-service.sh); its API accepts only the three fixed test IDs in the registry and never accepts a command or free-form arguments. The test runner runs as the current user and does not start robot hardware.
+
 The Mac app forwards its local port 18765 to this loopback endpoint through the configured SSH alias `nuc`. HTTP is not exposed to Tailscale, LAN, or the public internet. The app will not start this process remotely; start and stop the agent on the NUC through the documented operator procedure.
 
 ## Start for a development session
