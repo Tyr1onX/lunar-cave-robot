@@ -1,6 +1,6 @@
 # P9-F：机械臂安全输出集成与主机验证
 
-更新日期：2026-10-13。P9-F 分支 `p9f/arm-safety-integration` 从 PR #8 的代码 `c441e8dd2f666dfdca000f3b4e94826f14204209` 和最新 `main` `b1cfe617209a06d69000a515af82b9b95add62ef` 建立，并通过堆叠 PR [#11](https://github.com/Tyr1onX/lunar-cave-robot/pull/11) 交付。PR #8 保持开放；P9-F 未合并到 `main`。GitHub Actions `Firmware host tests` 在首个 P9-F head `c891f83b68b30dd0f7ea14c70040aadfc66a0627` 上通过，run 3；文档更新后会触发新的 PR 检查。
+更新日期：2026-10-13。P9-F 分支 `p9f/arm-safety-integration` 从 PR #8 的代码 `c441e8dd2f666dfdca000f3b4e94826f14204209` 和最新 `main` `b1cfe617209a06d69000a515af82b9b95add62ef` 建立，并通过堆叠 PR [#11](https://github.com/Tyr1onX/lunar-cave-robot/pull/11) 交付。PR #8 保持开放；P9-F 未合并到 `main`。GitHub Actions `Firmware host tests` 在代码 head `c891f83b68b30dd0f7ea14c70040aadfc66a0627`（run 3）和状态更新 head `7f1405120f7f21c18f84d3328e6d436190ae8aba`（run 4）均通过。
 
 ## 本轮代码修改
 

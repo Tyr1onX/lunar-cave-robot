@@ -7,7 +7,7 @@
 - ThinkBook `qibai-ThinkBook-16-G6-AHP`、Ubuntu 22.04、GCC 11.4：底盘生产协议解析器、底盘安全状态机、机械臂纯 C 状态机、Host/RTOS 恢复集成，以及生产 `Remote.c`→安全输出门→`Joint::ControlStep()` 集成均 PASS。场景包括 100/101 ms 租约边界、过期旧 enable、快速切出再切回、重复 enable、TX/RX 失败、FDCAN 故障事件、单轴驱动故障、清错/分批使能期间断联和成功恢复。详细范围与模拟边界见 [P9-F 集成记录](P9F_ARM_SAFETY_INTEGRATION.md)。
 - ThinkBook ROS 2 Humble 在隔离工作区对 `arm2nav_msgs`、`lite_motion_msgs`、`lite_motion_planner` 三包构建通过。该构建验证了删除未使用 Ruckig 依赖后的规划包配置。
 - 机械臂 STM32 完整目标未构建：真实 XRobot 产品入口和生成模块仍缺失。底盘完整交叉编译结果仍以已有 P9-B 审计记录为准，本轮未重编译固件。
-- GitHub Actions `Firmware host tests` 在 P9-F head `c891f83b68b30dd0f7ea14c70040aadfc66a0627` 上完成并通过（run 3）。工作流要求 FSM/集成脚本存在并直接运行，不会因测试文件缺失而跳过。
+- GitHub Actions 的强制主机测试步骤已改为直接运行，不再静默跳过缺失的 FSM/集成测试；run 3 在代码提交 `c891f83`、run 4 在状态文档提交 `7f14051` 均通过。
 - 未连接实体控制器、未打开 STM32 串口、未烧录、未启动电机。真实失能后的制动/重力负载保持和独立急停仍需硬件负责人确认。
 
 ## P9-E 审查时的历史状态
