@@ -1,6 +1,6 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 main 基线为 `b1cfe617209a06d69000a515af82b9b95add62ef`；最近完整 P7/P8 离线套件在代码 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb` 上通过 12/12。PR #8 仍开放；P9-F 独立分支已修复其机械臂输出许可、租约和恢复时序缺陷，并补充集成主机测试。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。当前 main 基线为 `b1cfe617209a06d69000a515af82b9b95add62ef`；最近完整 P7/P8 离线套件在代码 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb` 上通过 12/12。PR #8 仍开放；P9-F 由 [PR #11](https://github.com/Tyr1onX/lunar-cave-robot/pull/11) 提交，修复其机械臂输出许可、租约和恢复时序缺陷并补充集成主机测试。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
 
 ## 源码地图
 
