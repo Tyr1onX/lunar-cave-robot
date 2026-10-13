@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="${LUNAR_CONSOLE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 ros_setup="/opt/ros/humble/setup.bash"
+set +u
 if [[ -f "$ros_setup" ]]; then
   if ! source "$ros_setup"; then
     printf 'ROS Humble setup could not be sourced; the environment check will report this.\n' >&2
@@ -14,6 +15,7 @@ if [[ -f "$overlay" ]]; then
     printf 'The offline ROS overlay could not be sourced; dependent tests will remain unavailable.\n' >&2
   fi
 fi
+set -u
 
 export LUNAR_CONSOLE_REPO="$repo_root"
 export LUNAR_CONSOLE_TEST_BIND=127.0.0.1
