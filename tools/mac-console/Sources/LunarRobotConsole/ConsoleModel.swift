@@ -30,6 +30,7 @@ final class ConsoleModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
         case cockpit = "测试驾驶舱"
         case simulation = "模拟驾驶"
+        case armPreview = "机械臂预览"
         case diagnostics = "系统诊断"
         case history = "历史记录"
 
@@ -39,6 +40,7 @@ final class ConsoleModel: ObservableObject {
             switch self {
             case .cockpit: return "viewfinder"
             case .simulation: return "gamecontroller.fill"
+            case .armPreview: return "cube.transparent"
             case .diagnostics: return "waveform.path.ecg"
             case .history: return "clock.arrow.circlepath"
             }
