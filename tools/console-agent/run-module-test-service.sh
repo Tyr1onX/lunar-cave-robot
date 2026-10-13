@@ -28,4 +28,5 @@ if [[ -f "$model_config" ]]; then
     export LUNAR_CONSOLE_YOLO_MODEL_DIR="$model_path"
   fi
 fi
+cd "$repo_root/tools/console-agent"
 exec python3 -m console_agent.module_tests
