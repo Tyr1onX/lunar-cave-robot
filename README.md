@@ -36,6 +36,7 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 - P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
 - P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
 - ThinkBook GCC 11.4 本轮复跑 main 底盘协议主机测试和 PR #8 精确 head 的底盘/机械臂纯状态机主机测试均通过；此前底盘 ARM GNU GCC 10.3.1 交叉编译通过。机械臂完整固件因 XRobot 输入缺失而未构建。P9-E 审查发现机械臂接入中的租约过期、控制模式切换、恢复复核和反馈健康缺口，PR #8 继续开放。详见 [PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md) 与 [XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)。
+- P9-H 在 PR #14 源码快照上使用 NUC 隔离目录重新构建 MID-360、Orbbec、YOLO 和位姿估计包，并归档位姿模板点云。ROS 包构建通过；当前 blue-block OpenVINO 模型虽在旧工作区找到配套权重，仍因分割后处理张量维度不匹配而无法启动 YOLO。未连接传感器；具体构建、Topic、模型和现场步骤见 [P9-H 感知准备记录](docs/P9H_PERCEPTION_READINESS.md)。该结果属于未合并 PR 分支，不代表 main 或实机验收。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 

@@ -8,9 +8,18 @@
 
 只读系统检查确认 Ubuntu 22.04.5、ROS 2 Humble、Nav2、rosbag2、Livox SDK2 库、14 GiB 内存和约 827 GiB 根分区空闲。ROS graph 没有活动节点，只看到 `/rosout` 和 `/parameter_events`；没有检查真实传感器反馈。NUC 两套 ROS 工作区的 PASS 记录位于 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`，P7/P8 完整套件记录是较旧且范围未知的 SHA `5124a68d398aa84b59a750e69636bf566f298a1c`。这些记录不是本轮对最新 `main` 的重跑。
 
-首次现场测试判断、依赖阻塞、观察主题和安全限制见 [`NUC_READINESS_ASSESSMENT.md`](NUC_READINESS_ASSESSMENT.md)。NUC 可准备 MID-360 单传感器静态采集，但当前有线网卡 DOWN，必须先确认现场网络和配置；Orbbec 驱动包未构建，YOLO 模型缺少未分发的 `best.bin`，真实相机/视觉/位姿链尚不可测。实体 STM32 版本、设备反馈和停止行为均未核验。
+首次现场测试判断、依赖阻塞、观察主题和安全限制见 [`NUC_READINESS_ASSESSMENT.md`](NUC_READINESS_ASSESSMENT.md)。NUC 可准备 MID-360 单传感器静态采集，但当前有线网卡 DOWN，必须先确认现场网络和配置。Orbbec 和模型状态后来在 P9-H 分支重新构建与核对，当前结论见下节及 [`P9H_PERCEPTION_READINESS.md`](P9H_PERCEPTION_READINESS.md)。实体 STM32 版本、设备反馈和停止行为均未核验。
 
 Mac 端第一版只读界面位于 `tools/mac-console/`，复用 `device_status.sh` 并经固定 SSH 快照读取 NUC 主机与 ROS 图。源码、技术选型、运行方式和后续阶段见 [`MAC_CONSOLE_ARCHITECTURE.md`](MAC_CONSOLE_ARCHITECTURE.md)。当前页面只列 Topic 名称、不采样消息；不启动设备或发布控制指令。
+
+## P9-H 感知集成复核（未合并分支）
+
+- 本轮基于 PR #14 head `1ab8641777a5fd574b6c3f90a3103de6d778f15f`，未改动 NUC 的 `~/lunar-cave-robot`（仍为干净 SHA `6a48dc52f5d7f5b263845bdec0639f59144a4486`）。所有构建和模型测试位于 NUC 的临时隔离目录。
+- ROS 2 Humble / Ubuntu 22.04.5 上隔离构建通过：Livox `livox_ros_driver2` 1.2.4、Orbbec `orbbec_camera_msgs`/`orbbec_camera` 2.9.3、`yolo_node` 1.0.0、`pose_estimator` 1.0.0。Orbbec 使用外置官方 SDK v2.9.3；系统原 v1.10.37 SDK 与 wrapper v2 头文件 ABI 不匹配。构建入口、依赖、SDK SHA 与复现说明见 [`P9H_PERCEPTION_READINESS.md`](P9H_PERCEPTION_READINESS.md)。
+- 已检查 MID-360 静态 launch、Orbbec Gemini 330 系列 launch、相机选择 launch 和感知 bringup 的 `--show-args`，没有启动任何驱动节点。MID-360 launch 已将真实广播码设为必填项；仓库内主机/雷达 IP、端口和外参仅为未核实的历史候选值。
+- NUC 旧 `~/tzb_ws/src/best_openvino_model/` 找到根 `best.bin` 和 blue-block XML/BIN/提示词文件，但没有将模型二进制放入仓库。根 `best` 单帧推理可运行但类别为 `haomu`。默认 blue-block 模型在 Ultralytics 8.4.164 / OpenVINO 2025.4.1 的分割后处理出现 `13×294`/`24×294` 对 `32×25600` 维度错误，ROS YOLO 节点不能完成初始化；不存在可复现的 `.pt` 训练 checkpoint 或完整导出记录。
+- `pose_estimator` 默认使用的 `half_block.pcd` 已从 NUC 历史工作区按 SHA-256 `d4fe24118f3bd3d1a3a9db4fb8bef87873b486af8b0d3ec52416dabad5f5027d` 归档。Open3D 加载 7,500 点并完成尺度修正与 FPFH 预处理；这只验证参考模型预处理，不是目标场景或位姿估计验收。
+- 当前未发现可用的场景 RGB-D Bag；使用一张 Orbbec 源码目录现有的 RGB 验证帧进行软件 smoke 检查，未将图像放入仓库。相机—YOLO—3D 位姿闭环、真实 Topic 数据、MID-360 UDP/网络和实机标定仍未验证。详细测试边界及首轮静态采集/回放步骤见 [`P9H_PERCEPTION_READINESS.md`](P9H_PERCEPTION_READINESS.md)。
 
 ## P9-E 当前源码与验证状态
 

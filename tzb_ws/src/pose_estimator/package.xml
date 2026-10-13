@@ -15,10 +15,13 @@
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>yolo_node</exec_depend>
+  <exec_depend>orbbec_camera</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>
-  <exec_depend>realsense2_camera</exec_depend>
-  <!-- Camera driver is optional when launch_camera:=false; install separately for hardware. -->
+  <exec_depend>python3-open3d</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <!-- The optional D435i camera_switch backend needs realsense2_camera separately. -->
 
   <!-- YOLO 检测消息 (可选, 二选一) -->
   <exec_depend condition="$YOLO_MSG_TYPE == yolov8">yolov8_msgs</exec_depend>
