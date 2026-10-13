@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tyr1onX/lunar-cave-robot/tools/console-agent/schema/snapshot-v1.schema.json",
+  "title": "Lunar Console NUC snapshot v1",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "source", "host", "system", "git", "deployment", "ros", "tests", "safety"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "source": {"const": "nuc-read-only-agent"},
+    "host": {
+      "type": "object",
+      "required": ["hostname", "platform", "os_release"],
+      "additionalProperties": false,
+      "properties": {
+        "hostname": {"type": "string"},
+        "platform": {"type": "string"},
+        "os_release": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "system": {
+      "type": "object",
+      "required": ["cpu", "memory", "disk", "temperature"],
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": "object", "required": ["status"], "additionalProperties": false,
+          "properties": {"status": {"enum": ["ok", "unknown"]}, "percent": {"type": "number"}, "source": {"type": "string"}, "reason": {"type": "string"}}
+        },
+        "memory": {
+          "type": "object", "required": ["status"], "additionalProperties": false,
+          "properties": {"status": {"enum": ["ok", "unknown"]}, "total_bytes": {"type": "integer"}, "available_bytes": {"type": "integer"}, "used_percent": {"type": "number"}, "source": {"type": "string"}, "reason": {"type": "string"}}
+        },
+        "disk": {
+          "type": "object", "required": ["status"], "additionalProperties": false,
+          "properties": {"status": {"enum": ["ok", "unknown"]}, "path": {"type": "string"}, "total_bytes": {"type": "integer"}, "used_bytes": {"type": "integer"}, "free_bytes": {"type": "integer"}, "used_percent": {"type": "number"}, "reason": {"type": "string"}}
+        },
+        "temperature": {
+          "type": "object", "required": ["status"], "additionalProperties": false,
+          "properties": {
+            "status": {"enum": ["ok", "unknown"]},
+            "readings": {"type": "array", "items": {"type": "object", "required": ["label", "celsius", "source"], "additionalProperties": false, "properties": {"label": {"type": "string"}, "celsius": {"type": "number"}, "source": {"type": "string"}}}},
+            "reason": {"type": "string"}
+          }
+        }
+      }
+    },
+    "git": {
+      "type": "object", "required": ["status"], "additionalProperties": false,
+      "properties": {"status": {"enum": ["ok", "unknown"]}, "head_sha": {"type": "string"}, "branch": {"type": "string"}, "dirty": {"type": "boolean"}, "dirty_files": {"type": "integer"}, "repository_path": {"type": "string"}, "reason": {"type": "string"}}
+    },
+    "deployment": {
+      "type": "object", "required": ["status"], "additionalProperties": false,
+      "properties": {"status": {"enum": ["ok", "unknown"]}, "sha": {"type": "string"}, "source": {"type": "string"}, "reason": {"type": "string"}}
+    },
+    "ros": {
+      "type": "object", "required": ["status", "domain_id", "nodes", "topics"], "additionalProperties": false,
+      "properties": {
+        "status": {"enum": ["ok", "unknown"]},
+        "domain_id": {"type": ["integer", "null"]},
+        "nodes": {"type": "array", "items": {"type": "object", "required": ["name", "namespace"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "namespace": {"type": "string"}}}},
+        "topics": {"type": "array", "items": {"type": "object", "required": ["name", "types"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "types": {"type": "array", "items": {"type": "string"}}}}},
+        "discovery": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    },
+    "tests": {
+      "type": "object", "required": ["status", "records"], "additionalProperties": false,
+      "properties": {
+        "status": {"enum": ["ok", "unknown"]},
+        "records": {"type": "array", "items": {
+          "type": "object", "required": ["id", "timestamp", "result", "test", "scope", "sha", "branch", "artifact", "record_path"], "additionalProperties": false,
+          "properties": {"id": {"type": "string"}, "timestamp": {"type": ["string", "null"]}, "result": {"type": "string"}, "test": {"type": "string"}, "scope": {"type": "string"}, "sha": {"type": ["string", "null"]}, "branch": {"type": ["string", "null"]}, "artifact": {"type": ["string", "null"]}, "record_path": {"type": "string"}}
+        }},
+        "source": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    },
+    "safety": {
+      "type": "object", "required": ["physical_estop", "hardware_health", "control"], "additionalProperties": false,
+      "properties": {
+        "physical_estop": {"$ref": "#/$defs/reading"},
+        "hardware_health": {"$ref": "#/$defs/reading"},
+        "control": {"const": "disabled"}
+      }
+    }
+  },
+  "$defs": {
+    "reading": {
+      "type": "object", "required": ["status", "reason"], "additionalProperties": false,
+      "properties": {"status": {"enum": ["ok", "unknown"]}, "reason": {"type": "string"}}
+    }
+  }
+}
