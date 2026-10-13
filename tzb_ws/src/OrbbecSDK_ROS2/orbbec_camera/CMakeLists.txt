@@ -78,11 +78,70 @@ elseif((${MACHINES} MATCHES "aarch64") AND (${MACHINES_BIT} MATCHES "64"))
     set(HOST_PLATFORM "arm64")
 endif()
 
-set(ORBBEC_LIBS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/lib/${HOST_PLATFORM})
-set(ORBBEC_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/include/)
+set(ORBBEC_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/SDK" CACHE PATH
+    "Root directory of an OrbbecSDK distribution")
 
-set(CMAKE_BUILD_RPATH "${CMAKE_BUILD_RPATH}:${ORBBEC_LIBS_DIR}")
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}:${ORBBEC_LIBS_DIR}")
+# The ROS wrapper source includes SDK headers and license notices, but some
+# source archives intentionally omit the platform SDK binaries. Accept both
+# the wrapper's bundled layout (lib/x64) and the official SDK layout
+# (lib/linux_x64) so callers can point at a separately installed SDK.
+if(HOST_PLATFORM STREQUAL "x64")
+    set(_ORBBEC_SDK_LIB_DIRS
+        "${ORBBEC_SDK_ROOT}/lib/x64"
+        "${ORBBEC_SDK_ROOT}/lib/linux_x64"
+        "${ORBBEC_SDK_ROOT}/lib")
+elseif(HOST_PLATFORM STREQUAL "arm64")
+    set(_ORBBEC_SDK_LIB_DIRS
+        "${ORBBEC_SDK_ROOT}/lib/arm64"
+        "${ORBBEC_SDK_ROOT}/lib/linux_arm64"
+        "${ORBBEC_SDK_ROOT}/lib")
+elseif(HOST_PLATFORM STREQUAL "arm32")
+    set(_ORBBEC_SDK_LIB_DIRS
+        "${ORBBEC_SDK_ROOT}/lib/arm32"
+        "${ORBBEC_SDK_ROOT}/lib/linux_arm32"
+        "${ORBBEC_SDK_ROOT}/lib")
+endif()
+
+set(ORBBEC_LIBS_DIR "")
+foreach(_sdk_lib_dir IN LISTS _ORBBEC_SDK_LIB_DIRS)
+    if(EXISTS "${_sdk_lib_dir}/libOrbbecSDK.so" OR
+       EXISTS "${_sdk_lib_dir}/libOrbbecSDK.dylib")
+        set(ORBBEC_LIBS_DIR "${_sdk_lib_dir}")
+        break()
+    endif()
+endforeach()
+if(NOT ORBBEC_LIBS_DIR)
+    message(FATAL_ERROR
+        "OrbbecSDK binary not found under '${ORBBEC_SDK_ROOT}'. "
+        "Set -DORBBEC_SDK_ROOT=/path/to/OrbbecSDK; expected a platform-specific "
+        "lib/${HOST_PLATFORM}, lib/linux_${HOST_PLATFORM}, or lib directory.")
+endif()
+
+set(ORBBEC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDK/include")
+if(NOT EXISTS "${ORBBEC_INCLUDE_DIR}/libobsensor/ObSensor.hpp")
+    set(ORBBEC_INCLUDE_DIR "${ORBBEC_SDK_ROOT}/include")
+endif()
+if(NOT EXISTS "${ORBBEC_INCLUDE_DIR}/libobsensor/ObSensor.hpp")
+    message(FATAL_ERROR "OrbbecSDK headers not found in bundled SDK/include or '${ORBBEC_SDK_ROOT}/include'")
+endif()
+
+# Avoid reusing a CMake cached library from a different SDK root when the
+# caller switches SDK distributions in an existing build directory.
+unset(_ORBBEC_SDK_LIBRARY CACHE)
+find_library(_ORBBEC_SDK_LIBRARY
+    NAMES OrbbecSDK
+    PATHS "${ORBBEC_LIBS_DIR}"
+    NO_DEFAULT_PATH)
+if(NOT _ORBBEC_SDK_LIBRARY)
+    message(FATAL_ERROR "OrbbecSDK library not found in '${ORBBEC_LIBS_DIR}'")
+endif()
+
+# Build-tree binaries use the separately supplied SDK, while installed binaries
+# resolve the SDK copy installed beside them under <prefix>/lib. Do not retain
+# an ephemeral SDK extraction path in the installed RPATH.
+set(CMAKE_BUILD_RPATH "${ORBBEC_LIBS_DIR}")
+set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/..")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 if(USE_NV_HW_DECODER)
     set(JETSON_MULTI_MEDIA_API_DIR /usr/src/jetson_multimedia_api)
     set(JETSON_MULTI_MEDIA_API_CLASS_DIR ${JETSON_MULTI_MEDIA_API_DIR}/samples/common/classes)
@@ -104,8 +163,7 @@ set(COMMON_LIBRARIES
     ${ORBBEC_SDK_LIBRARIES}
     ${OpenCV_LIBS}
     Eigen3::Eigen
-    -lOrbbecSDK
-    -L${ORBBEC_LIBS_DIR}
+    ${_ORBBEC_SDK_LIBRARY}
     Threads::Threads
     -lrt
     -ldw
@@ -252,8 +310,8 @@ if(INSTALL_UDEV_RULES)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules
             DESTINATION share/${PROJECT_NAME}/udev)
 endif()
-if(DEFINED ENV{BUILDING_PACKAGE})
-    # Install udev rules
+if(DEFINED ENV{BUILDING_PACKAGE} AND INSTALL_UDEV_RULES)
+    # Keep the legacy package-build install path behind the same explicit opt-in.
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules DESTINATION /etc/udev/rules.d)
 endif()
 

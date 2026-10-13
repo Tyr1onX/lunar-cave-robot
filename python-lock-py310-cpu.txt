@@ -64,8 +64,8 @@ traitlets==5.16.1
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 tzdata==2026.5
-ultralytics==8.4.175
-ultralytics-thop==2.2.2
+ultralytics==8.4.164
+ultralytics-thop==2.2.1
 wcwidth==0.9.2
 Werkzeug==3.1.9
 widgetsnbextension==4.0.16

@@ -69,19 +69,53 @@ except ImportError:
 #  工具函数
 # ============================================================
 
+class _InvalidPointCloudError(ValueError):
+    """A PointCloud2 message cannot safely be decoded as float32 XYZ."""
+
+
+def _pointcloud_xyz_layout(msg: PointCloud2):
+    """Validate the packed float32 XYZ fields used by both cloud decoders."""
+    if msg.width < 0 or msg.height < 0 or msg.point_step <= 0:
+        raise _InvalidPointCloudError("invalid dimensions or point_step")
+
+    n = msg.width * msg.height
+    offsets = {field.name: field.offset for field in msg.fields}
+    missing = [name for name in ("x", "y", "z") if name not in offsets]
+    if missing:
+        raise _InvalidPointCloudError(f"missing required XYZ fields: {', '.join(missing)}")
+    for field in msg.fields:
+        if field.name in ("x", "y", "z"):
+            if field.datatype != PointField.FLOAT32 or field.count != 1:
+                raise _InvalidPointCloudError(f"field {field.name!r} must be one FLOAT32 value")
+            if field.offset < 0 or field.offset + 4 > msg.point_step:
+                raise _InvalidPointCloudError(f"field {field.name!r} exceeds point_step")
+
+    minimum_row_step = msg.width * msg.point_step
+    if msg.row_step < minimum_row_step:
+        raise _InvalidPointCloudError("row_step is smaller than width * point_step")
+    if len(msg.data) < msg.row_step * msg.height:
+        raise _InvalidPointCloudError("data is shorter than row_step * height")
+    return n, offsets
+
+
 def pc2_to_numpy(msg: PointCloud2) -> np.ndarray:
     """将 PointCloud2 转为 (N, 3) float32 numpy 数组 (可写)."""
-    n = msg.width * msg.height
-    offsets = {f.name: f.offset for f in msg.fields}
-    raw = np.frombuffer(msg.data, dtype=np.uint8).reshape(n, msg.point_step)
+    n, offsets = _pointcloud_xyz_layout(msg)
+    if n == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    row_bytes = msg.width * msg.point_step
+    rows = np.frombuffer(msg.data, dtype=np.uint8, count=msg.row_step * msg.height)
+    rows = rows.reshape(msg.height, msg.row_step)[:, :row_bytes]
+    raw = rows.reshape(n, msg.point_step)
+    float_dtype = np.dtype(">f4" if msg.is_bigendian else "<f4")
 
     if offsets.get('x', -1) == 0 and offsets.get('y', -1) == 4 and offsets.get('z', -1) == 8:
-        xyz = raw[:, :12].copy().view(np.float32).reshape(n, 3)
+        xyz = raw[:, :12].copy().view(float_dtype).reshape(n, 3).astype(np.float32, copy=False)
     else:
         xyz = np.empty((n, 3), dtype=np.float32)
         for i, name in enumerate(('x', 'y', 'z')):
             o = offsets[name]
-            xyz[:, i] = raw[:, o:o + 4].copy().view(np.float32).ravel()
+            xyz[:, i] = raw[:, o:o + 4].copy().view(float_dtype).ravel()
     return xyz
 
 
@@ -90,21 +124,26 @@ def pc2_roi_numpy(msg: PointCloud2, r1: int, r2: int, c1: int, c2: int) -> np.nd
     ★ 从组织化 PointCloud2 中仅提取 ROI 区域, 返回 (M, 3) float32.
     避免解析全部 40 万点, 性能提升 10x+.
     """
-    offsets = {f.name: f.offset for f in msg.fields}
+    _, offsets = _pointcloud_xyz_layout(msg)
     ps = msg.point_step
     # frombuffer → 只读 view; 只在 ROI 区域做 .copy()
-    raw = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, ps)
+    row_bytes = msg.width * ps
+    rows = np.frombuffer(msg.data, dtype=np.uint8, count=msg.row_step * msg.height)
+    rows = rows.reshape(msg.height, msg.row_step)[:, :row_bytes]
+    raw = rows.reshape(msg.height, msg.width, ps)
     roi = raw[r1:r2, c1:c2, :].copy()          # ★ 仅复制 ROI 字节
     n = roi.shape[0] * roi.shape[1]
     roi = roi.reshape(n, ps)
 
     if offsets.get('x', -1) == 0 and offsets.get('y', -1) == 4 and offsets.get('z', -1) == 8:
-        return roi[:, :12].view(np.float32).reshape(n, 3)
+        float_dtype = np.dtype(">f4" if msg.is_bigendian else "<f4")
+        return roi[:, :12].view(float_dtype).reshape(n, 3).astype(np.float32, copy=False)
     else:
         xyz = np.empty((n, 3), dtype=np.float32)
+        float_dtype = np.dtype(">f4" if msg.is_bigendian else "<f4")
         for i, name in enumerate(('x', 'y', 'z')):
             o = offsets[name]
-            xyz[:, i] = roi[:, o:o + 4].view(np.float32).ravel()
+            xyz[:, i] = roi[:, o:o + 4].view(float_dtype).ravel()
         return xyz
 
 
@@ -655,6 +694,10 @@ class PoseEstimationNode(Node):
         t0 = time.monotonic()
         try:
             self._process(msg, bbox, det_score=det_score, det_stamp_sec=det_stamp_sec, det_recv_mono=det_recv_mono)
+        except _InvalidPointCloudError as e:
+            self.get_logger().warning(
+                f"拒绝无效 PointCloud2，跳过本帧: {e}",
+                throttle_duration_sec=2.0)
         except Exception as e:
             self.get_logger().error(f"处理异常: {e}", throttle_duration_sec=2.0)
             import traceback

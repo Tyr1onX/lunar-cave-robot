@@ -74,7 +74,6 @@ import cv2
 import numpy as np
 import yaml
 import tempfile
-import shutil
 import traceback
 import threading
 import time
@@ -398,35 +397,62 @@ class YoloDetectorNode(Node):
             if not src_dir.is_dir():
                 return None
 
-            xml_files_local = sorted(src_dir.glob('*.xml'))
-            bin_files_local = sorted(src_dir.glob('*.bin'))
-            if not xml_files_local or not bin_files_local:
+            # Finder/AppleDouble sidecars (._model.xml) are not OpenVINO files.
+            xml_files_local = sorted(
+                p for p in src_dir.glob('*.xml') if not p.name.startswith('._'))
+            paired_xml_files = [
+                p for p in xml_files_local
+                if p.with_suffix('.bin').is_file()
+                and not p.with_suffix('.bin').name.startswith('._')]
+            if not paired_xml_files:
                 return None
+            if len(paired_xml_files) > 1:
+                raise ValueError(
+                    f'Multiple XML/BIN OpenVINO model pairs found in {src_dir}; '
+                    'pass the intended model directory explicitly')
 
-            if src_dir.name.endswith('_openvino_model'):
+            has_appledouble = any(p.name.startswith('._') for p in src_dir.iterdir())
+            if src_dir.name.endswith('_openvino_model') and not has_appledouble:
                 return src_dir
 
-            xml_stem = xml_files_local[0].stem
-            alias_root = Path(tempfile.gettempdir()) / 'yolo_node_openvino_alias'
-            alias_root.mkdir(parents=True, exist_ok=True)
+            xml_stem = paired_xml_files[0].stem
+            # Each node instance gets its own alias directory. A shared fixed
+            # /tmp path lets concurrent nodes delete each other's model links.
+            self._openvino_alias_tempdir = tempfile.TemporaryDirectory(
+                prefix='yolo_node_openvino_alias_')
+            alias_root = Path(self._openvino_alias_tempdir.name)
             alias_dir = alias_root / f'{xml_stem}_openvino_model'
 
-            if alias_dir.exists():
-                try:
-                    if alias_dir.is_symlink() or alias_dir.is_file():
-                        alias_dir.unlink()
-                    elif alias_dir.is_dir():
-                        shutil.rmtree(alias_dir)
-                except Exception:
-                    pass
+            # Avoid exposing AppleDouble entries to Ultralytics' own *.xml glob.
+            # Keep only the paired IR files and metadata in that case; model
+            # weights remain external and are not copied into this temp folder.
+            if has_appledouble:
+                alias_dir.mkdir(parents=True, exist_ok=True)
+                alias_files = [paired_xml_files[0], paired_xml_files[0].with_suffix('.bin')]
+                metadata_file = src_dir / 'metadata.yaml'
+                if metadata_file.is_file():
+                    alias_files.append(metadata_file)
+                for source_file in alias_files:
+                    (alias_dir / source_file.name).symlink_to(source_file.resolve())
+                self.get_logger().info(
+                    f'Created clean OpenVINO alias directory: {alias_dir} '
+                    f'(excluded AppleDouble files from {src_dir})')
+                return alias_dir
 
-            # 优先软链接，失败则复制
+            # Prefer a directory link; on restricted filesystems link only the
+            # actual model sidecars rather than copying a possibly large BIN.
             try:
                 alias_dir.symlink_to(src_dir, target_is_directory=True)
                 self.get_logger().info(f'Created OpenVINO alias symlink: {alias_dir} -> {src_dir}')
             except Exception:
-                shutil.copytree(src_dir, alias_dir)
-                self.get_logger().info(f'Created OpenVINO alias copy: {alias_dir} (from {src_dir})')
+                alias_dir.mkdir(parents=True, exist_ok=True)
+                alias_files = [paired_xml_files[0], paired_xml_files[0].with_suffix('.bin')]
+                metadata_file = src_dir / 'metadata.yaml'
+                if metadata_file.is_file():
+                    alias_files.append(metadata_file)
+                for source_file in alias_files:
+                    (alias_dir / source_file.name).symlink_to(source_file.resolve())
+                self.get_logger().info(f'Created OpenVINO sidecar alias directory: {alias_dir}')
 
             return alias_dir
 
@@ -449,7 +475,9 @@ class YoloDetectorNode(Node):
         alias_dir = _prepare_openvino_dir_alias(model_path)
         if alias_dir is not None and alias_dir != model_path:
             candidates.insert(0, alias_dir)
-        xml_files = sorted(model_path.glob('*.xml')) if model_path.is_dir() else []
+        xml_files = (
+            sorted(p for p in model_path.glob('*.xml') if not p.name.startswith('._'))
+            if model_path.is_dir() else [])
         candidates.extend(xml_files)
 
         last_error: Exception | None = None

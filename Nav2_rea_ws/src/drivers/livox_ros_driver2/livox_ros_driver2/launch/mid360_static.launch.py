@@ -13,6 +13,12 @@ def generate_launch_description():
                 "before selecting a device-specific file."
             ),
         ),
+        DeclareLaunchArgument(
+            "cmdline_input_bd_code",
+            description=(
+                "Required MID-360 broadcast code read from the device; do not use a placeholder."
+            ),
+        ),
         Node(
             package="livox_ros_driver2",
             executable="livox_ros_driver2_node",
@@ -27,7 +33,7 @@ def generate_launch_description():
                 "frame_id": "livox_frame",
                 "lvx_file_path": "/tmp/livox_unused.lvx",
                 "user_config_path": LaunchConfiguration("config_file"),
-                "cmdline_input_bd_code": "000000000000001",
+                "cmdline_input_bd_code": LaunchConfiguration("cmdline_input_bd_code"),
             }],
         ),
     ])

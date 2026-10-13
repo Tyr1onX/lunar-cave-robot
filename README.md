@@ -11,7 +11,7 @@
 | [`firmware/arm/`](firmware/arm/) | STM32H723 机械臂工程；含 CubeMX、CMake、Keil、HAL/CMSIS、FreeRTOS、LibXR 与团队应用源码 |
 | [`firmware/chassis/`](firmware/chassis/) | STM32H723 六轮底盘工程；含 CubeMX、CMake、Keil、HAL/CMSIS、FreeRTOS 与团队控制源码 |
 | [`hardware/`](hardware/) | 机械 CAD、电气/PCB、接线、BOM 和设备资料归档入口；当前仅放资产接收说明，未找到可归档原始设计文件 |
-| [`tools/`](tools/) | P4～P8 离线验证、源码完整性检查、三端状态查询与安全同步入口 |
+| [`tools/`](tools/) | P4～P9 离线验证、感知测试、源码完整性检查、三端状态查询与安全同步入口 |
 | [docs/](docs/) | [新人技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
 | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 第三方源码及许可证来源摘要；各依赖原始许可文件保留在对应源码目录 |
 
@@ -35,10 +35,11 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 - P0～P8 ROS 2 主线已进入 `main`。P8 记录 ThinkBook 和 NUC 各通过 12 个 PTY 离线场景；NUC 上 MID-360 驱动曾成功编译。记录不表示真实点云、IMU 或机器人运动验收通过。
 - P9-C 离线稳定性修正确认后，ThinkBook 两轮完整 P7 场景各通过 12/12；P4f 的 19 项 PTY 驱动检查、10 项 P6 单测/静态合同、规划取消竞态及六个 P6 场景也通过。详情和源文件 SHA-256 见 [P9-C 离线验证](docs/P9C_OFFLINE_VALIDATION.md)。结果不等于实机验收。
 - ThinkBook GCC 11.4 本轮复跑 main 底盘协议主机测试和 PR #8 精确 head 的底盘/机械臂纯状态机主机测试均通过；此前底盘 ARM GNU GCC 10.3.1 交叉编译通过。机械臂完整固件因 XRobot 输入缺失而未构建。P9-E 审查发现机械臂接入中的租约过期、控制模式切换、恢复复核和反馈健康缺口，PR #8 继续开放。详见 [PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md) 与 [XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)。
+- P9-I 在隔离 NUC 构建目录重建 Livox、Orbbec、YOLO 和位姿估计包。blue-block YOLOE 的失败已定位为运行 metadata 遗漏 `end2end: true`，修复后直接 OpenVINO 推理及实际 ROS 检测节点合成图像测试通过；合成 DetectionArray/点云/CameraInfo 到 PoseStamped 接口测试也通过。测试权重未放入 Git；未连接传感器，测试不代表目标识别精度、相机采集或实机定位验收。详细版本、张量合同、SHA-256、复现命令和边界见 [P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)；[P9-H 报告](docs/P9H_PERCEPTION_READINESS.md)仅保留其首次失败时的历史记录。
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 
-新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
+新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
 
 ## 开发与离线验证
 

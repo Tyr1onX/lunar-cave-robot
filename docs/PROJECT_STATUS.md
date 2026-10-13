@@ -1,6 +1,16 @@
 # 项目阶段状态与交接
 
-更新日期：2026-10-13。P9-E 审查时 GitHub main 基线为 6a48dc52f5d7f5b263845bdec0639f59144a4486；P9-E PR 只增加文档与主机侧 CI，不改变 ROS/固件源码。最近一次完整 P7/P8 离线套件使用代码 SHA 07a56c3a33882aa2866f1076d8597776e2579bcb，完整结果 12/12 通过。PR #8 仍开放。仓库保持 Private；团队自有工程授权仅用于该私有仓库内部归档，第三方组件仍遵循其原许可证。
+更新日期：2026-10-13。P9-I 开始时 GitHub `main` 为 `38b9578a66015d02fe637a5c9a2b424af6a247a7`；本页新增的 P9-I 改动仍在独立 PR 分支，未合并。P9-E 的 `6a48dc52f5d7f5b263845bdec0639f59144a4486` 是历史审计基线，不是当前 main。最近一次完整 P7/P8 离线套件使用代码 SHA `07a56c3a33882aa2866f1076d8597776e2579bcb`，结果 12/12 通过。PR #8 仍开放。仓库保持 Private；团队自有工程授权仅用于该私有仓库内部归档，第三方组件仍遵循其原许可证。
+
+## P9-I 视觉推理恢复与离线接口验证（未合并）
+
+- 本轮在 NUC 临时隔离副本中基于 PR #14 源快照和 PR #16 感知修复构建/测试；NUC 正式仓库工作树没有同步或改动。P9-I 分支以最新 `main` 为目标，不改 Mac GUI 源码；PR #14 与 #16 的叠加关系仍需在各自 PR 中处理。
+- `blue_block` 模型原始 OpenVINO 合同为输入 `[1,3,640,640]`，输出 `[1,300,38]` 和 `[1,32,160,160]`。运行 metadata 漏掉 `end2end: true` 令 Ultralytics 把 300 行误作通道数，复现 `13×294` 对 `32×25600` 的分割掩膜矩阵错误。恢复真实导出标记后，Ultralytics 8.4.164 / OpenVINO 2025.4.1 直接推理通过；模型任务仍为 YOLOE `segment`，没有更改成别的任务或替换成 `haomu`。
+- NUC ROS Humble 隔离构建通过：`livox_ros_driver2` 1.2.4（SDK2 1.4.3）、`orbbec_camera_msgs`/`orbbec_camera` 2.9.3（官方 SDK v2.9.3）、`yolo_node` 1.0.0、`pose_estimator` 1.0.0。最新 YOLO 与位姿 PointCloud2 校验源码分别在独立隔离 build/install 前缀重新构建。
+- 实际 ROS YOLO 节点接收合成 RGB 图后发布 `DetectionArray` 与标注图像，坐标、置信度范围、图像尺寸、时间戳和 frame 字段断言通过；合成 DetectionArray + organized PointCloud2 + CameraInfo 使实际位姿节点输出有限位置、单位四元数、同帧同时间戳的 `PoseStamped`。空检测与缺 XYZ 字段点云的负例均无位姿输出，节点继续运行。数值、耗时和复现命令见 `docs/P9I_VISION_OFFLINE_VALIDATION.md`。
+- Orbbec 安装前缀搬迁后的 `ldd` 解析通过：SDK 从相机包自身相对库目录加载，未留下临时 SDK 路径；在 `BUILDING_PACKAGE=1`、`INSTALL_UDEV_RULES=OFF`、带隔离 `DESTDIR` 的安装试验未产生 udev 规则。Livox 通过全新非 symlink 隔离安装构建，依赖均解析且安装二进制没有临时工作树 RPATH。
+- blue-block BIN、提示词和 embedding 二进制继续留在 ThinkBook/NUC 原始历史工程及本轮临时副本，不进入 Git；仓库只加入修复后的、安全脱敏 metadata 和可复跑脚本。测试图像和点云都是合成输入；没有 ROS Bag，没有真实相机/雷达、实机识别率或真实位姿精度结论。依赖模型授权与外部 SDK 版本仍要按各自条款和来源获取。
+- 本轮没有启动 Livox/Orbbec 驱动节点，只检查 `--show-args`；未连接 STM32、未触碰串口/电机、不烧录、不启动任何真实运动。
 
 ## P9-E 当前源码与验证状态
 

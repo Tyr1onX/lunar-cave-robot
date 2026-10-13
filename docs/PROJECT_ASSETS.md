@@ -1,6 +1,6 @@
 # 项目资产清单
 
-更新日期：2026-10-12。原始工作目录和压缩包均未修改；本表记录实际找到的快照、整理结果和未导入内容。第一方固件已按团队确认归属和私有仓库内部归档授权纳入；第三方许可仍按各自条款保留。
+更新日期：2026-10-13。原始工作目录和压缩包均未修改；本表记录实际找到的快照、整理结果和未导入内容。第一方固件已按团队确认归属和私有仓库内部归档授权纳入；第三方许可仍按各自条款保留。
 
 ## 已进入仓库
 
@@ -10,6 +10,7 @@
 | ROS 2 导航、定位与底盘桥 | [`Nav2_rea_ws/`](../Nav2_rea_ws/) | P8 主线 | 保留原工作空间边界；P7/P8 安全流程未被历史分支覆盖 |
 | 机械臂 STM32 | [`firmware/arm/`](../firmware/arm/) | 原包 Git `HEAD` `963fd0275ddbe2c759b35250842284c6d62e90c1`；LibXR `783b157fb3e9e5a7801edc9083834ba3ac49801f` | 保留当前 ZIP 工作树中的工程配置、源码、HAL/CMSIS、USB、FreeRTOS、LibXR 与许可证；已剔除 Git 元数据、构建输出、缓存、调试配置、轨迹 CSV 和执行文件 |
 | 六轮底盘 STM32 | [`firmware/chassis/`](../firmware/chassis/) | 原始 ZIP SHA-256 `823ff6981859dbce1d05a3d4864b921bd0f9aa5165335d0caec7d12852701d2e` | 保留 CubeMX、CMake、Keil、Core/User、H7 HAL/CMSIS、FreeRTOS、启动/链接配置和所需 DSP 库；排除构建输出、其他 MCU 示例、缓存、日志、个人 IDE 设置 |
+| 位姿模型模板点云 | [`tzb_ws/src/pose_estimator/config/half_block.pcd`](../tzb_ws/src/pose_estimator/config/half_block.pcd) | NUC 历史 `tzb_ws` 工作区；SHA-256 `d4fe24118f3bd3d1a3a9db4fb8bef87873b486af8b0d3ec52416dabad5f5027d` | 7,500 点、50 mm 目标参考模型；P9-H 用于恢复 pose_estimator 默认运行输入。不是场景点云或实测数据 |
 | 第三方许可摘要 | [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) | P9 固件归档新增 | 原始许可证文件保留在固件依赖目录 |
 
 归档校验入口：`python3 tools/verify_project_assets.py`。归档源文件的逐文件 SHA-256 清单为 `firmware/SOURCE_SHA256SUMS`；文本按 Git 规范化后的 LF 字节计算，二进制按原始字节计算，因此跨平台换行符不会造成误报。源压缩包 SHA 与来源路径见下文。
@@ -44,6 +45,14 @@
 `~/mid360_driver_dev/repo` 是干净的 `codex/mid360-driver-nuc-ready` 工作树，HEAD `189cf2f...`，此前在该目录对 `livox_ros_driver2` 记录过成功构建。其与当前 `main` 的树差异包含 25 个文件、约 1,873 行删除，其中包括 P7 离线验收脚本、安全文档和 P6 任务/串口代码变化。整分支不合入；驱动 SDK 查找修复已在 P8 主线上，唯一不同的 MID-360 launch 默认参数会直接选择设备配置，保持现有 P8 入口不变。
 
 ThinkBook 的 P4f 历史工作树仍保留着本地未提交修改，部分差异会撤销 P8 的安全状态检查；NUC `~/tzb_ws/README.md` 也有本地修改。这些原目录均未覆盖或清理。
+
+### P9-H 感知构建与本地模型
+
+- NUC `~/tzb_ws/src/best_openvino_model/` 有根 `best.xml/.bin`、blue-block `yoloe-26l-seg.xml/.bin`、`metadata.yaml`、`prompts.txt` 和 `prompt_embeddings.npz`。模型包来自 NUC 旧的 `tzb_ws` 工作区，本次未将权重或 prompt 二进制复制进 Git。
+- P9-H 首次试验误报 blue-block 推理不可用；P9-I 查明运行 metadata 省略导出属性 `end2end: true`，修复后 Ultralytics 8.4.164 / OpenVINO 2025.4.1 推理和合成 ROS 检测节点 smoke 通过。旧报告保留为历史记录；当前哈希、输出张量、类别和测试边界见 [`P9I_VISION_OFFLINE_VALIDATION.md`](P9I_VISION_OFFLINE_VALIDATION.md)。
+- 模型 BIN、prompt 和 embedding 二进制仍留在 NUC 历史工作区并仅复制到本轮 `/tmp` 测试目录，没有放进仓库；根 `best` 的类别仍是 `haomu`，不是 `blue_block`，不可相互替代。模型 metadata 声明 AGPL-3.0；本 PR 只归档 sanitized metadata 与测试脚本，外部模型包仍需按其许可和团队分发规则管理。
+- Orbbec 官方 SDK v2.9.3 和 Livox SDK2 仅用于隔离构建，均未进入仓库。Orbbec SDK v2.9.3 官方发行文件 SHA-256 为 `8516081b2201f841b1aa444dd203975e06891d73a2694dd2b3d864254f89ff0d`；第三方库仍需部署时单独获取。
+- 在目标仓库和检查过的 NUC ROS 工作区中没有找到场景 ROS Bag。用于目标检测 smoke 的 Orbbec 源码示例 RGB 图像未复制或入库。
 
 ### 机械、电气和资料
 
