@@ -5,14 +5,14 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from .collectors import collect_logs, collect_snapshot, start_ros_graph_observer, utc_now
+from .collectors import collect_logs, collect_snapshot, collect_vision, collect_vision_frame, start_ros_graph_observer, utc_now
 
 HOST = "127.0.0.1"
 PORT = 8765
 
 
 class ReadOnlyHandler(BaseHTTPRequestHandler):
-    server_version = "LunarConsoleAgent/0.1"
+    server_version = "LunarConsoleAgent/0.2"
     sys_version = ""
 
     def log_message(self, _format: str, *_args: object) -> None:
@@ -22,6 +22,15 @@ class ReadOnlyHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _respond_png(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -47,6 +56,17 @@ class ReadOnlyHandler(BaseHTTPRequestHandler):
                 self._respond(400, {"error": "limit must be an integer"})
                 return
             self._respond(200, collect_logs(max(1, min(limit, 200))))
+            return
+        if request.path == "/v1/vision":
+            self._respond(200, collect_vision())
+            return
+        parts = request.path.split("/")
+        if len(parts) == 5 and parts[:3] == ["", "v1", "vision"] and parts[4] == "frame.png":
+            frame, reason, status = collect_vision_frame(parts[3])
+            if frame is not None:
+                self._respond_png(frame)
+            else:
+                self._respond(status or 503, {"status": "unavailable", "reason": reason or "frame unavailable"})
             return
         self._respond(404, {"error": "not found"})
 

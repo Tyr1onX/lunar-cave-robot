@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .vision import STREAMS, VisionObserver
+
 SCHEMA_VERSION = 1
 _AGENT_NODE_NAME = "lunar_console_graph_probe"
 _CPU_LOCK = threading.Lock()
@@ -222,7 +224,7 @@ def collect_tests() -> dict[str, Any]:
 
 
 class ROSGraphObserver:
-    """One persistent, non-publishing ROS graph observer for this agent process."""
+    """One ROS graph reader with fixed, read-only image subscriptions."""
 
     def __init__(self) -> None:
         self._stop = threading.Event()
@@ -234,6 +236,7 @@ class ROSGraphObserver:
             "topics": [],
             "reason": "ROS graph observer is starting",
         }
+        self._vision = VisionObserver()
         self._thread = threading.Thread(target=self._run, name="ros-graph-observer", daemon=True)
         self._thread.start()
 
@@ -247,6 +250,12 @@ class ROSGraphObserver:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._snapshot)
+
+    def vision_snapshot(self) -> dict[str, Any]:
+        return self._vision.snapshot()
+
+    def vision_frame_png(self, stream_id: str) -> tuple[bytes | None, str | None, int | None]:
+        return self._vision.frame_png(stream_id)
 
     def stop(self) -> None:
         self._stop.set()
@@ -263,6 +272,8 @@ class ROSGraphObserver:
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
+            from rclpy.qos import qos_profile_sensor_data
+            from sensor_msgs.msg import Image
 
             context = rclpy.context.Context()
             rclpy.init(context=context)
@@ -273,10 +284,22 @@ class ROSGraphObserver:
                 enable_rosout=False,
             )
             _disable_default_parameter_event_publisher(node)
+            for stream_id, definition in STREAMS.items():
+                node.create_subscription(
+                    Image,
+                    definition["topic"],
+                    lambda message, selected=stream_id: self._vision.receive(selected, message),
+                    qos_profile_sensor_data,
+                )
             executor = SingleThreadedExecutor(context=context)
             executor.add_node(node)
+            last_graph_read = 0.0
             while not self._stop.is_set():
-                executor.spin_once(timeout_sec=0.15)
+                executor.spin_once(timeout_sec=0.02)
+                now = time.monotonic()
+                if now - last_graph_read < 1.0:
+                    continue
+                last_graph_read = now
                 nodes = [
                     {"name": name, "namespace": namespace}
                     for name, namespace in node.get_node_names_and_namespaces()
@@ -285,7 +308,17 @@ class ROSGraphObserver:
                 topics = [
                     {"name": name, "types": sorted(types)}
                     for name, types in node.get_topic_names_and_types()
+                    if name not in {entry["topic"] for entry in STREAMS.values()}
+                    or bool(node.get_publishers_info_by_topic(name))
                 ]
+                for stream_id, definition in STREAMS.items():
+                    publishers = node.get_publishers_info_by_topic(definition["topic"])
+                    self._vision.update_publishers(
+                        stream_id,
+                        [publisher.topic_type for publisher in publishers],
+                        len(publishers),
+                    )
+                self._vision.graph_available()
                 self._store_snapshot({
                     "status": "ok",
                     "domain_id": self._domain_id(),
@@ -293,8 +326,8 @@ class ROSGraphObserver:
                     "topics": sorted(topics, key=lambda item: item["name"]),
                     "discovery": "rclpy runtime graph · read-only observer",
                 })
-                self._stop.wait(0.85)
         except Exception as exc:
+            self._vision.graph_unavailable(f"ROS image observer unavailable: {type(exc).__name__}: {exc}")
             self._store_snapshot({
                 "status": "unknown",
                 "domain_id": self._domain_id(),
@@ -348,6 +381,47 @@ def collect_ros() -> dict[str, Any]:
             "reason": "ROS graph observer has not started",
         }
     return observer.snapshot()
+
+
+def collect_vision() -> dict[str, Any]:
+    observer = _ROS_OBSERVER
+    if observer is not None:
+        return observer.vision_snapshot()
+    return {
+        "status": "unknown",
+        "source": "nuc-ros2-read-only-subscriber",
+        "collected_at": utc_now(),
+        "reason": "ROS graph observer has not started",
+        "streams": [
+            {
+                "id": stream_id,
+                "label": definition["label"],
+                "topic": definition["topic"],
+                "topic_type": None,
+                "status": "unknown",
+                "reason": "ROS graph observer has not started",
+                "publisher_count": 0,
+                "width": None,
+                "height": None,
+                "encoding": None,
+                "frame_rate_hz": None,
+                "frame_age_ms": None,
+                "source_stamp": None,
+                "frame_id": None,
+                "header_to_agent_ms": None,
+                "received_at": None,
+                "gap_events": 0,
+            }
+            for stream_id, definition in STREAMS.items()
+        ],
+    }
+
+
+def collect_vision_frame(stream_id: str) -> tuple[bytes | None, str | None, int | None]:
+    observer = _ROS_OBSERVER
+    if observer is None:
+        return None, "ROS graph observer has not started", 503
+    return observer.vision_frame_png(stream_id)
 
 
 def collect_snapshot() -> dict[str, Any]:

@@ -23,4 +23,16 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(entry.fileModifiedAt, "2026-10-12T23:45:00Z")
         XCTAssertEqual(entry.source, "node.log")
     }
+
+    func testVisionSnapshotDecodesLiveAndUnavailableSourcesWithoutInventingMetrics() throws {
+        let data = Data(#"{"status":"ok","source":"nuc-ros2-read-only-subscriber","collected_at":"2026-10-13T05:00:00.000Z","reason":null,"streams":[{"id":"rgb","label":"RGB","topic":"/camera/color/image_raw","topic_type":"sensor_msgs/msg/Image","status":"streaming","reason":null,"publisher_count":1,"width":640,"height":480,"encoding":"rgb8","frame_rate_hz":29.8,"frame_age_ms":12,"source_stamp":"2026-10-13T05:00:00.000Z","header_to_agent_ms":8.2,"received_at":"2026-10-13T05:00:00.008Z","gap_events":0},{"id":"depth","label":"深度","topic":"/camera/depth/image_rect_raw","topic_type":null,"status":"unavailable","reason":"ROS Topic 当前没有发布者","publisher_count":0,"width":null,"height":null,"encoding":null,"frame_rate_hz":null,"frame_age_ms":null,"source_stamp":null,"header_to_agent_ms":null,"received_at":null,"gap_events":0}]}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let reading = try decoder.decode(VisionReading.self, from: data)
+        XCTAssertEqual(reading.stream(.rgb)?.status, "streaming")
+        XCTAssertEqual(reading.stream(.rgb)?.frameRateHz, 29.8)
+        XCTAssertEqual(reading.stream(.depth)?.status, "unavailable")
+        XCTAssertNil(reading.stream(.depth)?.frameRateHz)
+        XCTAssertNil(reading.stream(.depth)?.sourceStamp)
+    }
 }

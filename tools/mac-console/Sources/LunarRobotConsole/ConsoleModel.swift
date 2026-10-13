@@ -28,7 +28,7 @@ private final class SSHDiagnosticBuffer: @unchecked Sendable {
 @MainActor
 final class ConsoleModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
-        case overview = "总览"
+        case cockpit = "测试驾驶舱"
         case diagnostics = "系统诊断"
         case history = "历史记录"
 
@@ -36,16 +36,23 @@ final class ConsoleModel: ObservableObject {
 
         var symbol: String {
             switch self {
-            case .overview: return "rectangle.grid.2x2.fill"
+            case .cockpit: return "viewfinder"
             case .diagnostics: return "waveform.path.ecg"
             case .history: return "clock.arrow.circlepath"
             }
         }
     }
 
-    @Published var section: Section = .overview
+    @Published var section: Section = .cockpit
     @Published private(set) var snapshot: ConsoleSnapshot?
     @Published private(set) var logs: LogReading?
+    @Published private(set) var vision: VisionReading?
+    @Published private(set) var visionFrame: Data?
+    @Published private(set) var visionMessage: String?
+    @Published private(set) var visionFrameMessage: String?
+    @Published private(set) var visionFrameRoundTripMs: Double?
+    @Published private(set) var macFrameUpdateHz: Double?
+    @Published private(set) var selectedVisionStream: VisionStreamID = .rgb
     @Published private(set) var tunnelRunning = false
     @Published private(set) var agentOnline = false
     @Published private(set) var connectionMessage = "等待 SSH 隧道"
@@ -57,11 +64,16 @@ final class ConsoleModel: ObservableObject {
     private var tunnel: Process?
     private var tunnelErrorPipe: Pipe?
     private var refreshTask: Task<Void, Never>?
+    private var visionRefreshTask: Task<Void, Never>?
+    private var visionFrameTask: Task<Void, Never>?
     private(set) var agentSession = 0
     private var isRefreshing = false
     private var isReadingGitHub = false
     private var isReadingLogs = false
+    private var isReadingVision = false
+    private var isReadingVisionFrame = false
     private var lastLogRead = Date.distantPast
+    private var lastFrameUpdateUptime: TimeInterval?
 
     private let apiRoot = URL(string: "http://127.0.0.1:18765")!
     private let session: URLSession = {
@@ -81,12 +93,28 @@ final class ConsoleModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
+        visionRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshVision()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        visionFrameTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshVisionFrame()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
         refreshGitHubMain()
     }
 
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        visionRefreshTask?.cancel()
+        visionRefreshTask = nil
+        visionFrameTask?.cancel()
+        visionFrameTask = nil
         invalidateAgentData(message: "NUC Agent 已停止")
         tunnel?.terminationHandler = nil
         if tunnel?.isRunning == true { tunnel?.terminate() }
@@ -202,17 +230,81 @@ final class ConsoleModel: ObservableObject {
         agentMessage = message
     }
 
+    func selectVisionStream(_ stream: VisionStreamID) {
+        guard selectedVisionStream != stream else { return }
+        selectedVisionStream = stream
+        visionFrame = nil
+        visionFrameMessage = nil
+        visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
+    }
+
     func invalidateAgentData(message: String) {
         agentSession += 1
         agentOnline = false
         agentMessage = message
         snapshot = nil
         logs = nil
+        vision = nil
+        visionFrame = nil
+        visionMessage = nil
+        visionFrameMessage = nil
+        visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     func applyLogReading(_ reading: LogReading, requestSession: Int) {
         guard agentOnline, requestSession == agentSession else { return }
         logs = reading
+    }
+
+    func applyVisionReading(_ reading: VisionReading, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession else { return }
+        vision = reading
+        visionMessage = nil
+        guard reading.stream(selectedVisionStream)?.status == "streaming" else {
+            visionFrame = nil
+            visionFrameRoundTripMs = nil
+            macFrameUpdateHz = nil
+            lastFrameUpdateUptime = nil
+            visionFrameMessage = reading.stream(selectedVisionStream)?.reason
+            return
+        }
+    }
+
+    func applyVisionFrame(_ data: Data, streamID: VisionStreamID, requestSession: Int, roundTripMs: Double) {
+        guard agentOnline, requestSession == agentSession, selectedVisionStream == streamID,
+              vision?.stream(streamID)?.status == "streaming" else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let lastFrameUpdateUptime, now > lastFrameUpdateUptime {
+            macFrameUpdateHz = 1 / (now - lastFrameUpdateUptime)
+        }
+        lastFrameUpdateUptime = now
+        visionFrame = data
+        visionFrameMessage = nil
+        visionFrameRoundTripMs = roundTripMs
+    }
+
+    func applyVisionError(_ message: String, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession else { return }
+        vision = nil
+        visionFrame = nil
+        visionMessage = message
+        visionFrameMessage = message
+        visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
+    }
+
+    func applyVisionFrameError(_ message: String, streamID: VisionStreamID, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession, selectedVisionStream == streamID else { return }
+        visionFrame = nil
+        visionFrameMessage = message
+        visionFrameRoundTripMs = nil
+        macFrameUpdateHz = nil
+        lastFrameUpdateUptime = nil
     }
 
     private func refreshLogs() {
@@ -232,6 +324,63 @@ final class ConsoleModel: ObservableObject {
                 let reading = LogReading(status: "unknown", reason: error.localizedDescription, entries: [], source: nil)
                 applyLogReading(reading, requestSession: requestSession)
             }
+        }
+    }
+
+    private func refreshVision() async {
+        guard agentOnline, !isReadingVision else { return }
+        isReadingVision = true
+        defer { isReadingVision = false }
+        let requestSession = agentSession
+        do {
+            let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/vision"))
+            guard requestSession == agentSession, agentOnline else { return }
+            guard let http = response as? HTTPURLResponse else { throw URLError(.cannotParseResponse) }
+            guard http.statusCode == 200 else {
+                if http.statusCode == 404 {
+                    applyVisionError("当前 NUC Agent 版本没有视觉数据接口", requestSession: requestSession)
+                    return
+                }
+                throw URLError(.badServerResponse)
+            }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            applyVisionReading(try decoder.decode(VisionReading.self, from: data), requestSession: requestSession)
+        } catch {
+            applyVisionError("视觉状态暂不可读 · \(error.localizedDescription)", requestSession: requestSession)
+        }
+    }
+
+    private func refreshVisionFrame() async {
+        guard agentOnline, !isReadingVisionFrame else { return }
+        let stream = selectedVisionStream
+        guard let source = vision?.stream(stream) else { return }
+        guard source.status == "streaming" else {
+            visionFrame = nil
+            visionFrameRoundTripMs = nil
+            macFrameUpdateHz = nil
+            lastFrameUpdateUptime = nil
+            visionFrameMessage = source.reason
+            return
+        }
+        isReadingVisionFrame = true
+        defer { isReadingVisionFrame = false }
+        let requestSession = agentSession
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let url = URL(string: "/v1/vision/\(stream.rawValue)/frame.png", relativeTo: apiRoot)!.absoluteURL
+        do {
+            let (data, response) = try await session.data(from: url)
+            guard requestSession == agentSession, agentOnline, selectedVisionStream == stream else { return }
+            guard let http = response as? HTTPURLResponse else { throw URLError(.cannotParseResponse) }
+            guard http.statusCode == 200, http.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("image/png") == true else {
+                let reason = (try? JSONDecoder().decode(VisionFrameError.self, from: data).reason) ?? "图像帧暂不可用"
+                applyVisionFrameError(reason, streamID: stream, requestSession: requestSession)
+                return
+            }
+            applyVisionFrame(data, streamID: stream, requestSession: requestSession,
+                             roundTripMs: (ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+        } catch {
+            applyVisionFrameError("实时图像请求失败 · \(error.localizedDescription)", streamID: stream, requestSession: requestSession)
         }
     }
 
@@ -276,4 +425,8 @@ final class ConsoleModel: ObservableObject {
             return (nil, "GitHub main 当前无法读取")
         }
     }
+}
+
+private struct VisionFrameError: Decodable {
+    let reason: String
 }

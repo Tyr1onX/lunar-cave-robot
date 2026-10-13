@@ -26,7 +26,7 @@ struct ConsoleRootView: View {
                     .frame(width: 42, height: 42)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("LUNAR CONSOLE").font(.system(size: 12, weight: .bold, design: .rounded)).tracking(1.1)
-                        Text("机器人只读监控").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        Text("机器人测试与可视化").font(.system(size: 11)).foregroundStyle(Palette.muted)
                     }
                 }
                 .padding(.horizontal, 17)
@@ -89,7 +89,7 @@ struct ConsoleRootView: View {
                 ScrollView {
                     Group {
                         switch model.section {
-                        case .overview: OverviewView(model: model)
+                        case .cockpit: TestCockpitView(model: model)
                         case .diagnostics: DiagnosticsView(model: model)
                         case .history: HistoryView(model: model)
                         }

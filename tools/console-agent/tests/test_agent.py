@@ -128,6 +128,28 @@ class AgentHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         collector.assert_called_once_with(200)
 
+    def test_vision_endpoint_reports_only_observed_source_state(self) -> None:
+        payload = {"status": "ok", "source": "nuc-ros2-read-only-subscriber", "streams": [{"id": "rgb", "status": "unavailable", "frame_rate_hz": None}]}
+        with patch("console_agent.server.collect_vision", return_value=payload):
+            status, headers, body = self.request("GET", "/v1/vision")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
+        self.assertEqual(json.loads(body), payload)
+
+    def test_vision_frame_is_a_no_store_png(self) -> None:
+        with patch("console_agent.server.collect_vision_frame", return_value=(b"\x89PNG\r\n\x1a\n", None, None)):
+            status, headers, body = self.request("GET", "/v1/vision/rgb/frame.png")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertTrue(body.startswith(b"\x89PNG"))
+
+    def test_vision_frame_reports_missing_data_without_fabricating_an_image(self) -> None:
+        with patch("console_agent.server.collect_vision_frame", return_value=(None, "no frame", 503)):
+            status, _, body = self.request("GET", "/v1/vision/depth/frame.png")
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"status": "unavailable", "reason": "no frame"})
+
     def test_unknown_route_and_write_methods_are_rejected(self) -> None:
         self.assertEqual(self.request("GET", "/run?command=id")[0], 404)
         status, headers, _ = self.request("POST", "/v1/snapshot")
