@@ -16,6 +16,7 @@ struct ConsoleRootView: View {
     @ObservedObject var model: ConsoleModel
     @StateObject private var simulator = SimulationModel()
     @StateObject private var armPreview = ArmPreviewModel()
+    @StateObject private var moduleTests = ModuleTestsModel()
 
     var body: some View {
         NavigationSplitView {
@@ -94,6 +95,7 @@ struct ConsoleRootView: View {
                     Group {
                         switch model.section {
                         case .cockpit: TestCockpitView(model: model)
+                        case .moduleTests: ModuleTestsView(model: moduleTests)
                         case .simulation: SimulationDriveView(model: simulator)
                         case .armPreview: ArmPreviewView(model: armPreview)
                         case .diagnostics: DiagnosticsView(model: model)
