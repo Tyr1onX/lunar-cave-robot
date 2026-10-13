@@ -179,7 +179,10 @@ def _check_p7_scenarios(repo: Path) -> list[str]:
 
 
 def _check_device_observer(repo: Path) -> list[str]:
-    issues = _check_script_files(repo, ("tools/module-tests/scripts/observe_ros_device.py",))
+    issues = _check_script_files(repo, (
+        "tools/module-tests/scripts/observe_ros_device.py",
+        "tools/module-tests/scripts/run_ros_readonly_check.sh",
+    ))
     if not Path("/opt/ros/humble/setup.bash").is_file():
         issues.append("缺少 ROS 2 Humble：/opt/ros/humble/setup.bash")
     try:
@@ -285,7 +288,7 @@ def _fixed_script_command(relative: str, parameters: dict[str, Any]) -> Callable
 
 def _device_command(device: str) -> Callable[[Path], tuple[list[str], dict[str, Any], str | None]]:
     def command(repo: Path) -> tuple[list[str], dict[str, Any], str | None]:
-        return [sys.executable, str(_script(repo, "tools/module-tests/scripts/observe_ros_device.py")), "--device", device], {
+        return ["/bin/bash", str(_script(repo, "tools/module-tests/scripts/run_ros_readonly_check.sh")), "--device", device], {
             "device_profile": device,
             "ros_domain_id": 0,
             "ros_localhost_only": "1",

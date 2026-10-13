@@ -163,6 +163,8 @@ class ModuleTestHTTPTests(unittest.TestCase):
             spec_item = specs[test_id]
             command, parameters, _model = spec_item.command(self.root)
             self.assertEqual(command[-2:], ["--device", device])
+            self.assertEqual(command[0], "/bin/bash")
+            self.assertTrue(command[1].endswith("run_ros_readonly_check.sh"))
             self.assertEqual(spec_item.ros_domain_id, 0)
             self.assertEqual(parameters["ros_localhost_only"], "1")
             self.assertIn("no driver", parameters["observation"])
