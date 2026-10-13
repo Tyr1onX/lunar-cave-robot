@@ -15,6 +15,7 @@ enum Palette {
 struct ConsoleRootView: View {
     @ObservedObject var model: ConsoleModel
     @StateObject private var simulator = SimulationModel()
+    @StateObject private var armPreview = ArmPreviewModel()
 
     var body: some View {
         NavigationSplitView {
@@ -86,7 +87,7 @@ struct ConsoleRootView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 240)
         } detail: {
             VStack(spacing: 0) {
-                if model.section != .simulation {
+                if model.section != .simulation && model.section != .armPreview {
                     ConsoleHeader(model: model)
                 }
                 ScrollView {
@@ -94,6 +95,7 @@ struct ConsoleRootView: View {
                         switch model.section {
                         case .cockpit: TestCockpitView(model: model)
                         case .simulation: SimulationDriveView(model: simulator)
+                        case .armPreview: ArmPreviewView(model: armPreview)
                         case .diagnostics: DiagnosticsView(model: model)
                         case .history: HistoryView(model: model)
                         }
@@ -107,7 +109,10 @@ struct ConsoleRootView: View {
             .background(Palette.background)
         }
         .tint(Palette.accent)
-        .onDisappear { simulator.stop() }
+        .onDisappear {
+            simulator.stop()
+            armPreview.stop()
+        }
     }
 }
 

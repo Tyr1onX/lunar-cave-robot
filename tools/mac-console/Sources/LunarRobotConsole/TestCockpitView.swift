@@ -120,10 +120,10 @@ struct TestCockpitView: View {
                         }
                     }
 
-                    Panel(title: "后续测试区", subtitle: "接入前保持明确不可用") {
+                    Panel(title: "模块测试区", subtitle: "离线机械臂可查看；真实设备仍待验收") {
                         VStack(alignment: .leading, spacing: 11) {
+                            PreviewRow(title: "机械臂离线姿态", detail: "六轴与夹爪 SIMULATION · 左侧选择「机械臂预览」")
                             ReservedRow(title: "MID-360 点云 / IMU", reason: "尚未接入可验证的只读可视化流")
-                            ReservedRow(title: "机械臂姿态 / 模块测试", reason: "等待独立数据契约与验收")
                             ReservedRow(title: "实体运动控制", reason: "保持锁定；WASD 仅在单独的模拟驾驶区可用")
                         }
                     }
@@ -254,6 +254,23 @@ private struct ReservedRow: View {
                 Text("不可用").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.warning)
             }
             Text(reason).font(.system(size: 8)).foregroundStyle(Palette.muted).padding(.leading, 17)
+        }
+    }
+}
+
+private struct PreviewRow: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Image(systemName: "cube.transparent").foregroundStyle(Palette.accent)
+                Text(title).font(.system(size: 10, weight: .medium))
+                Spacer()
+                Text("SIMULATION").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.accent)
+            }
+            Text(detail).font(.system(size: 8)).foregroundStyle(Palette.muted).padding(.leading, 17)
         }
     }
 }
