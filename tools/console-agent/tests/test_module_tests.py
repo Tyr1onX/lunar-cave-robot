@@ -169,6 +169,12 @@ class ModuleTestHTTPTests(unittest.TestCase):
             self.assertEqual(parameters["ros_localhost_only"], "1")
             self.assertIn("no driver", parameters["observation"])
 
+    def test_live_observer_uses_executor_bound_to_its_context(self) -> None:
+        repo = Path(__file__).resolve().parents[3]
+        observer = (repo / "tools/module-tests/scripts/observe_ros_device.py").read_text(encoding="utf-8")
+        self.assertIn("SingleThreadedExecutor(context=context)", observer)
+        self.assertNotIn("rclpy.spin_once(node", observer)
+
     def test_runner_rejects_non_loopback_bind_configuration(self) -> None:
         from unittest.mock import patch
 

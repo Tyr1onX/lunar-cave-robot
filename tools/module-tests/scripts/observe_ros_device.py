@@ -62,6 +62,7 @@ def main() -> int:
 
     import rclpy
     from rclpy.context import Context
+    from rclpy.executors import SingleThreadedExecutor
     from rclpy.qos import qos_profile_sensor_data
 
     context = Context()
@@ -72,6 +73,8 @@ def main() -> int:
         start_parameter_services=False,
         enable_rosout=False,
     )
+    executor = SingleThreadedExecutor(context=context)
+    executor.add_node(node)
     samples: dict[str, list[str]] = defaultdict(list)
     received: dict[str, int] = defaultdict(int)
     diagnostics: list[str] = []
@@ -83,7 +86,7 @@ def main() -> int:
         topics = topic_map()
         discovery_deadline = time.monotonic() + 0.75
         while time.monotonic() < discovery_deadline:
-            rclpy.spin_once(node, timeout_sec=0.05)
+            executor.spin_once(timeout_sec=0.05)
             topics = topic_map()
 
         for topic, message_type in profile["sample"]:
@@ -124,7 +127,7 @@ def main() -> int:
         started = time.monotonic()
         deadline = time.monotonic() + OBSERVATION_SECONDS
         while time.monotonic() < deadline:
-            rclpy.spin_once(node, timeout_sec=0.05)
+            executor.spin_once(timeout_sec=0.05)
             topics = topic_map()
         observed_seconds = max(0.001, time.monotonic() - started)
         for topic in profile["topics"]:
@@ -155,7 +158,7 @@ def main() -> int:
         if diagnostics_subscribed:
             diag_deadline = time.monotonic() + 0.25
             while time.monotonic() < diag_deadline:
-                rclpy.spin_once(node, timeout_sec=0.05)
+                executor.spin_once(timeout_sec=0.05)
         if diagnostics:
             for detail in diagnostics[-20:]:
                 print(f"DIAGNOSTIC {detail}")
@@ -167,6 +170,8 @@ def main() -> int:
     finally:
         for subscription in subscriptions:
             node.destroy_subscription(subscription)
+        executor.remove_node(node)
+        executor.shutdown()
         node.destroy_node()
         if context.ok():
             rclpy.shutdown(context=context)
