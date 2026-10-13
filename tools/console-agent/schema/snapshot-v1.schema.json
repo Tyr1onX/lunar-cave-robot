@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tyr1onX/lunar-cave-robot/tools/console-agent/schema/snapshot-v1.schema.json",
+  "title": "Lunar Console NUC snapshot v1",
+  "type": "object",
+  "required": ["schema_version", "collected_at", "source", "host", "system", "git", "deployment", "ros", "tests", "safety"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "source": {"const": "nuc-read-only-agent"},
+    "host": {"type": "object", "required": ["hostname", "platform", "os_release"], "properties": {"hostname": {"type": "string"}, "platform": {"type": "string"}, "os_release": {"type": "array", "items": {"type": "string"}}}},
+    "system": {"type": "object", "required": ["cpu", "memory", "disk", "temperature"]},
+    "git": {"type": "object", "required": ["status"]},
+    "deployment": {"type": "object", "required": ["status"]},
+    "ros": {"type": "object", "required": ["status", "domain_id", "nodes", "topics"]},
+    "tests": {"type": "object", "required": ["status", "records"]},
+    "safety": {"type": "object", "required": ["physical_estop", "hardware_health", "control"]}
+  },
+  "additionalProperties": false
+}
