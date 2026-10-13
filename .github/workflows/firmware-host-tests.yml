@@ -1,0 +1,44 @@
+name: Firmware host tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware-host-tests:
+    name: Host-only firmware logic
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run chassis protocol parser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_STATE_HOME="$RUNNER_TEMP/lunar-cave-ci-state"
+          firmware/chassis/tests/host/run.sh "$RUNNER_TEMP/lunar-cave-chassis-host"
+
+      - name: Run safety FSM tests when present
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_STATE_HOME="$RUNNER_TEMP/lunar-cave-ci-state"
+          if [[ -f firmware/chassis/tests/host/test_chassis_safety.c ]]; then
+            cc -std=c11 -Wall -Wextra -Werror -pedantic -Ifirmware/chassis/User/APP -Ifirmware/chassis/User/Bsp firmware/chassis/tests/host/test_chassis_safety.c firmware/chassis/User/APP/chassis_safety.c -o "$RUNNER_TEMP/lunar-cave-chassis-safety"
+            "$RUNNER_TEMP/lunar-cave-chassis-safety"
+          else
+            echo "Chassis safety FSM test is not present on this revision."
+          fi
+          if [[ -x firmware/arm/tests/host/run_safety_state_tests.sh ]]; then
+            firmware/arm/tests/host/run_safety_state_tests.sh "$RUNNER_TEMP/lunar-cave-arm-safety"
+          else
+            echo "Arm safety FSM host runner is not present on this revision."
+          fi
