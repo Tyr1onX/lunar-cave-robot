@@ -13,7 +13,7 @@ P9-B 基于 `main` `ea3f64bd37d0372ad878adaf5a33b1dc73bea38c`，在 `p9b/stm32-b
 
 ThinkBook 两轮 P7 完整离线场景各 12/12 通过；P4f/P6 构建、PTY 驱动、10 项逻辑/静态检查、规划取消竞态及六个 P6 场景通过。测试使用独立 ROS domain、新结果路径、PTY 和合成数据，不连接实体执行器。P7 的 DWB 离线地图配置与 Humble CLI daemon 清理原因、场景耗时、验证目录和源码 SHA-256 见 [P9-C 离线验证](P9C_OFFLINE_VALIDATION.md)。机械臂物理保持、实体急停、底盘制动和实机传感器链路仍未验收。
 
-P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`。STM32 安全状态机 PR #8 仍基于 P9-B PR #6 独立等待硬件负责人审查；主机测试与底盘交叉编译不代表物理停止或保持已验证。
+P9-C 软件 PR #7 已于 `a0c20df34b1b00cc6a00bea30df13d7ebb02f073` 合并到 `main`；P9-B PR #6 后续以 merge commit `07a56c3a33882aa2866f1076d8597776e2579bcb` 合入。STM32 安全状态机 PR #8 当前直接以 `main` 为基线并保持开放，等待缺失的机械臂 XRobot 产品输入及硬件负责人对电机失能、重力负载保持和独立急停策略的确认。ThinkBook 在 `main` SHA `07a56c3` 完成 P7/P8 12/12；ThinkBook 与 NUC 的 ROS 工作区均构建通过。主机测试与固件交叉编译不代表物理停止或保持已验证。
 
 以下 P9-A 和更早章节是历史审计记录；若与本节的后续构建结论冲突，以 P9-C 的验证记录为准。
 
