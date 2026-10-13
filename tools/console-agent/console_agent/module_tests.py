@@ -214,7 +214,7 @@ class TestManager:
                 "timeout_seconds": spec.timeout_seconds,
             })
         with self._lock:
-            active = any(run["status"] in {"running", "cancelling"} for run in self._runs.values())
+            active = any(run["record"]["status"] in {"running", "cancelling"} for run in self._runs.values())
         return {"service": "lunar-console-module-test-runner", "source": "nuc-restricted-module-test-runner", "tests": tests, "busy": active, "collected_at": utc_now()}
 
     def start(self, test_id: str) -> tuple[dict[str, Any] | None, str | None, int]:

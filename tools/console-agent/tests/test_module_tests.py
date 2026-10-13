@@ -79,6 +79,7 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertIn("offline test passed", record["log_text"])
         self.assertTrue(Path(str(record["report_file"])).is_file())
         self.assertTrue(Path(str(record["log_file"])).is_file())
+        self.assertFalse(self.manager.catalog()["busy"])
         report_status, _, report_body = self.request("GET", f"/v1/tests/{run_id}/report")
         self.assertEqual(report_status, 200)
         self.assertEqual(json.loads(report_body)["result"], "passed")
