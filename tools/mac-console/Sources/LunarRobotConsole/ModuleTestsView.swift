@@ -24,6 +24,7 @@ struct ModuleTestDefinition: Decodable, Identifiable {
 private struct ModuleTestStart: Decodable {
     let runId: String
     let testId: String
+    let mode: String
     let status: String
 }
 
@@ -35,6 +36,7 @@ private struct ModuleTestLogChunk: Decodable {
 struct ModuleTestRun: Decodable {
     let runId: String
     let testId: String
+    let mode: String
     let status: String
     let result: String
     let codeSha: String?
@@ -155,7 +157,7 @@ final class ModuleTestsModel: ObservableObject {
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 let started = try decoder.decode(ModuleTestStart.self, from: data)
-                self.run = ModuleTestRun(runId: started.runId, testId: started.testId, status: started.status,
+                self.run = ModuleTestRun(runId: started.runId, testId: started.testId, mode: started.mode, status: started.status,
                                          result: started.status, codeSha: nil, codeDirty: nil, startedAt: "", finishedAt: nil,
                                          durationMs: nil, reason: nil)
                 self.logs = []
@@ -253,7 +255,10 @@ final class ModuleTestsModel: ObservableObject {
 
                 if finished {
                     switch received.status {
-                    case "passed": message = "测试通过 · OFFLINE，不代表实机验收"
+                    case "passed":
+                        message = received.mode == "LIVE"
+                            ? "LIVE 只读连接检查完成 · 仅为状态快照，不代表实机验收"
+                            : "测试通过 · \(received.mode)，不代表实机验收"
                     case "cancelled": message = "测试已停止；NUC 已清理子进程"
                     case "timed_out": message = received.reason ?? "测试超时；NUC 已清理子进程"
                     default: message = received.reason ?? "测试失败 · 请查看日志"
