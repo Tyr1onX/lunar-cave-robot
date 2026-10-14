@@ -84,6 +84,47 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(report_status, 200)
         self.assertEqual(json.loads(report_body)["result"], "passed")
 
+    def test_running_report_is_persisted_before_child_finishes(self) -> None:
+        self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
+        started, error, status = self.manager.start("safe_check")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        report_path = Path(str(started["report_file"]))
+        self.assertTrue(report_path.is_file())
+        self.assertEqual(json.loads(report_path.read_text(encoding="utf-8"))["status"], "running")
+        self.request("POST", f"/v1/tests/{started['run_id']}/cancel")
+        self.wait_for(str(started["run_id"]), {"cancelled"})
+
+    def test_service_restart_recovers_interrupted_report_and_history(self) -> None:
+        report_dir = self.root / "reports"
+        report_dir.mkdir()
+        run_id = "a" * 32
+        record = {
+            "schema_version": 1, "run_id": run_id, "test_id": "safe_check", "title": "Safe check",
+            "mode": "OFFLINE", "status": "running", "result": "running", "started_at": "2026-10-14T00:00:00Z",
+            "code_sha": "abc123", "log_text": "", "log_file": str(report_dir / f"{run_id}.log"),
+            "report_file": str(report_dir / f"{run_id}.json"),
+        }
+        (report_dir / f"{run_id}.json").write_text(json.dumps(record), encoding="utf-8")
+        (report_dir / f"{run_id}.log").write_text("partial output\n", encoding="utf-8")
+        restored = TestManager(repo=self.root, state_root=report_dir, specs=(spec(self.script),))
+        report = restored.report(run_id)
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["status"], "interrupted")
+        self.assertIn("partial output", report["log_text"])
+        self.assertEqual(restored.logs(run_id, 0)["lines"][-1].startswith("[INTERRUPTED]"), True)
+        self.server.manager = restored
+        status, _, body = self.request("GET", "/v1/tests/reports?limit=5")
+        self.assertEqual(status, 200)
+        history = json.loads(body)["reports"]
+        self.assertEqual(history[0]["run_id"], run_id)
+        self.assertEqual(history[0]["status"], "interrupted")
+        status, _, body = self.request("GET", f"/v1/tests/{run_id}/report")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["result"], "interrupted")
+
     def test_rejects_second_run_while_one_is_active(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
         status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
@@ -112,6 +153,34 @@ class ModuleTestHTTPTests(unittest.TestCase):
         record = self.wait_for(run_id, {"cancelled"})
         self.assertNotIsInstance(child.poll(), type(None))
         self.assertEqual(record["result"], "cancelled")
+
+    def test_p7_runs_with_conservative_build_limits_and_resource_record(self) -> None:
+        from console_agent.module_tests import RESOURCE_LIMITS
+
+        self.script.write_text(
+            "import os\nprint('P7_BUILD_JOBS=' + os.environ['P7_BUILD_JOBS'])\n"
+            "print('MAKEFLAGS=' + os.environ['MAKEFLAGS'])\n"
+            "print('P7_RESULTS_DIR=' + os.environ['P7_RESULTS_DIR'])\n",
+            encoding="utf-8",
+        )
+        p7_spec = TestSpec(
+            id="p7_scenarios", title="P7", description="test", mode="SIMULATION",
+            input_source="synthetic PTY", prerequisites=("ROS",), timeout_seconds=5,
+            command=lambda _repo: ([sys.executable, str(self.script)], {"suite": "12 scenarios"}, None),
+            check=lambda _repo: [],
+        )
+        manager = TestManager(repo=self.root, state_root=self.root / "p7-reports", specs=(p7_spec,))
+        started, error, status = manager.start("p7_scenarios")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        completed = self.wait_for(str(started["run_id"]), {"passed"}, manager=manager)
+        self.assertEqual(completed["parameters"]["resource_limits"], RESOURCE_LIMITS)
+        self.assertIn("P7_BUILD_JOBS=2", completed["log_text"])
+        self.assertIn("MAKEFLAGS=-j2", completed["log_text"])
+        self.assertIn(completed["parameters"]["persistent_scenario_results"], completed["log_text"])
+        self.assertIn("host_before", completed["resource_usage"])
+        self.assertIn("host_after", completed["resource_usage"])
 
     def test_timeout_kills_child_and_records_timed_out(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
@@ -188,6 +257,10 @@ class ModuleTestHTTPTests(unittest.TestCase):
         families = next(line for line in installer.splitlines() if '"RestrictAddressFamilies=' in line)
         self.assertIn("AF_NETLINK", families)
         self.assertNotIn("AF_PACKET", families)
+        self.assertIn('"CPUQuota=300%"', installer)
+        self.assertIn('"MemoryHigh=8G"', installer)
+        self.assertIn('"MemoryMax=10G"', installer)
+        self.assertIn('"KillMode=control-group"', installer)
 
     def test_report_captures_model_digest_when_a_registered_test_uses_one(self) -> None:
         model_dir = self.root / "model"

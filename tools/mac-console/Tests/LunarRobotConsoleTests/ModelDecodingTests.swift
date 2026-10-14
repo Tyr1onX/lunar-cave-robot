@@ -52,5 +52,10 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(report.status, "passed")
         XCTAssertEqual(report.durationMs, 1000)
         XCTAssertEqual(report.codeSha?.count, 40)
+
+        let historyData = Data(#"{"reports":[{"run_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","test_id":"p7_scenarios","title":"P7 PTY 仿真","mode":"SIMULATION","status":"interrupted","result":"interrupted","code_sha":"0123456789012345678901234567890123456789","started_at":"2026-10-14T05:00:00Z","finished_at":"2026-10-14T05:02:00Z","duration_ms":120000,"reason":"service restart"}]}"#.utf8)
+        let history = try decoder.decode(ModuleTestHistoryResponse.self, from: historyData)
+        XCTAssertEqual(history.reports.first?.testId, "p7_scenarios")
+        XCTAssertEqual(history.reports.first?.status, "interrupted")
     }
 }

@@ -33,6 +33,25 @@ private struct ModuleTestLogChunk: Decodable {
     let cursor: Int
 }
 
+struct ModuleTestHistoryResponse: Decodable {
+    let reports: [ModuleTestHistoryItem]
+}
+
+struct ModuleTestHistoryItem: Decodable, Identifiable {
+    let runId: String
+    let testId: String
+    let title: String
+    let mode: String
+    let status: String
+    let result: String
+    let codeSha: String?
+    let startedAt: String
+    let finishedAt: String?
+    let durationMs: Int?
+    let reason: String?
+    var id: String { runId }
+}
+
 struct ModuleTestRun: Decodable {
     let runId: String
     let testId: String
@@ -52,6 +71,7 @@ final class ModuleTestsModel: ObservableObject {
     @Published private(set) var catalog: ModuleTestCatalog?
     @Published private(set) var selectedTestID: String?
     @Published private(set) var run: ModuleTestRun?
+    @Published private(set) var history: [ModuleTestHistoryItem] = []
     @Published private(set) var logs: [String] = []
     @Published private(set) var runnerOnline = false
     @Published private(set) var checkingEnvironment = false
@@ -86,7 +106,7 @@ final class ModuleTestsModel: ObservableObject {
 
     var canSaveReport: Bool {
         guard let status = run?.status else { return false }
-        return ["passed", "failed", "cancelled", "timed_out"].contains(status)
+        return ["passed", "failed", "cancelled", "timed_out", "interrupted"].contains(status)
     }
 
     func start() {
@@ -211,6 +231,31 @@ final class ModuleTestsModel: ObservableObject {
         }
     }
 
+    func loadReport(_ item: ModuleTestHistoryItem, allowActive: Bool = false) async {
+        guard !isRunning || allowActive else { return }
+        do {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/tests/\(item.runId)/report"))
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.cannotParseResponse) }
+            let received = try decoder.decode(ModuleTestRun.self, from: data)
+            var components = URLComponents(url: apiRoot.appendingPathComponent("v1/tests/\(item.runId)/logs"), resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "after", value: "0")]
+            let (logData, logResponse) = try await session.data(from: components.url!)
+            guard let logHTTP = logResponse as? HTTPURLResponse, logHTTP.statusCode == 200 else { throw URLError(.cannotParseResponse) }
+            let chunk = try decoder.decode(ModuleTestLogChunk.self, from: logData)
+            run = received
+            selectedTestID = item.testId
+            logs = chunk.lines
+            logCursor = chunk.cursor
+            message = received.status == "interrupted"
+                ? "已恢复中断报告 · NUC 服务重启时测试被标记为中断"
+                : "已载入历史报告 · \(received.mode)"
+        } catch {
+            message = "历史报告读取失败 · \(error.localizedDescription)"
+        }
+    }
+
     private func refreshCatalog() async {
         do {
             let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/tests/catalog"))
@@ -220,6 +265,7 @@ final class ModuleTestsModel: ObservableObject {
             let received = try decoder.decode(ModuleTestCatalog.self, from: data)
             catalog = received
             runnerOnline = true
+            await refreshHistory()
             if let selectedTestID, !received.tests.contains(where: { $0.id == selectedTestID }) {
                 self.selectedTestID = nil
             }
@@ -230,8 +276,24 @@ final class ModuleTestsModel: ObservableObject {
         }
     }
 
+    private func refreshHistory() async {
+        do {
+            let url = apiRoot.appendingPathComponent("v1/tests/reports")
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "limit", value: "12")]
+            let (data, response) = try await session.data(from: components.url!)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            history = try decoder.decode(ModuleTestHistoryResponse.self, from: data).reports
+        } catch {
+            history = []
+        }
+    }
+
     private func pollRun(_ runID: String) async {
         var finished = false
+        var consecutiveFailures = 0
         while !Task.isCancelled && !finished {
             do {
                 let statusURL = apiRoot.appendingPathComponent("v1/tests/\(runID)")
@@ -241,7 +303,8 @@ final class ModuleTestsModel: ObservableObject {
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 let received = try decoder.decode(ModuleTestRun.self, from: statusData)
                 run = received
-                if received.status == "passed" || received.status == "failed" || received.status == "cancelled" || received.status == "timed_out" {
+                consecutiveFailures = 0
+                if ["passed", "failed", "cancelled", "timed_out", "interrupted"].contains(received.status) {
                     finished = true
                 }
 
@@ -260,12 +323,21 @@ final class ModuleTestsModel: ObservableObject {
                             ? "LIVE 只读连接检查完成 · 仅为状态快照，不代表实机验收"
                             : "测试通过 · \(received.mode)，不代表实机验收"
                     case "cancelled": message = "测试已停止；NUC 已清理子进程"
+                    case "interrupted": message = received.reason ?? "服务重启期间测试中断；报告和日志已恢复"
                     case "timed_out": message = received.reason ?? "测试超时；NUC 已清理子进程"
                     default: message = received.reason ?? "测试失败 · 请查看日志"
                     }
                 }
             } catch {
                 message = "测试状态暂不可读 · \(error.localizedDescription)"
+                consecutiveFailures += 1
+                if consecutiveFailures >= 2 {
+                    await refreshCatalog()
+                    if let item = history.first(where: { $0.runId == runID }) {
+                        await loadReport(item, allowActive: true)
+                        finished = run?.status != "running" && run?.status != "cancelling"
+                    }
+                }
             }
             if !finished { try? await Task.sleep(for: .milliseconds(450)) }
         }
@@ -348,6 +420,31 @@ struct ModuleTestsView: View {
                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(16)
                     .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            if !model.history.isEmpty {
+                Text("最近测试报告").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
+                ForEach(model.history.prefix(8)) { report in
+                    Button {
+                        Task { await model.loadReport(report) }
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: report.status == "passed" ? "checkmark.circle.fill" : "doc.text.magnifyingglass")
+                                .foregroundStyle(report.status == "passed" ? Palette.accent : Palette.warning)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(report.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                                Text("\(report.mode) · \(report.status.uppercased()) · \(String(report.startedAt.prefix(16)))")
+                                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.muted)
+                        }
+                        .padding(10)
+                        .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isRunning)
+                }
             }
 
             Text("后续实机运动验收").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)

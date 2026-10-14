@@ -7,7 +7,7 @@ RESULTS="${P7_RESULTS_DIR:-/tmp/p7-end-to-end-results}"
 # Use a fresh local DDS domain range for each full suite invocation. Reusing a
 # fixed range can cross-talk with another local ROS 2 session on the same host.
 DOMAIN_START="${P7_DOMAIN_START:-$((2 + $$ % 89))}"
-BUILD_JOBS="${P7_BUILD_JOBS:-4}"
+BUILD_JOBS="${P7_BUILD_JOBS:-2}"
 NAV_TIMEOUT="${P7_NAV_TIMEOUT_SEC:-90}"
 MISSION_TIMEOUT="${P7_MISSION_TIMEOUT_SEC:-300}"
 

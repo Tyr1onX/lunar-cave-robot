@@ -27,6 +27,12 @@ MAX_LOG_BYTES = 1_048_576
 MAX_RUNS = 40
 PROCESS_CLEANUP_GRACE_SECONDS = 8.0
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+RESOURCE_LIMITS = {
+    "cpu_quota_percent": 300,
+    "memory_high_bytes": 8 * 1024**3,
+    "memory_max_bytes": 10 * 1024**3,
+    "build_jobs": 2,
+}
 
 
 def utc_now() -> str:
@@ -85,6 +91,83 @@ def _model_digest(model_dir: str | None, should_stop: Callable[[], bool], deadli
                     break
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _host_resources() -> dict[str, Any]:
+    snapshot: dict[str, Any] = {"load_average_1m": None, "memory_total_bytes": None, "memory_available_bytes": None, "thermal_zones_c": {}}
+    try:
+        snapshot["load_average_1m"] = round(os.getloadavg()[0], 2)
+    except (AttributeError, OSError):
+        pass
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            key, _, value = line.partition(":")
+            if key in {"MemTotal", "MemAvailable"}:
+                snapshot[f"memory_{'total' if key == 'MemTotal' else 'available'}_bytes"] = int(value.split()[0]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    for zone in Path("/sys/class/thermal").glob("thermal_zone*"):
+        try:
+            kind = (zone / "type").read_text(encoding="ascii").strip() or zone.name
+            value = int((zone / "temp").read_text(encoding="ascii").strip())
+            snapshot["thermal_zones_c"][kind] = round(value / 1000, 1)
+        except (OSError, ValueError):
+            continue
+    return snapshot
+
+
+def _process_tree_usage(root_pid: int, seen_cpu_ticks: dict[tuple[int, int], int]) -> tuple[int, int]:
+    """Return current descendant RSS and cumulative observed CPU time for one test process tree."""
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return 0, 0
+    processes: dict[int, tuple[int, int, int, int]] = {}
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="ascii")
+            tail = stat[stat.rfind(")") + 2:].split()
+            # tail starts at stat field 3 (state): ppid=field 4, utime/stime=14/15, starttime=22.
+            ppid = int(tail[1])
+            cpu_ticks = int(tail[11]) + int(tail[12])
+            start_ticks = int(tail[19])
+            rss_kib = 0
+            for line in (entry / "status").read_text(encoding="ascii").splitlines():
+                if line.startswith("VmRSS:"):
+                    rss_kib = int(line.split()[1])
+                    break
+            processes[int(entry.name)] = (ppid, cpu_ticks, start_ticks, rss_kib)
+        except (OSError, ValueError, IndexError):
+            continue
+    descendants = {root_pid}
+    changed = True
+    while changed:
+        changed = False
+        for pid, (ppid, _cpu, _start, _rss) in processes.items():
+            if pid not in descendants and ppid in descendants:
+                descendants.add(pid)
+                changed = True
+    rss_bytes = 0
+    ticks_per_second = os.sysconf("SC_CLK_TCK")
+    for pid in descendants:
+        row = processes.get(pid)
+        if row is None:
+            continue
+        _ppid, cpu_ticks, start_ticks, rss_kib = row
+        identity = (pid, start_ticks)
+        seen_cpu_ticks[identity] = max(seen_cpu_ticks.get(identity, 0), cpu_ticks)
+        rss_bytes += rss_kib * 1024
+    cpu_ms = round(sum(seen_cpu_ticks.values()) * 1000 / ticks_per_second)
+    return rss_bytes, cpu_ms
+
+
+def _elapsed_ms(started_at: str) -> int | None:
+    try:
+        parsed = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        return max(0, round((datetime.now(timezone.utc) - parsed).total_seconds() * 1000))
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -365,6 +448,69 @@ class TestManager:
         self.specs = {item.id: item for item in specs}
         self._lock = threading.RLock()
         self._runs: dict[str, dict[str, Any]] = {}
+        self._restore_reports()
+
+    def _restore_reports(self) -> None:
+        if not self.state_root.is_dir():
+            return
+        reports: list[tuple[float, dict[str, Any]]] = []
+        for path in self.state_root.glob("*.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or not RUN_ID_RE.fullmatch(str(record.get("run_id", ""))):
+                continue
+            run_id = str(record["run_id"])
+            log_path = self.state_root / f"{run_id}.log"
+            record["report_file"] = str(path)
+            record["log_file"] = str(log_path)
+            if record.get("status") in {"running", "cancelling"}:
+                record.update({
+                    "status": "interrupted",
+                    "result": "interrupted",
+                    "finished_at": utc_now(),
+                    "duration_ms": _elapsed_ms(str(record.get("started_at", ""))),
+                    "reason": "受限测试服务重启时测试中断；systemd 已清理该服务的子进程。",
+                })
+                try:
+                    with log_path.open("ab") as handle:
+                        handle.write(b"\n[INTERRUPTED] test runner restarted; child process cleanup is managed by systemd.\n")
+                except OSError:
+                    record["reason"] += " 测试日志文件无法追加恢复标记。"
+            try:
+                log_bytes = b""
+                log_bytes = log_path.read_bytes()[-MAX_LOG_BYTES:]
+                log_text = log_bytes.decode("utf-8", errors="replace")
+            except OSError:
+                log_text = str(record.get("log_text", ""))
+            lines = log_text.splitlines()
+            record["log_text"] = log_text
+            record["log_truncated"] = bool(record.get("log_truncated", False)) or len(log_bytes) >= MAX_LOG_BYTES
+            record["log_lines_truncated"] = bool(record.get("log_lines_truncated", False)) or len(lines) > 5000
+            reports.append((path.stat().st_mtime, record))
+            if record.get("status") == "interrupted":
+                try:
+                    self._save_report(record)
+                except OSError:
+                    pass
+        for _modified, record in sorted(reports, key=lambda item: item[0], reverse=True)[:MAX_RUNS]:
+            run_id = record["run_id"]
+            lines = str(record.get("log_text", "")).splitlines()
+            discarded = max(0, len(lines) - 5000)
+            self._runs[run_id] = {
+                "record": record,
+                "spec": self.specs.get(str(record.get("test_id", ""))),
+                "command": [],
+                "model_dir": None,
+                "logs": lines[-5000:],
+                "log_bytes": min(MAX_LOG_BYTES, len(str(record.get("log_text", "")).encode("utf-8"))),
+                "discarded_lines": discarded,
+                "cancel": threading.Event(),
+                "process": None,
+                "thread": None,
+                "seen_cpu_ticks": {},
+            }
 
     def catalog(self) -> dict[str, Any]:
         tests: list[dict[str, Any]] = []
@@ -385,6 +531,13 @@ class TestManager:
         with self._lock:
             active = any(run["record"]["status"] in {"running", "cancelling"} for run in self._runs.values())
         return {"service": "lunar-console-module-test-runner", "source": "nuc-restricted-module-test-runner", "tests": tests, "busy": active, "collected_at": utc_now()}
+
+    def history(self, limit: int = 20) -> dict[str, Any]:
+        with self._lock:
+            records = [run["record"] for run in self._runs.values()]
+            ordered = sorted(records, key=lambda item: item.get("started_at", ""), reverse=True)[:max(1, min(limit, MAX_RUNS))]
+            summary_keys = ("run_id", "test_id", "title", "mode", "status", "result", "code_sha", "started_at", "finished_at", "duration_ms", "reason")
+            return {"reports": [{key: record.get(key) for key in summary_keys} for record in ordered]}
 
     def start(self, test_id: str) -> tuple[dict[str, Any] | None, str | None, int]:
         spec = self.specs.get(test_id)
@@ -440,6 +593,12 @@ class TestManager:
                 "LIVE": "只读检查既有本机 ROS Topic；不启动驱动或发送控制。",
             }.get(spec.mode, "")
             self._write_log(run_id, f"[{spec.mode}] {mode_note}\n")
+            try:
+                record["log_text"] = "\n".join(run["logs"])
+                self._save_report(record)
+            except OSError as exc:
+                self._runs.pop(run_id, None)
+                return None, f"无法保存初始测试报告：{type(exc).__name__}", 507
             worker = threading.Thread(target=self._execute, args=(run_id,), name=f"module-test-{spec.id}", daemon=True)
             run["thread"] = worker
             worker.start()
@@ -499,6 +658,29 @@ class TestManager:
         child_env["ROS_LOCALHOST_ONLY"] = "1"
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         child_env["YOLO_AUTOINSTALL"] = "false"
+        if spec.id in {"p6_scenarios", "p7_scenarios"}:
+            child_env.update({
+                "P6_BUILD_JOBS": str(RESOURCE_LIMITS["build_jobs"]),
+                "P7_BUILD_JOBS": str(RESOURCE_LIMITS["build_jobs"]),
+                "CMAKE_BUILD_PARALLEL_LEVEL": str(RESOURCE_LIMITS["build_jobs"]),
+                "MAKEFLAGS": f"-j{RESOURCE_LIMITS['build_jobs']}",
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_MAX_THREADS": "1",
+            })
+            scenario_results = self.state_root / "scenario-runs" / spec.id / run_id
+            if spec.id == "p6_scenarios":
+                child_env["P6_RESULTS_DIR"] = str(scenario_results)
+            else:
+                child_env["P7_RESULTS_DIR"] = str(scenario_results)
+            with self._lock:
+                run["record"]["parameters"]["resource_limits"] = dict(RESOURCE_LIMITS)
+                run["record"]["parameters"]["persistent_scenario_results"] = str(scenario_results)
+        resources: dict[str, Any] | None = None
+        if spec.id in {"p6_scenarios", "p7_scenarios"}:
+            resources = {"host_before": _host_resources(), "peak_process_tree_rss_bytes": 0, "process_tree_cpu_ms": 0, "samples": 0}
+            run["seen_cpu_ticks"] = {}
         cache_root: Path | None = None
         child: subprocess.Popen[str] | None = None
         try:
@@ -529,6 +711,7 @@ class TestManager:
 
             reader = threading.Thread(target=read_output, name=f"module-test-log-{run_id[:8]}", daemon=True)
             reader.start()
+            next_resource_sample = time.monotonic()
             while child.poll() is None:
                 if run["cancel"].is_set():
                     self._terminate_process_group(child)
@@ -539,6 +722,12 @@ class TestManager:
                     status, result = "timed_out", "timed_out"
                     reason = f"超过 {spec.timeout_seconds} 秒超时限制"
                     break
+                if resources is not None and time.monotonic() >= next_resource_sample:
+                    rss_bytes, cpu_ms = _process_tree_usage(child.pid, run["seen_cpu_ticks"])
+                    resources["peak_process_tree_rss_bytes"] = max(resources["peak_process_tree_rss_bytes"], rss_bytes)
+                    resources["process_tree_cpu_ms"] = max(resources["process_tree_cpu_ms"], cpu_ms)
+                    resources["samples"] += 1
+                    next_resource_sample = time.monotonic() + 1.0
                 time.sleep(0.05)
             return_code = child.poll()
             if status == "failed" and return_code == 0:
@@ -564,6 +753,14 @@ class TestManager:
             status, result, reason = "failed", "failed", f"执行异常：{type(exc).__name__}: {exc}"
             self._write_log(run_id, f"{reason}\n")
         finally:
+            if resources is not None:
+                if child is not None:
+                    rss_bytes, cpu_ms = _process_tree_usage(child.pid, run["seen_cpu_ticks"])
+                    resources["peak_process_tree_rss_bytes"] = max(resources["peak_process_tree_rss_bytes"], rss_bytes)
+                    resources["process_tree_cpu_ms"] = max(resources["process_tree_cpu_ms"], cpu_ms)
+                resources["host_after"] = _host_resources()
+                with self._lock:
+                    run["record"]["resource_usage"] = resources
             if cache_root is not None:
                 shutil.rmtree(cache_root, ignore_errors=True)
             finished = utc_now()
@@ -654,7 +851,7 @@ class TestManager:
                 cancel.set()
         for _cancel, worker in active:
             if worker is not None:
-                worker.join(timeout=3.0)
+                worker.join(timeout=PROCESS_CLEANUP_GRACE_SECONDS + 4.0)
 
 
 class ModuleTestHandler(BaseHTTPRequestHandler):
@@ -685,6 +882,15 @@ class ModuleTestHandler(BaseHTTPRequestHandler):
             return
         if request.path == "/v1/tests/catalog":
             self._respond(200, self.manager.catalog())
+            return
+        if request.path == "/v1/tests/reports":
+            query = parse_qs(request.query, keep_blank_values=False)
+            try:
+                limit = int(query.get("limit", ["20"])[0])
+            except ValueError:
+                self._respond(400, {"error": "limit must be an integer"})
+                return
+            self._respond(200, self.manager.history(limit))
             return
         parts = request.path.split("/")
         if len(parts) == 4 and parts[:3] == ["", "v1", "tests"] and RUN_ID_RE.fullmatch(parts[3]):
