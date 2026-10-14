@@ -41,7 +41,7 @@ if [[ "${P6_SKIP_BUILD:-0}" != "1" ]]; then
     set -u
     cd "$NAV_WS"
     colcon build --base-paths src --packages-up-to p6_autonomous_mission \
-      --build-base build/p6 --install-base install/p6 --parallel-workers "${P6_BUILD_JOBS:-4}"
+      --build-base build/p6 --install-base install/p6 --parallel-workers "${P6_BUILD_JOBS:-2}"
   )
   echo "Building arm workspace independently..."
   (
@@ -51,7 +51,7 @@ if [[ "${P6_SKIP_BUILD:-0}" != "1" ]]; then
     cd "$ARM_WS"
     colcon build --base-paths src --packages-up-to lite_motion_planner \
       --packages-skip orbbec_camera --build-base build/p6 --install-base install/p6 \
-      --parallel-workers "${P6_BUILD_JOBS:-4}"
+      --parallel-workers "${P6_BUILD_JOBS:-2}"
   )
 fi
 

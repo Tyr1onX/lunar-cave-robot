@@ -84,6 +84,76 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(report_status, 200)
         self.assertEqual(json.loads(report_body)["result"], "passed")
 
+    def test_running_report_is_persisted_before_child_finishes(self) -> None:
+        self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
+        started, error, status = self.manager.start("safe_check")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        report_path = Path(str(started["report_file"]))
+        self.assertTrue(report_path.is_file())
+        self.assertEqual(json.loads(report_path.read_text(encoding="utf-8"))["status"], "running")
+        self.request("POST", f"/v1/tests/{started['run_id']}/cancel")
+        self.wait_for(str(started["run_id"]), {"cancelled"})
+
+    def test_service_restart_recovers_interrupted_report_and_history(self) -> None:
+        report_dir = self.root / "reports"
+        report_dir.mkdir()
+        run_id = "a" * 32
+        record = {
+            "schema_version": 1, "run_id": run_id, "test_id": "safe_check", "title": "Safe check",
+            "mode": "OFFLINE", "status": "running", "result": "running", "started_at": "2026-10-14T00:00:00Z",
+            "code_sha": "abc123", "log_text": "", "log_file": str(report_dir / f"{run_id}.log"),
+            "report_file": str(report_dir / f"{run_id}.json"),
+        }
+        (report_dir / f"{run_id}.json").write_text(json.dumps(record), encoding="utf-8")
+        (report_dir / f"{run_id}.log").write_text("partial output\n", encoding="utf-8")
+        restored = TestManager(repo=self.root, state_root=report_dir, specs=(spec(self.script),))
+        report = restored.report(run_id)
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["status"], "interrupted")
+        self.assertIn("partial output", report["log_text"])
+        self.assertEqual(restored.logs(run_id, 0)["lines"][-1].startswith("[INTERRUPTED]"), True)
+        self.server.manager = restored
+        status, _, body = self.request("GET", "/v1/tests/reports?limit=5")
+        self.assertEqual(status, 200)
+        history = json.loads(body)["reports"]
+        self.assertEqual(history[0]["run_id"], run_id)
+        self.assertEqual(history[0]["status"], "interrupted")
+        status, _, body = self.request("GET", f"/v1/tests/{run_id}/report")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["result"], "interrupted")
+
+    def test_graceful_service_shutdown_marks_active_run_interrupted(self) -> None:
+        self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
+        started, error, status = self.manager.start("safe_check")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        run_id = str(started["run_id"])
+        deadline = time.monotonic() + 2
+        child = None
+        while time.monotonic() < deadline:
+            with self.manager._lock:
+                child = self.manager._runs[run_id]["process"]
+            if child is not None:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(child)
+
+        self.manager.stop_all()
+
+        record = self.wait_for(run_id, {"interrupted"})
+        self.assertEqual(record["result"], "interrupted")
+        self.assertIn("服务关闭", str(record["reason"]))
+        self.assertIsNotNone(child.poll())
+        restored = TestManager(repo=self.root, state_root=self.root / "reports", specs=(spec(self.script),))
+        restored_record = restored.report(run_id)
+        self.assertIsNotNone(restored_record)
+        self.assertEqual(restored_record["status"], "interrupted")
+        self.assertIn("started", str(restored_record["log_text"]))
+
     def test_rejects_second_run_while_one_is_active(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
         status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
@@ -113,6 +183,34 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertNotIsInstance(child.poll(), type(None))
         self.assertEqual(record["result"], "cancelled")
 
+    def test_p7_runs_with_conservative_build_limits_and_resource_record(self) -> None:
+        from console_agent.module_tests import RESOURCE_LIMITS
+
+        self.script.write_text(
+            "import os\nprint('P7_BUILD_JOBS=' + os.environ['P7_BUILD_JOBS'])\n"
+            "print('MAKEFLAGS=' + os.environ['MAKEFLAGS'])\n"
+            "print('P7_RESULTS_DIR=' + os.environ['P7_RESULTS_DIR'])\n",
+            encoding="utf-8",
+        )
+        p7_spec = TestSpec(
+            id="p7_scenarios", title="P7", description="test", mode="SIMULATION",
+            input_source="synthetic PTY", prerequisites=("ROS",), timeout_seconds=5,
+            command=lambda _repo: ([sys.executable, str(self.script)], {"suite": "12 scenarios"}, None),
+            check=lambda _repo: [],
+        )
+        manager = TestManager(repo=self.root, state_root=self.root / "p7-reports", specs=(p7_spec,))
+        started, error, status = manager.start("p7_scenarios")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        completed = self.wait_for(str(started["run_id"]), {"passed"}, manager=manager)
+        self.assertEqual(completed["parameters"]["resource_limits"], RESOURCE_LIMITS)
+        self.assertIn("P7_BUILD_JOBS=2", completed["log_text"])
+        self.assertIn("MAKEFLAGS=-j2", completed["log_text"])
+        self.assertIn(completed["parameters"]["persistent_scenario_results"], completed["log_text"])
+        self.assertIn("host_before", completed["resource_usage"])
+        self.assertIn("host_after", completed["resource_usage"])
+
     def test_timeout_kills_child_and_records_timed_out(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
         self.manager.specs["safe_check"] = spec(self.script, timeout=1)
@@ -131,12 +229,67 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(yolo["state"], "locked")
         self.assertIn("模型目录", yolo["reason"])
 
+    def test_catalog_registers_expanded_offline_and_readonly_profiles(self) -> None:
+        from console_agent.module_tests import DEFAULT_TESTS
+
+        manager = TestManager(repo=self.root, state_root=self.root / "reports", specs=DEFAULT_TESTS)
+        catalog = {item["id"]: item for item in manager.catalog()["tests"]}
+        self.assertTrue({"chassis_protocol", "p6_unit", "p6_scenarios", "p7_scenarios"}.issubset(catalog))
+        self.assertEqual(catalog["p6_scenarios"]["mode"], "SIMULATION")
+        self.assertEqual(catalog["p7_scenarios"]["mode"], "SIMULATION")
+        for test_id in ("camera_readonly", "mid360_readonly", "chassis_readonly", "arm_readonly"):
+            self.assertEqual(catalog[test_id]["mode"], "LIVE")
+            self.assertEqual(catalog[test_id]["category"], "只读设备巡检")
+
+    def test_yolo_discovers_existing_field_lab_model_without_an_env_override(self) -> None:
+        from unittest.mock import patch
+        from console_agent import module_tests
+
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_YOLO_MODEL_DIR": ""}, clear=False), \
+             patch.object(module_tests, "_field_lab_root", return_value=self.root / "lunar-field-lab-p9i"), \
+             patch.object(module_tests.Path, "home", return_value=self.root):
+            model = self.root / "lunar-field-lab-p9i" / "models" / "blue_block"
+            model.mkdir(parents=True)
+            self.assertEqual(module_tests._yolo_model_dir(), model)
+
+    def test_live_commands_are_fixed_readonly_profiles(self) -> None:
+        from console_agent.module_tests import DEFAULT_TESTS
+
+        specs = {item.id: item for item in DEFAULT_TESTS}
+        for test_id, device in (("camera_readonly", "camera"), ("mid360_readonly", "mid360"),
+                                ("chassis_readonly", "chassis"), ("arm_readonly", "arm")):
+            spec_item = specs[test_id]
+            command, parameters, _model = spec_item.command(self.root)
+            self.assertEqual(command[-2:], ["--device", device])
+            self.assertEqual(command[0], "/bin/bash")
+            self.assertTrue(command[1].endswith("run_ros_readonly_check.sh"))
+            self.assertEqual(spec_item.ros_domain_id, 0)
+            self.assertEqual(parameters["ros_localhost_only"], "1")
+            self.assertIn("no driver", parameters["observation"])
+
+    def test_live_observer_uses_executor_bound_to_its_context(self) -> None:
+        repo = Path(__file__).resolve().parents[3]
+        observer = (repo / "tools/module-tests/scripts/observe_ros_device.py").read_text(encoding="utf-8")
+        self.assertIn("SingleThreadedExecutor(context=context)", observer)
+        self.assertNotIn("rclpy.spin_once(node", observer)
+
     def test_runner_rejects_non_loopback_bind_configuration(self) -> None:
         from unittest.mock import patch
 
         with patch.dict("os.environ", {"LUNAR_CONSOLE_TEST_BIND": "0.0.0.0"}):
             with self.assertRaises(SystemExit):
                 serve()
+
+    def test_module_test_service_allows_ros_interface_discovery_without_packet_sockets(self) -> None:
+        repo = Path(__file__).resolve().parents[3]
+        installer = (repo / "tools/console-agent/install-module-test-service.sh").read_text(encoding="utf-8")
+        families = next(line for line in installer.splitlines() if '"RestrictAddressFamilies=' in line)
+        self.assertIn("AF_NETLINK", families)
+        self.assertNotIn("AF_PACKET", families)
+        self.assertIn('"CPUQuota=300%"', installer)
+        self.assertIn('"MemoryHigh=8G"', installer)
+        self.assertIn('"MemoryMax=10G"', installer)
+        self.assertIn('"KillMode=mixed"', installer)
 
     def test_report_captures_model_digest_when_a_registered_test_uses_one(self) -> None:
         model_dir = self.root / "model"

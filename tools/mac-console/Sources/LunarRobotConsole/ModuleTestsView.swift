@@ -10,6 +10,7 @@ struct ModuleTestCatalog: Decodable {
 
 struct ModuleTestDefinition: Decodable, Identifiable {
     let id: String
+    let category: String
     let title: String
     let description: String
     let mode: String
@@ -23,6 +24,7 @@ struct ModuleTestDefinition: Decodable, Identifiable {
 private struct ModuleTestStart: Decodable {
     let runId: String
     let testId: String
+    let mode: String
     let status: String
 }
 
@@ -31,9 +33,29 @@ private struct ModuleTestLogChunk: Decodable {
     let cursor: Int
 }
 
+struct ModuleTestHistoryResponse: Decodable {
+    let reports: [ModuleTestHistoryItem]
+}
+
+struct ModuleTestHistoryItem: Decodable, Identifiable {
+    let runId: String
+    let testId: String
+    let title: String
+    let mode: String
+    let status: String
+    let result: String
+    let codeSha: String?
+    let startedAt: String
+    let finishedAt: String?
+    let durationMs: Int?
+    let reason: String?
+    var id: String { runId }
+}
+
 struct ModuleTestRun: Decodable {
     let runId: String
     let testId: String
+    let mode: String
     let status: String
     let result: String
     let codeSha: String?
@@ -49,6 +71,7 @@ final class ModuleTestsModel: ObservableObject {
     @Published private(set) var catalog: ModuleTestCatalog?
     @Published private(set) var selectedTestID: String?
     @Published private(set) var run: ModuleTestRun?
+    @Published private(set) var history: [ModuleTestHistoryItem] = []
     @Published private(set) var logs: [String] = []
     @Published private(set) var runnerOnline = false
     @Published private(set) var checkingEnvironment = false
@@ -83,7 +106,7 @@ final class ModuleTestsModel: ObservableObject {
 
     var canSaveReport: Bool {
         guard let status = run?.status else { return false }
-        return ["passed", "failed", "cancelled", "timed_out"].contains(status)
+        return ["passed", "failed", "cancelled", "timed_out", "interrupted"].contains(status)
     }
 
     func start() {
@@ -154,12 +177,12 @@ final class ModuleTestsModel: ObservableObject {
                 let decoder = JSONDecoder()
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 let started = try decoder.decode(ModuleTestStart.self, from: data)
-                self.run = ModuleTestRun(runId: started.runId, testId: started.testId, status: started.status,
+                self.run = ModuleTestRun(runId: started.runId, testId: started.testId, mode: started.mode, status: started.status,
                                          result: started.status, codeSha: nil, codeDirty: nil, startedAt: "", finishedAt: nil,
                                          durationMs: nil, reason: nil)
                 self.logs = []
                 self.logCursor = 0
-                self.message = "NUC 已开始执行 · OFFLINE"
+                self.message = test.mode == "LIVE" ? "NUC 已开始只读巡检 · LIVE" : "NUC 已开始执行 · \(test.mode)"
                 self.runTask?.cancel()
                 self.runTask = Task { await self.pollRun(started.runId) }
             } catch {
@@ -208,6 +231,31 @@ final class ModuleTestsModel: ObservableObject {
         }
     }
 
+    func loadReport(_ item: ModuleTestHistoryItem, allowActive: Bool = false) async {
+        guard !isRunning || allowActive else { return }
+        do {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/tests/\(item.runId)/report"))
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.cannotParseResponse) }
+            let received = try decoder.decode(ModuleTestRun.self, from: data)
+            var components = URLComponents(url: apiRoot.appendingPathComponent("v1/tests/\(item.runId)/logs"), resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "after", value: "0")]
+            let (logData, logResponse) = try await session.data(from: components.url!)
+            guard let logHTTP = logResponse as? HTTPURLResponse, logHTTP.statusCode == 200 else { throw URLError(.cannotParseResponse) }
+            let chunk = try decoder.decode(ModuleTestLogChunk.self, from: logData)
+            run = received
+            selectedTestID = item.testId
+            logs = chunk.lines
+            logCursor = chunk.cursor
+            message = received.status == "interrupted"
+                ? "已恢复中断报告 · NUC 服务重启时测试被标记为中断"
+                : "已载入历史报告 · \(received.mode)"
+        } catch {
+            message = "历史报告读取失败 · \(error.localizedDescription)"
+        }
+    }
+
     private func refreshCatalog() async {
         do {
             let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/tests/catalog"))
@@ -217,6 +265,7 @@ final class ModuleTestsModel: ObservableObject {
             let received = try decoder.decode(ModuleTestCatalog.self, from: data)
             catalog = received
             runnerOnline = true
+            await refreshHistory()
             if let selectedTestID, !received.tests.contains(where: { $0.id == selectedTestID }) {
                 self.selectedTestID = nil
             }
@@ -227,8 +276,24 @@ final class ModuleTestsModel: ObservableObject {
         }
     }
 
+    private func refreshHistory() async {
+        do {
+            let url = apiRoot.appendingPathComponent("v1/tests/reports")
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            components.queryItems = [URLQueryItem(name: "limit", value: "12")]
+            let (data, response) = try await session.data(from: components.url!)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            history = try decoder.decode(ModuleTestHistoryResponse.self, from: data).reports
+        } catch {
+            history = []
+        }
+    }
+
     private func pollRun(_ runID: String) async {
         var finished = false
+        var consecutiveFailures = 0
         while !Task.isCancelled && !finished {
             do {
                 let statusURL = apiRoot.appendingPathComponent("v1/tests/\(runID)")
@@ -238,7 +303,8 @@ final class ModuleTestsModel: ObservableObject {
                 decoder.keyDecodingStrategy = .convertFromSnakeCase
                 let received = try decoder.decode(ModuleTestRun.self, from: statusData)
                 run = received
-                if received.status == "passed" || received.status == "failed" || received.status == "cancelled" || received.status == "timed_out" {
+                consecutiveFailures = 0
+                if ["passed", "failed", "cancelled", "timed_out", "interrupted"].contains(received.status) {
                     finished = true
                 }
 
@@ -252,14 +318,26 @@ final class ModuleTestsModel: ObservableObject {
 
                 if finished {
                     switch received.status {
-                    case "passed": message = "测试通过 · OFFLINE，不代表实机验收"
+                    case "passed":
+                        message = received.mode == "LIVE"
+                            ? "LIVE 只读连接检查完成 · 仅为状态快照，不代表实机验收"
+                            : "测试通过 · \(received.mode)，不代表实机验收"
                     case "cancelled": message = "测试已停止；NUC 已清理子进程"
+                    case "interrupted": message = received.reason ?? "服务重启期间测试中断；报告和日志已恢复"
                     case "timed_out": message = received.reason ?? "测试超时；NUC 已清理子进程"
                     default: message = received.reason ?? "测试失败 · 请查看日志"
                     }
                 }
             } catch {
                 message = "测试状态暂不可读 · \(error.localizedDescription)"
+                consecutiveFailures += 1
+                if consecutiveFailures >= 2 {
+                    await refreshCatalog()
+                    if let item = history.first(where: { $0.runId == runID }) {
+                        await loadReport(item, allowActive: true)
+                        finished = run?.status != "running" && run?.status != "cancelling"
+                    }
+                }
             }
             if !finished { try? await Task.sleep(for: .milliseconds(450)) }
         }
@@ -274,12 +352,30 @@ private struct ModuleTestError: Decodable {
 struct ModuleTestsView: View {
     @ObservedObject var model: ModuleTestsModel
 
+    private struct TestGroup: Identifiable {
+        let name: String
+        let tests: [ModuleTestDefinition]
+        var id: String { name }
+    }
+
     private let lockedLiveTests: [(String, String, String)] = [
         ("相机实机", "camera", "相机驱动、序列号确认与图像验收流程尚未接入"),
         ("MID-360 实机", "sensor", "点云录制、时间同步与外参验收条件未确认"),
         ("底盘实机", "truck.box", "需独立的场地隔离、急停与实机审批证据"),
         ("机械臂实机", "move.3d", "需实机标定、工作区隔离与双人验收"),
     ]
+
+    private var testGroups: [TestGroup] {
+        guard let tests = model.catalog?.tests else { return [] }
+        let grouped = Dictionary(grouping: tests, by: \.category)
+        let preferredOrder = ["基础环境", "视觉离线测试", "底盘离线协议", "Nav2 / 任务离线测试", "机械臂离线模型", "只读设备巡检"]
+        return grouped.keys.sorted {
+            (preferredOrder.firstIndex(of: $0) ?? preferredOrder.count) <
+                (preferredOrder.firstIndex(of: $1) ?? preferredOrder.count)
+        }.map { name in
+            TestGroup(name: name, tests: grouped[name, default: []].sorted { $0.title < $1.title })
+        }
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
@@ -293,7 +389,8 @@ struct ModuleTestsView: View {
     }
 
     private var testList: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("可运行测试").font(.system(size: 15, weight: .semibold))
                 Spacer()
@@ -305,12 +402,18 @@ struct ModuleTestsView: View {
                 modeBadge("LIVE", color: Palette.danger)
                 Spacer()
             }
-            if let tests = model.catalog?.tests {
-                ForEach(tests) { test in
-                    Button { model.select(test) } label: {
-                        testRow(test)
+            if model.catalog != nil {
+                ForEach(testGroups) { group in
+                    Text(group.name.uppercased())
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Palette.muted)
+                        .padding(.top, 4)
+                    ForEach(group.tests) { test in
+                        Button { model.select(test) } label: {
+                            testRow(test)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             } else {
                 Text("正在连接受限测试服务…")
@@ -319,7 +422,32 @@ struct ModuleTestsView: View {
                     .background(Palette.panel, in: RoundedRectangle(cornerRadius: 12))
             }
 
-            Text("后续实机项目").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
+            if !model.history.isEmpty {
+                Text("最近测试报告").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
+                ForEach(model.history.prefix(8)) { report in
+                    Button {
+                        Task { await model.loadReport(report) }
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: report.status == "passed" ? "checkmark.circle.fill" : "doc.text.magnifyingglass")
+                                .foregroundStyle(report.status == "passed" ? Palette.accent : Palette.warning)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(report.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                                Text("\(report.mode) · \(report.status.uppercased()) · \(String(report.startedAt.prefix(16)))")
+                                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.muted)
+                        }
+                        .padding(10)
+                        .background(Palette.panel, in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isRunning)
+                }
+            }
+
+            Text("后续实机运动验收").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.muted).padding(.top, 5)
             ForEach(Array(lockedLiveTests.enumerated()), id: \.offset) { _index, item in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: item.1).foregroundStyle(Palette.muted).frame(width: 18)
@@ -334,9 +462,11 @@ struct ModuleTestsView: View {
                 }
                 .padding(12).background(Palette.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
             }
+            }
+            .padding(16)
+            .background(Palette.panel.opacity(0.55), in: RoundedRectangle(cornerRadius: 15))
         }
-        .padding(16)
-        .background(Palette.panel.opacity(0.55), in: RoundedRectangle(cornerRadius: 15))
+        .frame(maxHeight: 780)
     }
 
     private func testRow(_ test: ModuleTestDefinition) -> some View {
@@ -413,7 +543,7 @@ struct ModuleTestsView: View {
 
             if let run = model.run {
                 HStack(spacing: 16) {
-                    reportMetric("结果", value: resultLabel(run.result))
+                    reportMetric("结果", value: resultLabel(run.result, mode: model.selectedTest?.mode ?? "OFFLINE"))
                     reportMetric("耗时", value: run.durationMs.map { String(format: "%.2f 秒", Double($0) / 1000) } ?? "执行中")
                     reportMetric("代码 SHA", value: run.codeSha.map { String($0.prefix(12)) } ?? "记录中")
                     reportMetric("工作树", value: run.codeDirty == true ? "有未提交修改" : (run.codeDirty == false ? "干净" : "未知"))
@@ -450,7 +580,7 @@ struct ModuleTestsView: View {
                 .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
             }
 
-        Text("OFFLINE 通过只表示离线软件检查通过；SIMULATION 属于模拟环境；LIVE 项目在实体条件、标定与安全验收齐备前保持锁定。")
+        Text("OFFLINE 只表示离线软件检查通过；SIMULATION 使用合成数据。LIVE 连接巡检只读现有 ROS 状态，不启动设备；实机运动测试仍锁定。")
                 .font(.system(size: 10)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
         }
         .padding(18)
@@ -515,9 +645,9 @@ struct ModuleTestsView: View {
         return Palette.blue
     }
 
-    private func resultLabel(_ result: String) -> String {
+    private func resultLabel(_ result: String, mode: String) -> String {
         switch result {
-        case "passed": return "通过 · OFFLINE"
+        case "passed": return mode == "LIVE" ? "只读检查完成" : "通过 · \(mode)"
         case "failed": return "失败"
         case "cancelled": return "已停止"
         case "timed_out": return "超时"
