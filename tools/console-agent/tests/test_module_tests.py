@@ -125,6 +125,35 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["result"], "interrupted")
 
+    def test_graceful_service_shutdown_marks_active_run_interrupted(self) -> None:
+        self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(30)\n", encoding="utf-8")
+        started, error, status = self.manager.start("safe_check")
+        self.assertIsNone(error)
+        self.assertEqual(status, 202)
+        assert started is not None
+        run_id = str(started["run_id"])
+        deadline = time.monotonic() + 2
+        child = None
+        while time.monotonic() < deadline:
+            with self.manager._lock:
+                child = self.manager._runs[run_id]["process"]
+            if child is not None:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(child)
+
+        self.manager.stop_all()
+
+        record = self.wait_for(run_id, {"interrupted"})
+        self.assertEqual(record["result"], "interrupted")
+        self.assertIn("服务关闭", str(record["reason"]))
+        self.assertIsNotNone(child.poll())
+        restored = TestManager(repo=self.root, state_root=self.root / "reports", specs=(spec(self.script),))
+        restored_record = restored.report(run_id)
+        self.assertIsNotNone(restored_record)
+        self.assertEqual(restored_record["status"], "interrupted")
+        self.assertIn("started", str(restored_record["log_text"]))
+
     def test_rejects_second_run_while_one_is_active(self) -> None:
         self.script.write_text("import time\nprint('started', flush=True)\ntime.sleep(2)\n", encoding="utf-8")
         status, _, body = self.request("POST", "/v1/tests/run", {"test_id": "safe_check"})
@@ -260,7 +289,7 @@ class ModuleTestHTTPTests(unittest.TestCase):
         self.assertIn('"CPUQuota=300%"', installer)
         self.assertIn('"MemoryHigh=8G"', installer)
         self.assertIn('"MemoryMax=10G"', installer)
-        self.assertIn('"KillMode=control-group"', installer)
+        self.assertIn('"KillMode=mixed"', installer)
 
     def test_report_captures_model_digest_when_a_registered_test_uses_one(self) -> None:
         model_dir = self.root / "model"

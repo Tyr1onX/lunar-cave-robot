@@ -35,7 +35,9 @@ body = "\n".join([
     "Restart=on-failure",
     "RestartSec=3",
     "TimeoutStopSec=20",
-    "KillMode=control-group",
+    # Let the runner terminate its own process groups before systemd applies
+    # the final cgroup kill when this service is restarted or stopped.
+    "KillMode=mixed",
     "CPUWeight=20",
     "CPUQuota=300%",
     "MemoryHigh=8G",

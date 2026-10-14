@@ -715,7 +715,11 @@ class TestManager:
             while child.poll() is None:
                 if run["cancel"].is_set():
                     self._terminate_process_group(child)
-                    status, result = "cancelled", "cancelled"
+                    if run.get("service_shutdown"):
+                        status, result = "interrupted", "interrupted"
+                        reason = "受限测试服务关闭时测试中断；测试子进程已清理。"
+                    else:
+                        status, result = "cancelled", "cancelled"
                     break
                 if time.monotonic() >= deadline:
                     self._terminate_process_group(child)
@@ -738,10 +742,14 @@ class TestManager:
             reader.join(timeout=3.0)
             if child.stdout is not None:
                 child.stdout.close()
-        except InterruptedError:
+        except InterruptedError as exc:
             if child is not None and child.poll() is None:
                 self._terminate_process_group(child)
-            status, result = "cancelled", "cancelled"
+            if run.get("service_shutdown"):
+                status, result = "interrupted", "interrupted"
+                reason = "受限测试服务关闭时测试中断；测试子进程已清理。"
+            else:
+                status, result, reason = "cancelled", "cancelled", str(exc)
         except TimeoutError as exc:
             if child is not None and child.poll() is None:
                 self._terminate_process_group(child)
@@ -846,10 +854,12 @@ class TestManager:
 
     def stop_all(self) -> None:
         with self._lock:
-            active = [(run["cancel"], run["thread"]) for run in self._runs.values() if run["record"]["status"] in {"running", "cancelling"}]
-            for cancel, _thread in active:
-                cancel.set()
-        for _cancel, worker in active:
+            active = [run for run in self._runs.values() if run["record"]["status"] in {"running", "cancelling"}]
+            for run in active:
+                run["service_shutdown"] = True
+                run["cancel"].set()
+        for run in active:
+            worker = run["thread"]
             if worker is not None:
                 worker.join(timeout=PROCESS_CLEANUP_GRACE_SECONDS + 4.0)
 
