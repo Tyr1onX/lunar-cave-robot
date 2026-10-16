@@ -183,11 +183,8 @@ final class ConsoleModel: ObservableObject {
             errors.fileHandleForReading.readabilityHandler = nil
             diagnosticBuffer.append(errors.fileHandleForReading.readDataToEndOfFile())
             let diagnostic = diagnosticBuffer.message()
-            Task { @MainActor in
-                guard let self, self.tunnel === terminated else { return }
-                self.tunnelRunning = false
-                self.connectionMessage = diagnostic ?? "SSH 隧道已退出（状态 \(terminated.terminationStatus)）"
-                self.invalidateAgentData(message: "NUC Agent 连接中断 · \(self.connectionMessage)")
+            Task { @MainActor [weak self] in
+                self?.handleTunnelTermination(terminated, diagnostic: diagnostic)
             }
         }
         do {
@@ -202,6 +199,13 @@ final class ConsoleModel: ObservableObject {
             tunnelRunning = false
             connectionMessage = "无法启动 SSH：\(error.localizedDescription)"
         }
+    }
+
+    private func handleTunnelTermination(_ terminated: Process, diagnostic: String?) {
+        guard tunnel === terminated else { return }
+        tunnelRunning = false
+        connectionMessage = diagnostic ?? "SSH 隧道已退出（状态 \(terminated.terminationStatus)）"
+        invalidateAgentData(message: "NUC Agent 连接中断 · \(connectionMessage)")
     }
 
     private func refreshHealthEvents(observedAt: Date = Date()) {
