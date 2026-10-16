@@ -46,6 +46,12 @@ NUC 原始工程 `/home/tzb/tzb_ws` 和 `/home/tzb/Nav2_rea_ws` 完全独立。�
 
 `/home/tzb/` 另外还存在 `mid360_driver_dev`、`nav_ws`、`serial_t`、`serial_log` 等辅助历史目录，本次没有移动，避免在未确认所有权和原始用途前误操作。这里的“三个入口”指两个明确的原始 ROS 工作空间与一个新版 `lunar-robot/` 项目入口，不表示 NUC 用户主目录没有其它工具、历史数据或厂商 SDK。
 
+## NUC 资料备份
+
+2026-10-16 已将 NUC 原始两套 ROS 工作空间、新版源码和实验环境、模型、重要服务/设备配置与测试记录备份至 ThinkBook `~/lunar-robot/archive/nuc-backups/2026-10-16-nuc/`（约 4.8 GB）。NUC 原始工作空间 **12,970 个文件的 SHA-256**、**636 个符号链接**与备份一致；当前视觉模型 5 个文件一致；快照 **31,538 个普通文件**的本地全量 SHA-256 自检通过。可在 ThinkBook 备份目录运行 `./verify.sh` 复核。
+
+该目录仅位于 ThinkBook，**不是 GitHub 文件夹、NUC 全系统镜像或历史 `archive/` 的全量镜像**。GitHub 继续存储新版正式源码，设备专属模型/日志和恢复说明在 ThinkBook 快照的 `README.md`。完整范围与排除项目见[工作区交接](WORKSPACE_HANDOFF.md)。
+
 ## 日常操作
 
 只需记住 `~/lunar-robot/code`：
