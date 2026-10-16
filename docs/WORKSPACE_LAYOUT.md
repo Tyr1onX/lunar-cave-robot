@@ -34,14 +34,17 @@
 │   └── simulation/               # 独立 P6 仿真文件
 └── archive/
     ├── baseline/                 # 旧 main 与迁移前视觉 venv/build/logs 副本
-    └── p8/                       # 保留的 P8 Git 工作树、构建与验收记录
+    ├── p8/                       # 保留的 P8 Git 工作树、构建与验收记录
+    └── old-copies/               # 迁移前五个目录的完整旧副本
 ```
 
 模块测试服务从 `~/lunar-robot/code/tools/console-agent` 运行，监听 NUC loopback `127.0.0.1:8769`。只读 Agent 使用 ROS Domain 187、`ROS_LOCALHOST_ONLY=1`，监听 `127.0.0.1:8765`。两项服务、ROS 日志、测试报告、视觉模型与重建环境都位于 `~/lunar-robot/`。P6/P7 构建输出由仓库测试脚本写在 `code/` 中的忽略目录，仍在该项目根目录内。
 
 NUC 迁移前状态目录的 485 个文件已复制到 `tests/state/lunar-cave-robot/`；校验显示仅一个历史测试 JSON 的 `log_file`、`report_file` 绝对路径从旧状态目录调整到了新目录，报告其它字段和其它历史文件一致。旧状态目录保留在 `~/.local/state/lunar-cave-robot/`。ThinkBook 的 784 个状态文件校验一致，原状态目录也保留。
 
-NUC 原始工程 `/home/tzb/tzb_ws` 和 `/home/tzb/Nav2_rea_ws` 完全独立。新版服务、构建和测试未使用这两个路径。旧版 `~/lunar-cave-robot`、`~/lunar-cave-robot-module-tests`、`~/lunar-field-lab-p9i`、`~/lunar-console-sim-v03a`、P8 工作树及其它旧目录仍保留以供回查；它们不是新版正式代码目录。
+NUC 原始工程 `/home/tzb/tzb_ws` 和 `/home/tzb/Nav2_rea_ws` 完全独立。新版服务、构建和测试未使用这两个路径。2026-10-16 将迁移前五个旧目录（`~/lunar-cave-robot`、`~/lunar-cave-robot-module-tests`、`~/lunar-cave-p8`、`~/lunar-field-lab-p9i`、`~/lunar-console-sim-v03a`）整体移动到 `~/lunar-robot/archive/old-copies/`，各自名称不变。此次为同文件系统移动，无删除；旧模块测试工作树的 Git 关联在归档后修复，两个历史 Git SHA 及测试工作树 SHA 仍可查询。`old-copies/README.md` 保存新旧路径映射；这些归档目录可能含旧绝对路径，**不作为正式运行环境**。
+
+`/home/tzb/` 另外还存在 `mid360_driver_dev`、`nav_ws`、`serial_t`、`serial_log` 等辅助历史目录，本次没有移动，避免在未确认所有权和原始用途前误操作。这里的“三个入口”指两个明确的原始 ROS 工作空间与一个新版 `lunar-robot/` 项目入口，不表示 NUC 用户主目录没有其它工具、历史数据或厂商 SDK。
 
 ## 日常操作
 
