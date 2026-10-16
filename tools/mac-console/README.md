@@ -74,3 +74,13 @@ bash tools/mac-console/acceptance/run-v03a-smoke.sh
 This standalone test builds the production Swift model (excluding only the app entry point), tests WASD axis combinations, map validation, simulated driving, zero on release, and focus-loss stop. The non-ROS safety tests run with `python3 -m unittest discover -s tools/console-sim/tests -v` from the repo root. Neither test launches a physical controller.
 
 The live-camera audit and current runtime limitations are recorded in [`acceptance/v0.2-camera-audit.md`](acceptance/v0.2-camera-audit.md). A repository topic declaration is not treated as proof that the camera is connected or publishing.
+
+## System health events
+
+The `系统诊断` health view and `测试驾驶舱` summary use one event evaluator over the existing read-only Agent snapshot and fixed vision streams. Each event shows its observation, Topic or node/endpoint, source data time, observed and expected ROS Domain, run mode, and a suggested inspection location.
+
+Events use four states: normal, abnormal, not running, and unknown. Agent loss is reported only after a successful Agent connection has been observed; an initial unavailable connection remains unknown, and a requested reconnect is not counted as loss. ROS graph freshness uses the Agent's monotonic `graph_age_ms` with a five-second threshold. RGB and depth time out at 1.5 seconds, matching the Agent's fixed frame policy. Missing image publishers are shown as not running unless there is evidence of stale frames; absence alone is not a fault.
+
+The Agent's `LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID` and `LUNAR_CONSOLE_EXPECTED_ROS_NODES` values are optional. Domain mismatch and unexpected node disappearance are evaluated only when the corresponding expectation is configured. No expected node set means the console reports the observed graph without treating unlisted modules as missing. Invalid expectations remain unknown.
+
+YOLO output can be suppressed by the node's confidence publish gate. Missing, waiting, or stale YOLO frames remain unknown and are not counted as faults. An incompatible published message type is direct ROS evidence and is reported separately. Synthetic frame identifiers remain labeled as synthetic. A healthy ROS transport or image stream is not evidence that navigation, arm, chassis, or physical sensor hardware is healthy.

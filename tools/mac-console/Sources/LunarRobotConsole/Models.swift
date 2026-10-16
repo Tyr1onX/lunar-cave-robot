@@ -83,6 +83,12 @@ struct ROSReading: Decodable {
     let domainId: Int?
     let nodes: [ROSNode]
     let topics: [ROSTopic]
+    let observedAt: String?
+    let graphAgeMs: Int?
+    let expectedDomainId: Int?
+    let expectedDomainError: String?
+    let expectedNodes: [String]?
+    let expectedNodesError: String?
     let discovery: String?
     let reason: String?
 }

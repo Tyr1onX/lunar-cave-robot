@@ -67,6 +67,9 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var githubMessage = "尚未读取 GitHub main"
     @Published private(set) var lastSuccessfulRead: Date?
 
+    private(set) var hasEverConnectedToAgent = false
+    private(set) var lastKnownDomainID: Int?
+
     private var tunnel: Process?
     private var tunnelErrorPipe: Pipe?
     private var refreshTask: Task<Void, Never>?
@@ -80,6 +83,18 @@ final class ConsoleModel: ObservableObject {
     private var isReadingVisionFrame = false
     private var lastLogRead = Date.distantPast
     private var lastFrameUpdateUptime: TimeInterval?
+
+    var healthEvents: [HealthEvent] {
+        HealthEvaluator.evaluate(
+            agentOnline: agentOnline,
+            hasEverConnectedToAgent: hasEverConnectedToAgent,
+            agentMessage: agentMessage,
+            lastSuccessfulRead: lastSuccessfulRead,
+            lastKnownDomainID: lastKnownDomainID,
+            snapshot: snapshot,
+            vision: vision
+        )
+    }
 
     private let apiRoot = URL(string: "http://127.0.0.1:18765")!
     private let session: URLSession = {
@@ -178,7 +193,7 @@ final class ConsoleModel: ObservableObject {
                 guard let self, self.tunnel === terminated else { return }
                 self.tunnelRunning = false
                 self.connectionMessage = diagnostic ?? "SSH 隧道已退出（状态 \(terminated.terminationStatus)）"
-                self.invalidateAgentData(message: "等待 NUC Agent")
+                self.invalidateAgentData(message: "NUC Agent 连接中断 · \(self.connectionMessage)")
             }
         }
         do {
@@ -223,6 +238,7 @@ final class ConsoleModel: ObservableObject {
                 throw URLError(.cannotParseResponse)
             }
             snapshot = received
+            lastKnownDomainID = received.ros.domainId
             lastSuccessfulRead = Date()
             agentMessage = "真实快照已更新 · \(received.collectedAt)"
             if Date().timeIntervalSince(lastLogRead) > 6 { refreshLogs() }
@@ -234,6 +250,7 @@ final class ConsoleModel: ObservableObject {
 
     func markAgentAvailable(message: String) {
         agentOnline = true
+        hasEverConnectedToAgent = true
         agentMessage = message
     }
 

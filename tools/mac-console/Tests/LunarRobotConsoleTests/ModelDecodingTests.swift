@@ -47,7 +47,7 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(catalog.tests.first?.mode, "OFFLINE")
         XCTAssertEqual(catalog.tests.first?.state, "ready")
 
-        let reportData = Data(#"{"run_id":"0123456789abcdef0123456789abcdef","test_id":"arm_fk","status":"passed","result":"passed","code_sha":"0123456789012345678901234567890123456789","code_dirty":false,"started_at":"2026-10-13T05:00:00Z","finished_at":"2026-10-13T05:00:01Z","duration_ms":1000,"reason":null}"#.utf8)
+        let reportData = Data(#"{"run_id":"0123456789abcdef0123456789abcdef","test_id":"arm_fk","mode":"OFFLINE","status":"passed","result":"passed","code_sha":"0123456789012345678901234567890123456789","code_dirty":false,"started_at":"2026-10-13T05:00:00Z","finished_at":"2026-10-13T05:00:01Z","duration_ms":1000,"reason":null}"#.utf8)
         let report = try decoder.decode(ModuleTestRun.self, from: reportData)
         XCTAssertEqual(report.status, "passed")
         XCTAssertEqual(report.durationMs, 1000)
