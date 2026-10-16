@@ -2,20 +2,21 @@ import SwiftUI
 
 struct WorkspaceMonitoringPanel: View {
     let inventory: WorkspaceInventoryReading?
+    let freshness: WorkspaceSnapshotFreshness
     let agentOnline: Bool
 
     var body: some View {
         Panel(title: "统一工作区观测", subtitle: "同一只读 Agent 汇总新版与原始 ROS 工程；源码、进程与 ROS graph 分层显示") {
             if let inventory, !inventory.entries.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    WorkspaceScanSummary(inventory: inventory, agentOnline: agentOnline)
+                    WorkspaceScanSummary(inventory: inventory, freshness: freshness, agentOnline: agentOnline)
                     ForEach(Array(inventory.entries.enumerated()), id: \.element.id) { index, workspace in
                         WorkspaceEvidenceCard(workspace: workspace)
                         if index < inventory.entries.count - 1 {
                             Divider().overlay(Palette.line)
                         }
                     }
-                    Text("进程已发现不代表模块正常。运行预期尚未核实的模块保留未知状态；Domain 不一致或 Graph 过期时不判下游故障。")
+                    Text("进程已发现不代表模块正常。运行预期尚未核实的模块保留未知状态；Domain 不一致或 Graph 过期时不判下游故障。历史快照不参与实时健康判定。")
                         .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                 }
             } else {
@@ -27,6 +28,7 @@ struct WorkspaceMonitoringPanel: View {
 
 struct WorkspaceCockpitSummary: View {
     let inventory: WorkspaceInventoryReading?
+    let freshness: WorkspaceSnapshotFreshness
     let agentOnline: Bool
 
     var body: some View {
@@ -45,7 +47,7 @@ struct WorkspaceCockpitSummary: View {
                                         .font(.system(size: 9, weight: .medium))
                                         .foregroundStyle(runtimeTint(workspace.runtimeStatus))
                                 }
-                        Text("Domain \(domainsLabel(workspace.domainIds)) · 模式 \(modeLabel(workspace.runMode)) · \(agentOnline ? "观测时间" : "上次观测") \(workspace.runtimeObservedAt ?? workspace.sourceObservedAt ?? "未知")")
+                                Text("Domain \(domainsLabel(workspace.domainIds)) · 模式 \(modeLabel(workspace.runMode)) · \(freshness == .live ? "观测时间" : "上次观测") \(workspace.runtimeObservedAt ?? workspace.sourceObservedAt ?? "未知")")
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
                                     .lineLimit(2).textSelection(.enabled)
                             }
@@ -53,8 +55,8 @@ struct WorkspaceCockpitSummary: View {
                     }
                     Text("项目或仿真源码不会被当作原始工程的实机状态；当前展示的是来源与观察证据。")
                         .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
-                    if !agentOnline {
-                        Text("Agent 已断连；下方是最后一次读取的工作区快照。")
+                    if freshness != .live {
+                        Text("\(freshnessLabel(freshness, agentOnline: agentOnline))；历史数据不参与当前实时健康判定。")
                             .font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.warning)
                     }
                 }
@@ -210,12 +212,13 @@ private struct WorkspaceMetric: View {
 
 private struct WorkspaceScanSummary: View {
     let inventory: WorkspaceInventoryReading
+    let freshness: WorkspaceSnapshotFreshness
     let agentOnline: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 12) {
-                WorkspaceEvidenceValue(label: "快照状态", value: agentOnline ? "当前 Agent 连接" : "上次快照 · Agent 断连")
+                WorkspaceEvidenceValue(label: "快照状态", value: freshnessLabel(freshness, agentOnline: agentOnline))
                 WorkspaceEvidenceValue(label: "进程扫描", value: processStatus)
                 WorkspaceEvidenceValue(label: "进程范围", value: inventory.processScan?.scope ?? "未知")
             }
@@ -238,6 +241,15 @@ private struct WorkspaceScanSummary: View {
         case "partial": return "部分可读 · 工作区 Graph 关系为未知"
         default: return "未知"
         }
+    }
+}
+
+private func freshnessLabel(_ freshness: WorkspaceSnapshotFreshness, agentOnline: Bool) -> String {
+    switch freshness {
+    case .live: return "实时快照 · 当前连接"
+    case .historical: return agentOnline ? "历史快照 · 等待本次读取" : "历史快照 · Agent 断连"
+    case .expired: return "历史快照已过期 · 超过 15 秒"
+    case .unavailable: return "工作区快照未知"
     }
 }
 

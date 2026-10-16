@@ -1,6 +1,13 @@
 import Foundation
 import SwiftUI
 
+enum WorkspaceSnapshotFreshness: Equatable {
+    case live
+    case historical
+    case expired
+    case unavailable
+}
+
 private final class SSHDiagnosticBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var contents = Data()
@@ -51,6 +58,8 @@ final class ConsoleModel: ObservableObject {
 
     @Published var section: Section = .cockpit
     @Published private(set) var snapshot: ConsoleSnapshot?
+    @Published private(set) var workspaceInventorySnapshot: WorkspaceInventoryReading?
+    @Published private(set) var workspaceSnapshotFreshness: WorkspaceSnapshotFreshness = .unavailable
     @Published private(set) var logs: LogReading?
     @Published private(set) var vision: VisionReading?
     @Published private(set) var visionFrame: Data?
@@ -66,6 +75,7 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var githubMainSHA: String?
     @Published private(set) var githubMessage = "尚未读取 GitHub main"
     @Published private(set) var lastSuccessfulRead: Date?
+    @Published private(set) var lastWorkspaceSnapshotRead: Date?
     @Published private(set) var healthEvents: [HealthEvent] = []
 
     private(set) var hasEverConnectedToAgent = false
@@ -77,6 +87,8 @@ final class ConsoleModel: ObservableObject {
     private var visionRefreshTask: Task<Void, Never>?
     private var visionFrameTask: Task<Void, Never>?
     private(set) var agentSession = 0
+    private var snapshotSession: Int?
+    private var workspaceSnapshotSession: Int?
     private var isRefreshing = false
     private var isReadingGitHub = false
     private var isReadingLogs = false
@@ -85,6 +97,17 @@ final class ConsoleModel: ObservableObject {
     private var lastLogRead = Date.distantPast
     private var lastFrameUpdateUptime: TimeInterval?
     private var healthEventTracker = HealthEventTracker()
+
+    static let workspaceSnapshotFreshnessLimit: TimeInterval = 15
+
+    var healthSnapshot: ConsoleSnapshot? {
+        guard agentOnline, snapshotSession == agentSession else { return nil }
+        return snapshot
+    }
+
+    var healthWorkspaceInventory: WorkspaceInventoryReading? {
+        healthSnapshot?.workspaces
+    }
 
     init() {
         refreshHealthEvents()
@@ -209,13 +232,14 @@ final class ConsoleModel: ObservableObject {
     }
 
     private func refreshHealthEvents(observedAt: Date = Date()) {
+        updateWorkspaceSnapshotFreshness(at: observedAt)
         let candidates = HealthEvaluator.evaluate(
             agentOnline: agentOnline,
             hasEverConnectedToAgent: hasEverConnectedToAgent,
             agentMessage: agentMessage,
             lastSuccessfulRead: lastSuccessfulRead,
             lastKnownDomainID: lastKnownDomainID,
-            snapshot: snapshot,
+            snapshot: healthSnapshot,
             vision: vision,
             evaluationTime: observedAt
         )
@@ -223,6 +247,7 @@ final class ConsoleModel: ObservableObject {
     }
 
     private func refresh() async {
+        updateWorkspaceSnapshotFreshness(at: Date())
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
@@ -249,11 +274,7 @@ final class ConsoleModel: ObservableObject {
             guard received.schemaVersion == 1, received.source == "nuc-read-only-agent" else {
                 throw URLError(.cannotParseResponse)
             }
-            snapshot = received
-            lastKnownDomainID = received.ros.domainId
-            lastSuccessfulRead = Date()
-            agentMessage = "真实快照已更新 · \(received.collectedAt)"
-            refreshHealthEvents()
+            applySnapshot(received, requestSession: requestSession)
             if Date().timeIntervalSince(lastLogRead) > 6 { refreshLogs() }
         } catch {
             guard requestSession == agentSession else { return }
@@ -266,6 +287,40 @@ final class ConsoleModel: ObservableObject {
         hasEverConnectedToAgent = true
         agentMessage = message
         refreshHealthEvents()
+    }
+
+    func applySnapshot(_ received: ConsoleSnapshot, requestSession: Int, readAt: Date = Date()) {
+        guard requestSession == agentSession else { return }
+        snapshot = received
+        snapshotSession = requestSession
+        lastKnownDomainID = received.ros.domainId
+        lastSuccessfulRead = readAt
+        if let inventory = received.workspaces {
+            workspaceInventorySnapshot = inventory
+            workspaceSnapshotSession = requestSession
+            lastWorkspaceSnapshotRead = readAt
+        }
+        agentMessage = "真实快照已更新 · \(received.collectedAt)"
+        updateWorkspaceSnapshotFreshness(at: readAt)
+        refreshHealthEvents(observedAt: readAt)
+    }
+
+    func updateWorkspaceSnapshotFreshness(at now: Date = Date()) {
+        let next: WorkspaceSnapshotFreshness
+        guard workspaceInventorySnapshot != nil, let lastWorkspaceSnapshotRead else {
+            next = .unavailable
+            if workspaceSnapshotFreshness != next { workspaceSnapshotFreshness = next }
+            return
+        }
+        let age = max(0, now.timeIntervalSince(lastWorkspaceSnapshotRead))
+        if age > Self.workspaceSnapshotFreshnessLimit {
+            next = .expired
+        } else if agentOnline, workspaceSnapshotSession == agentSession {
+            next = .live
+        } else {
+            next = .historical
+        }
+        if workspaceSnapshotFreshness != next { workspaceSnapshotFreshness = next }
     }
 
     func selectVisionStream(_ stream: VisionStreamID) {
@@ -283,6 +338,7 @@ final class ConsoleModel: ObservableObject {
         agentOnline = false
         agentMessage = message
         snapshot = nil
+        snapshotSession = nil
         logs = nil
         vision = nil
         visionFrame = nil
@@ -291,6 +347,7 @@ final class ConsoleModel: ObservableObject {
         visionFrameRoundTripMs = nil
         macFrameUpdateHz = nil
         lastFrameUpdateUptime = nil
+        updateWorkspaceSnapshotFreshness(at: Date())
         refreshHealthEvents()
     }
 
