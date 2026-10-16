@@ -2,6 +2,8 @@
 
 吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是新版正式源码来源。ThinkBook 和 NUC 的新版项目根目录统一为 `~/lunar-robot/`，正式代码位于 `~/lunar-robot/code`；目录用途、迁移状态和安全边界见[工作区布局与迁移记录](docs/WORKSPACE_LAYOUT.md)。NUC 原始 ROS 工程的位置、保护边界和核查证据见[工作区交接](docs/WORKSPACE_HANDOFF.md)。实体传感器、驱动器和机器人运动仍未验收，P7/P8 离线通过不能替代实机验收。
 
+新同学第一次使用 NUC，请先看 [NUC 新人快速入门](docs/NUC_GETTING_STARTED.md)：包含三大入口、原始工程 README 现状和安全查看命令。
+
 ## 源码地图
 
 | 目录 | 内容 |
