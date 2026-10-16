@@ -2,7 +2,7 @@
 
 吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是新版正式源码来源。ThinkBook 和 NUC 的新版项目根目录统一为 `~/lunar-robot/`，正式代码位于 `~/lunar-robot/code`；目录用途、迁移状态和安全边界见[工作区布局与迁移记录](docs/WORKSPACE_LAYOUT.md)。NUC 原始 ROS 工程的位置、保护边界和核查证据见[工作区交接](docs/WORKSPACE_HANDOFF.md)。实体传感器、驱动器和机器人运动仍未验收，P7/P8 离线通过不能替代实机验收。
 
-新同学第一次使用 NUC，请先看 [NUC 新人快速入门](docs/NUC_GETTING_STARTED.md)：包含三大入口、原始工程 README 现状和安全查看命令。
+NUC 的目录结构、安全操作及原始工程 README 现状见 [NUC 使用指南](docs/NUC_GETTING_STARTED.md)。
 
 ## 源码地图
 
@@ -14,7 +14,7 @@
 | [`firmware/chassis/`](firmware/chassis/) | STM32H723 六轮底盘工程；含 CubeMX、CMake、Keil、HAL/CMSIS、FreeRTOS 与团队控制源码 |
 | [`hardware/`](hardware/) | 机械 CAD、电气/PCB、接线、BOM 和设备资料归档入口；当前仅放资产接收说明，未找到可归档原始设计文件 |
 | [`tools/`](tools/) | P4～P9 离线验证、感知测试、源码完整性检查、三端状态查询与安全同步入口 |
-| [docs/](docs/) | [新人技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
+| [docs/](docs/) | [技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
 | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 第三方源码及许可证来源摘要；各依赖原始许可文件保留在对应源码目录 |
 
 两个 ROS 2 工作空间保持独立。`tzb_ws` 与 `Nav2_rea_ws` 中存在历史重名消息包；不要把两者合并到同一个 colcon 工作空间，也不要在一个终端随意叠加两套 `install/setup.bash`。
@@ -41,7 +41,7 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 
-新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
+建议先阅读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
 
 ## 开发与离线验证
 
