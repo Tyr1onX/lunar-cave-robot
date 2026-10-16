@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .vision import STREAMS, VisionObserver
+from .workspaces import collect_workspaces
 
 SCHEMA_VERSION = 1
 _AGENT_NODE_NAME = "lunar_console_graph_probe"
@@ -485,6 +486,7 @@ def collect_vision_frame(stream_id: str) -> tuple[bytes | None, str | None, int 
 
 
 def collect_snapshot() -> dict[str, Any]:
+    ros = collect_ros()
     return {
         "schema_version": SCHEMA_VERSION,
         "collected_at": utc_now(),
@@ -493,7 +495,8 @@ def collect_snapshot() -> dict[str, Any]:
         "system": {"cpu": collect_cpu(), "memory": collect_memory(), "disk": collect_disk(), "temperature": collect_temperature()},
         "git": collect_git(),
         "deployment": collect_deployment(),
-        "ros": collect_ros(),
+        "ros": ros,
+        "workspaces": collect_workspaces(ros),
         "tests": collect_tests(),
         "safety": {"physical_estop": _unknown("no verified physical E-stop input is connected to this read-only agent"), "hardware_health": _unknown("ROS graph presence is not hardware-health evidence"), "control": "disabled"},
     }

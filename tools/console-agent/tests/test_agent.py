@@ -99,7 +99,9 @@ class AgentHTTPTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
         schema_path = Path(__file__).resolve().parents[1] / "schema" / "snapshot-v1.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        self.assert_matches_schema(json.loads(body), schema, schema)
+        snapshot = json.loads(body)
+        self.assertIn("workspaces", snapshot)
+        self.assert_matches_schema(snapshot, schema, schema)
 
     def test_log_lines_label_file_modification_time_not_event_time(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
