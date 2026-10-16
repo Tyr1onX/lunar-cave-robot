@@ -2,11 +2,12 @@ import SwiftUI
 
 struct HealthDiagnosticsPanel: View {
     let events: [HealthEvent]
+    let workspaceInventory: WorkspaceInventoryReading?
 
     var body: some View {
         Panel(title: "系统健康", subtitle: "基于 NUC 只读 Agent 与 ROS 运行时证据；不代表实体硬件状态已验证") {
             VStack(alignment: .leading, spacing: 11) {
-                HealthSummaryHeader(events: events)
+                HealthSummaryHeader(events: events, workspaceInventory: workspaceInventory)
                 Divider().overlay(Palette.line)
                 ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
                     HealthEventRow(event: event)
@@ -24,11 +25,19 @@ struct HealthDiagnosticsPanel: View {
 
 struct HealthCockpitSummary: View {
     let events: [HealthEvent]
+    let workspaceInventory: WorkspaceInventoryReading?
 
     private var abnormalEvents: [HealthEvent] { events.filter { $0.state == .abnormal } }
     private var unknownCount: Int { events.filter { $0.state == .unknown }.count }
     private var notRunningCount: Int { events.filter { $0.state == .notRunning }.count }
-    private var summaryState: HealthState { HealthSummaryState.resolve(events) }
+    private var summaryState: HealthState {
+        HealthSummaryState.resolve(events, workspaceInventory: workspaceInventory, requireWorkspaceTelemetry: true)
+    }
+    private var workspaceEvidenceText: String {
+        guard let workspaceInventory else { return "工作区监测数据未提供" }
+        let prefix = workspaceInventory.status == "ok" ? "" : "工作区证据不完整 · "
+        return "\(prefix)\(workspaceInventory.unconfirmedWorkspaceCount) 个工作区运行状态未确认"
+    }
 
     private var summaryTitle: String {
         switch summaryState {
@@ -82,7 +91,7 @@ struct HealthCockpitSummary: View {
                             .font(.system(size: 9)).foregroundStyle(Palette.muted)
                     }
                 }
-                Text("\(unknownCount) 项未知 · \(notRunningCount) 项未运行。未配置为当前模式预期运行的模块不会判为故障。")
+                Text("\(unknownCount) 项未知 · \(notRunningCount) 项未运行 · \(workspaceEvidenceText)。未配置为当前模式预期运行的模块不会判为故障。")
                     .font(.system(size: 10)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                 Text("ROS 通信或图像流正常仅说明数据链路可观测，不等同于导航、机械臂或底盘实体正常。")
                     .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
@@ -93,10 +102,13 @@ struct HealthCockpitSummary: View {
 
 private struct HealthSummaryHeader: View {
     let events: [HealthEvent]
+    let workspaceInventory: WorkspaceInventoryReading?
     private var abnormalCount: Int { events.filter { $0.state == .abnormal }.count }
     private var unknownCount: Int { events.filter { $0.state == .unknown }.count }
     private var notRunningCount: Int { events.filter { $0.state == .notRunning }.count }
-    private var summaryState: HealthState { HealthSummaryState.resolve(events) }
+    private var summaryState: HealthState {
+        HealthSummaryState.resolve(events, workspaceInventory: workspaceInventory, requireWorkspaceTelemetry: true)
+    }
 
     private var summarySymbol: String {
         switch summaryState {
@@ -131,13 +143,19 @@ private struct HealthSummaryHeader: View {
                 .font(.system(size: 16)).foregroundStyle(summaryTint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(summaryTitle).font(.system(size: 12, weight: .semibold))
-                Text("未知 \(unknownCount) · 未运行 \(notRunningCount)")
+                Text("未知 \(unknownCount) · 未运行 \(notRunningCount) · \(workspaceEvidenceText)")
                     .font(.system(size: 9)).foregroundStyle(Palette.muted)
             }
             Spacer()
             HealthStateBadge(state: summaryState)
         }
         .padding(.bottom, 2)
+    }
+
+    private var workspaceEvidenceText: String {
+        guard let workspaceInventory else { return "工作区证据未提供" }
+        let prefix = workspaceInventory.status == "ok" ? "" : "工作区证据不完整 · "
+        return "\(prefix)待确认 \(workspaceInventory.unconfirmedWorkspaceCount)"
     }
 }
 

@@ -27,7 +27,12 @@ struct TestCockpitView: View {
                 .background(Palette.panelRaised, in: Capsule())
             }
 
-            HealthCockpitSummary(events: model.healthEvents)
+            HealthCockpitSummary(events: model.healthEvents, workspaceInventory: model.healthWorkspaceInventory)
+            WorkspaceCockpitSummary(
+                inventory: model.workspaceInventorySnapshot,
+                freshness: model.workspaceSnapshotFreshness,
+                agentOnline: model.agentOnline
+            )
 
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 13) {

@@ -45,6 +45,75 @@ final class ConsoleModelRegressionTests: XCTestCase {
         XCTAssertNil(model.logs, "Stopping the console must invalidate pending log responses")
     }
 
+    func testWorkspaceInventoryIsRetainedAsHistoricalAndExcludedFromLiveHealthAfterDisconnect() throws {
+        let model = ConsoleModel()
+        model.markAgentAvailable(message: "Agent 在线")
+        let observedAt = Date()
+        let snapshot = try makeSnapshot(collectedAt: "2026-10-16T10:00:00Z")
+        model.applySnapshot(snapshot, requestSession: model.agentSession, readAt: observedAt)
+
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .live)
+        XCTAssertEqual(model.healthWorkspaceInventory?.entries.first?.id, "original-navigation")
+
+        model.invalidateAgentData(message: "Agent 断连")
+
+        XCTAssertNil(model.snapshot, "The full system snapshot is no longer a live reading after disconnect")
+        XCTAssertEqual(model.workspaceInventorySnapshot?.entries.first?.id, "original-navigation")
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .historical)
+        XCTAssertNil(model.healthSnapshot, "A retained workspace snapshot must not feed live health evaluation")
+        XCTAssertNil(model.healthWorkspaceInventory)
+    }
+
+    func testDisconnectedWorkspaceSnapshotExpiresButRemainsVisible() throws {
+        let model = ConsoleModel()
+        model.markAgentAvailable(message: "Agent 在线")
+        let observedAt = Date()
+        model.applySnapshot(try makeSnapshot(collectedAt: "2026-10-16T10:00:00Z"), requestSession: model.agentSession, readAt: observedAt)
+        model.invalidateAgentData(message: "Agent 断连")
+
+        model.updateWorkspaceSnapshotFreshness(at: observedAt.addingTimeInterval(ConsoleModel.workspaceSnapshotFreshnessLimit + 1))
+
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .expired)
+        XCTAssertEqual(model.workspaceInventorySnapshot?.entries.first?.id, "original-navigation")
+        XCTAssertNil(model.healthWorkspaceInventory)
+    }
+
+    func testRecoveredConnectionUsesNewWorkspaceSnapshotAsLiveData() throws {
+        let model = ConsoleModel()
+        model.markAgentAvailable(message: "Agent 在线")
+        let firstRead = Date()
+        model.applySnapshot(try makeSnapshot(collectedAt: "2026-10-16T10:00:00Z"), requestSession: model.agentSession, readAt: firstRead)
+        model.invalidateAgentData(message: "Agent 断连")
+        model.markAgentAvailable(message: "Agent 已恢复")
+
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .historical, "Health endpoint recovery alone does not make old workspace evidence live")
+        XCTAssertNil(model.healthWorkspaceInventory)
+
+        let recoveredSnapshot = try makeSnapshot(collectedAt: "2026-10-16T10:00:10Z")
+        model.applySnapshot(recoveredSnapshot, requestSession: model.agentSession, readAt: firstRead.addingTimeInterval(2))
+
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .live)
+        XCTAssertEqual(model.healthWorkspaceInventory?.entries.first?.id, "original-navigation")
+        XCTAssertEqual(model.snapshot?.collectedAt, "2026-10-16T10:00:10Z")
+    }
+
+    func testOlderAgentSnapshotDoesNotEraseOrPromoteHistoricalWorkspaceEvidence() throws {
+        let model = ConsoleModel()
+        model.markAgentAvailable(message: "Agent 在线")
+        let firstRead = Date()
+        model.applySnapshot(try makeSnapshot(collectedAt: "2026-10-16T10:00:00Z"), requestSession: model.agentSession, readAt: firstRead)
+        model.invalidateAgentData(message: "Agent 断连")
+        model.markAgentAvailable(message: "兼容旧版 Agent")
+
+        let legacySnapshot = try makeSnapshot(collectedAt: "2026-10-16T10:00:10Z", includeWorkspaces: false)
+        model.applySnapshot(legacySnapshot, requestSession: model.agentSession, readAt: firstRead.addingTimeInterval(2))
+
+        XCTAssertNil(model.snapshot?.workspaces, "The legacy payload remains valid without workspace telemetry")
+        XCTAssertEqual(model.workspaceInventorySnapshot?.entries.first?.id, "original-navigation")
+        XCTAssertEqual(model.workspaceSnapshotFreshness, .historical)
+        XCTAssertNil(model.healthWorkspaceInventory, "Legacy Agent data cannot promote an older workspace snapshot to live")
+    }
+
     func testDelayedVisionFrameFromPriorAgentSessionCannotRepopulateAfterReconnect() {
         let model = ConsoleModel()
         model.markAgentAvailable(message: "Agent 在线")
@@ -85,5 +154,48 @@ final class ConsoleModelRegressionTests: XCTestCase {
             receivedAt: "2026-10-13T05:00:00Z", gapEvents: 0
         )
         return VisionReading(status: "ok", source: "nuc-ros2-read-only-subscriber", collectedAt: "2026-10-13T05:00:00Z", reason: nil, streams: [stream])
+    }
+
+    private func makeSnapshot(collectedAt: String, includeWorkspaces: Bool = true) throws -> ConsoleSnapshot {
+        var value: [String: Any] = [
+            "schema_version": 1,
+            "collected_at": collectedAt,
+            "source": "nuc-read-only-agent",
+            "host": ["hostname": "robot", "platform": "x86_64", "os_release": []],
+            "system": [
+                "cpu": ["status": "ok", "percent": 5],
+                "memory": ["status": "unknown", "reason": "unavailable"],
+                "disk": ["status": "unknown", "reason": "unavailable"],
+                "temperature": ["status": "unknown", "reason": "unavailable"]
+            ],
+            "git": ["status": "unknown"],
+            "deployment": ["status": "unknown"],
+            "ros": ["status": "ok", "domain_id": 187, "nodes": [], "topics": []],
+            "tests": ["status": "unknown", "records": []],
+            "safety": [
+                "physical_estop": ["status": "unknown", "reason": "not connected"],
+                "hardware_health": ["status": "unknown", "reason": "no hardware evidence"],
+                "control": "disabled"
+            ]
+        ]
+        if includeWorkspaces {
+            value["workspaces"] = [
+                "status": "ok",
+                "source": "nuc-read-only-workspace-and-process-observer",
+                "collected_at": collectedAt,
+                "workspaces": [[
+                    "id": "original-navigation",
+                    "label": "原始导航与雷达工程",
+                    "source_kind": "original",
+                    "source_status": "present",
+                    "runtime_status": "unknown",
+                    "run_expectation": "unconfigured"
+                ]]
+            ]
+        }
+        let data = try JSONSerialization.data(withJSONObject: value)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(ConsoleSnapshot.self, from: data)
     }
 }
