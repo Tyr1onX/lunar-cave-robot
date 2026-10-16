@@ -1,5 +1,7 @@
 # P8 软件集成与 NUC 隔离部署
 
+> **历史 P8 基线。** 下文命令和路径记录的是原有 P8 验收，不用于新版构建或测试。当前源码位于 `~/lunar-robot/code`；新版操作见[工作区布局](WORKSPACE_LAYOUT.md)和[部署流程](DEPLOYMENT_WORKFLOW.md)。P8 工作区和结果保留在 `~/lunar-robot/archive/p8/`。
+
 ## 版本来源与集成
 
 P8 分支以 `p7/full-control-integration` 的 `852aced76170f5435d7084073020a3b755b9f32e` 为基线。MID-360 修复来源为 `codex/mid360-driver-nuc-ready`：驱动修复 `20fef12` 已通过 cherry-pick 集成；NUC 构建记录与静态验收流程来源于 `ea1fc0f`、`189cf2f`，在 P8 中整理为脱敏部署文档。P8 不合并 `main`，不改 P4e/P4f 安全策略或 STM32 协议；P6 的改动只增加 P5b 主机串口状态协调。

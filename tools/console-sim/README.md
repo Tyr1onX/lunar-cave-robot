@@ -2,10 +2,10 @@
 
 Explicitly launch the **existing** P6 `cave_simulator.py` inside a dedicated isolated ROS process, never the real robot stack. Requires ROS 2 Humble on NUC. No dependency on `tzb_ws`, `Nav2_rea_ws` overlays, serial, CAN, device drivers, or the production read-only Agent.
 
-On NUC, after copying this repository or **only** `tools/console-sim` plus `Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission`, run:
+On NUC, after checking out GitHub `main` under `~/lunar-robot/code` or copying **only** `tools/console-sim` plus `Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission` into that checkout, run:
 
 ```sh
-cd ~/lunar-cave-robot
+cd ~/lunar-robot/code
 bash tools/console-sim/run.sh
 ```
 

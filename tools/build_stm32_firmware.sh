@@ -8,7 +8,22 @@ fi
 
 module=$1
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-build_root=${STM32_BUILD_ROOT:-"${XDG_CACHE_HOME:-$HOME/.cache}/lunar-cave-robot/stm32"}
+if [[ "$(basename -- "$repo_root")" == code ]]; then
+  project_root=$(dirname -- "$repo_root")
+  default_build_root="$project_root/tests/cache/lunar-cave-robot/stm32"
+  build_root=${STM32_BUILD_ROOT:-$default_build_root}
+  resolved_project_root=$(realpath -m -- "$project_root")
+  resolved_build_root=$(realpath -m -- "$build_root")
+  case "$resolved_build_root" in
+    "$resolved_project_root"/tests/*) build_root=$resolved_build_root ;;
+    *)
+      echo "拒绝在 lunar-robot/code 外构建新版 STM32 固件：$build_root" >&2
+      exit 2
+      ;;
+  esac
+else
+  build_root=${STM32_BUILD_ROOT:-"${XDG_CACHE_HOME:-$HOME/.cache}/lunar-cave-robot/stm32"}
+fi
 build_dir="$build_root/$module"
 log_file="$build_root/logs/$module-build.log"
 key="firmware-$module-build"

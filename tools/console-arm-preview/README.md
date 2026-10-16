@@ -13,7 +13,7 @@ sudo apt install ros-humble-foxglove-bridge
 From the synchronized repository, start only the offline preview:
 
 ```sh
-cd ~/lunar-cave-robot
+cd ~/lunar-robot/code
 bash tools/console-arm-preview/run.sh
 ```
 

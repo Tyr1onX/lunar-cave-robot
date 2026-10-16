@@ -169,7 +169,7 @@ def _git_read(repo: Path, *args: str) -> str | None:
 
 
 def collect_git() -> dict[str, Any]:
-    repo = Path(os.environ.get("LUNAR_CONSOLE_REPO", "~/lunar-cave-robot")).expanduser()
+    repo = Path(os.environ.get("LUNAR_CONSOLE_REPO", "~/lunar-robot/code")).expanduser()
     head = _git_read(repo, "rev-parse", "HEAD")
     if not head:
         return _unknown("repository HEAD is unavailable at the configured repository path")
@@ -183,7 +183,12 @@ def collect_git() -> dict[str, Any]:
 
 def _state_root() -> Path:
     configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured).expanduser() if configured else Path.home() / ".local" / "state"
+    if configured:
+        base = Path(configured).expanduser()
+    else:
+        repo = Path(os.environ.get("LUNAR_CONSOLE_REPO", "~/lunar-robot/code")).expanduser()
+        project_root = repo.parent if repo.name == "code" else None
+        base = project_root / "tests" / "state" if project_root is not None else Path.home() / ".local" / "state"
     return base / "lunar-cave-robot"
 
 

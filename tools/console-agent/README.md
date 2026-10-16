@@ -4,16 +4,16 @@ Python 3.10 agent for Ubuntu 22.04 / ROS 2 Humble. It exposes read-only HTTP `GE
 
 The V0.3c module test runner is a separate service process in `console_agent.module_tests`, with its own loopback listener at `127.0.0.1:8769`. It is not an Agent write route. Install and start it using [`install-module-test-service.sh`](install-module-test-service.sh); its API accepts only fixed test IDs in the registry and never accepts a command or free-form arguments. The test runner runs as the current user and does not start robot hardware.
 
-The registry reuses the ROS environment check, URDF FK, OpenVINO YOLO synthetic-image smoke test, P5 chassis protocol/source checks, P6 unit and six-scenario suites, and P7 twelve-scenario PTY suite. YOLO preflight discovers the existing `~/lunar-field-lab-p9i` venv, built ROS overlay and `models/blue_block` bundle; it does not rebuild or install them. P6/P7 simulations may build their repository-local workspace outputs when required and use synthetic inputs/PTYs only. Four LIVE entries inspect the existing local ROS graph and low-bandwidth status topics only; they never launch drivers, subscribe to camera images or lidar point clouds, or send commands. LIVE read-only observations are status snapshots, not hardware acceptance.
+The registry reuses the ROS environment check, URDF FK, OpenVINO YOLO synthetic-image smoke test, P5 chassis protocol/source checks, P6 unit and six-scenario suites, and P7 twelve-scenario PTY suite. In the standard layout, YOLO uses `~/lunar-robot/lab/vision` for its venv, built ROS overlay and `models/blue_block` bundle; it does not install packages during a test. P6/P7 simulations build only inside `~/lunar-robot/code` when required and use synthetic inputs/PTYs. Reports and scenario logs are saved under `~/lunar-robot/tests/state/`. Four LIVE entries inspect the existing local ROS graph and low-bandwidth status topics only; they never launch drivers, subscribe to camera images or lidar point clouds, or send commands. LIVE read-only observations are status snapshots, not hardware acceptance.
 
 The Mac app forwards its local port 18765 to this loopback endpoint through the configured SSH alias `nuc`. HTTP is not exposed to Tailscale, LAN, or the public internet. The app will not start this process remotely; start and stop the agent on the NUC through the documented operator procedure.
 
 ## Start for a development session
 
-Run in a NUC terminal with the ROS Humble environment sourced and the repository at `~/lunar-cave-robot`:
+Run in a NUC terminal with the ROS Humble environment sourced and the repository at `~/lunar-robot/code`:
 
 ```sh
-cd ~/lunar-cave-robot/tools/console-agent
+cd ~/lunar-robot/code/tools/console-agent
 source /opt/ros/humble/setup.bash
 python3 -m console_agent
 ```

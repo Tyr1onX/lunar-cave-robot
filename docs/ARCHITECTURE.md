@@ -148,7 +148,7 @@ Nav2 规划/控制                                                ↓
 
 另外已有**至少 24 个源文件**包含旧主机绝对路径；`localization/alignment/config/config.yaml` 是直观例子。机械臂原始 YAML、老导航 launch、地图路径以及外部 `tzb_state_test` 依赖需要逐项清理或重新配置。第三方 GPL/Apache/MIT/BSD/AGPL 等信息见 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)，发布边界见 [`RELEASE_AUDIT.md`](RELEASE_AUDIT.md)。
 
-## 6. 新成员如何接手（推荐顺序）
+## 6. 项目交接与阅读顺序
 
 1. **先认领模块与接口。** 确认你负责导航、感知、规划、底盘/机械臂串口或系统集成中的哪一块，以及该模块对接人是谁。**现有仓库没有可信的模块负责人名单，不能从提交者推断负责人。**
 2. **读本页和对应 launch / YAML。** 理清输入、输出 Topic、TF、消息类型、硬件端口及是否依赖未上传资产。

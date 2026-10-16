@@ -1,27 +1,34 @@
-# 三端设备状态
+# GitHub、ThinkBook 与 NUC
 
-GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是源码版本来源。ThinkBook 用于开发和离线测试；NUC 用于车载部署准备。默认统一工作目录如下：
+GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是正式新版源码。设备上的新版目录关系如下：
 
-| 端 | 统一仓库目录 | 既有工作区处理 |
+| 端 | 正式新版代码 | 用途 |
 | --- | --- | --- |
-| GitHub | `Tyr1onX/lunar-cave-robot`，`main` | 唯一共享源码入口；保持 Private |
-| ThinkBook | `~/lunar-cave-robot` | 新建统一 clone；保留 `~/lunar-cave-p8-validation` 及其它旧工作区 |
-| NUC | `~/lunar-cave-robot` | 新建统一 clone；保留 `tzb_ws`、`Nav2_rea_ws`、`nav_ws`、`mid360_driver_dev` 等现场 |
+| GitHub | `Tyr1onX/lunar-cave-robot` 的 `main` | 新版源码来源 |
+| ThinkBook | `/home/qibai/lunar-robot/code` | 新版开发、构建和离线验证 |
+| NUC | `/home/tzb/lunar-robot/code` | 独立新版 checkout、Console 受限测试服务 |
 
-## 查询实时状态
+截至 2026-10-16，两台设备的 `code` 都位于 `main` SHA `c2f4a5ffb6fc764713af6040b11cd648b750b3a5`，工作树干净。ThinkBook 已有 `tests/state/`、`archive/baseline/` 与 `archive/p8/`；NUC 另有 `tests/config/`、`tests/results/`、`tests/ros-home/`、`tests/state/`、`lab/vision/`、`lab/simulation/` 和历史 `archive/`。具体清单见[工作区布局](WORKSPACE_LAYOUT.md)。
 
-从 Mac 上这个仓库的根目录运行：
+**NUC 原始工程保护区**：`/home/tzb/tzb_ws`、`/home/tzb/Nav2_rea_ws`。ThinkBook 历史原始工作区为 `/home/qibai/robot_p0/tzb_ws`、`/home/qibai/robot_p0/Nav2_rea_ws`。新版同步、构建和测试只指向 `~/lunar-robot/code`，不得设置为这些原始目录或历史目录。
+
+## 查询设备状态
+
+在 Mac 侧项目工作区执行：
 
 ```bash
 ./tools/device_status.sh
 ```
 
-脚本以只读方式读取 GitHub `main` SHA，并通过 SSH 别名 `thinkbook` 和 `nuc` 查询统一目录的 HEAD、分支、未提交文件数、与 GitHub 的提交差异、各类构建/测试记录和显式部署 SHA。可用 `THINKBOOK_ALIAS`、`NUC_ALIAS`、`THINKBOOK_REPO`、`NUC_REPO` 覆盖默认值。只读查询不转发 SSH agent；同步命令会在当前 SSH 会话中临时转发 Mac agent，以便设备克隆或获取私有 GitHub 仓库。
+脚本只读查询 GitHub `main` 与两台设备的新版目录，显示 SHA、分支、脏状态和支持的测试记录。默认 SSH 别名为 `thinkbook`、`nuc`；默认远程仓库路径为 `~/lunar-robot/code`。可用 `THINKBOOK_ALIAS`、`NUC_ALIAS`、`THINKBOOK_REPO`、`NUC_REPO` 覆盖，但不要把仓库路径设置到原始 ROS 工作区、`archive/`、`lab/` 或 `tests/`。
 
-独立记录保存在设备各自 `$XDG_STATE_HOME/lunar-cave-robot/tests/`（默认 `$HOME/.local/state/lunar-cave-robot/tests/`）：`ros-offline-suite.yaml`、`p7-scenario.yaml`、`ros-nav-build.yaml`、`ros-arm-build.yaml`、`firmware-chassis-protocol-test.yaml`、`firmware-chassis-build.yaml` 和 `firmware-arm-build.yaml`。每条记录由脚本从执行时 Git 工作树自动写入时间、结果、SHA、分支和范围；单场景状态不会覆盖完整 P7/P8 套件状态。旧版 `latest-test.yaml` 仍作为无范围历史记录读取。`./tools/device_status.sh` 对缺失记录显示“未记录”，不会把未运行推断为通过。部署版本记录只有在部署负责人确认后才可以手动写入 `deployed-sha`；代码同步脚本不写入它。
+在任一设备上确认版本：
 
-## 已知基线与限制
+```bash
+git -C ~/lunar-robot/code rev-parse HEAD
+git -C ~/lunar-robot/code status --short --branch
+```
 
-P8 验收报告记录两台设备旧工作区 `~/lunar-cave-p8-validation`、`~/lunar-cave-p8` 的 HEAD 为 `f6005a076997a7e05e079408f7e84e1b6b9bdb8f`，并有 12 个 PTY 离线场景通过记录。此为 P8 的历史验收 SHA；P9 新统一目录的实时状态以脚本输出为准。NUC 另有 MID-360 驱动构建通过记录，未启动雷达采集。
+新增测试报告和日志位于 `~/lunar-robot/tests/state/lunar-cave-robot/`；Console 模块测试记录在其 `module-tests/` 子目录。历史记录仍可能保存原路径字符串，它们是迁移前的测试材料，不表示当前服务仍从旧目录运行。当前 NUC 服务单元和 drop-in 副本在 `~/lunar-robot/tests/config/`。
 
-首次同步前，ThinkBook 的 P4f 工作区有未提交变更，NUC `tzb_ws` 的 README 有本地修改；这些目录保持原样。NUC `mid360_driver_dev` 是独立旧分支，包含对 P7/P8 有回退的差异，不纳入统一源码目录。新增统一 clone 后不会改写这些旧工作区。
+“有源码”“测试通过”和“已经部署”是不同状态。部署 SHA 只有经过负责人实际部署确认后才能记录；OFFLINE/SIMULATION/LIVE 观察均不自动形成实机验收。

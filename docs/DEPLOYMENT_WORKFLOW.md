@@ -1,63 +1,67 @@
-# 开发、验证、同步与部署流程
+# 新版开发、离线验证与同步
 
-## 日常开发
+GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是正式源码来源。ThinkBook 用于新版开发和离线验证；NUC 的新版代码、Console 服务和测试结果各自放在 `~/lunar-robot/`。原始 ROS 工作区和 `archive/` 不参与同步。完整目录说明见[工作区布局](WORKSPACE_LAYOUT.md)。
 
-1. 在 ThinkBook 的 `~/lunar-cave-robot` 从 `main` 建开发分支。
-2. 按 P8 部署说明分别构建 `tzb_ws` 和 `Nav2_rea_ws`；不要合并两个工作空间或在一个终端叠加其 `install/setup.bash`。
-3. 只运行仓库提供的离线验证。实体执行器保持禁用；不要因源码同步启动 ROS 节点。
-4. 提交并通过 PR 合入 GitHub Private `main`。仓库记录源码版本。
-
-## 查询与安全同步
-
-Mac 需要可用的 SSH 别名 `thinkbook`、`nuc`，已加载可访问 GitHub 私有仓库的 SSH agent 身份，并在设备的 `known_hosts` 中登记经 GitHub 官方指纹核实的 `github.com` 主机密钥。在仓库根目录：
+## 开发和提交
 
 ```bash
-./tools/device_status.sh
-./tools/sync_devices.sh
+cd ~/lunar-robot/code
+git status --short --branch
+git rev-parse HEAD
 ```
 
-同步脚本临时转发 Mac 的 SSH agent 供设备端 Git 访问，私钥不会复制到 ThinkBook/NUC。对缺失的预定目录，它先在同一父目录的临时路径克隆，成功后再原子改名为统一目录；克隆失败会清理本次临时目录。对已有目录只接受正确 origin、当前分支为 `main`、工作树干净、没有本地独有提交且远端可快进的情况。同步通过 `fetch` 和 `merge --ff-only` 完成。若本地有改动、分叉、仓库身份不符或远端 main 在操作期间变化，脚本停止并保留现场。它不删除、重置或备份既有工作空间，不运行机器人程序，不连接控制器。
+ThinkBook 在 `code/` 的开发分支上修改，通过 PR 合并到 GitHub `main`。在合并前，可从 `code/` 运行仓库已有的主机或离线测试；测试结果写到 `~/lunar-robot/tests/`。不要从 `archive/`、`lab/`、旧 checkout 或原始 ROS 工作区开发正式修改。
 
-如果检查显示目标目录不是统一 clone 或含修改，应先人工审阅，再将需要保留的改动提交到分支/PR；不要清理旧目录来绕过保护。新的源码版本先只进入统一 Git 工作目录；NUC 的 ROS 安装、SDK、设备私密配置和部署目录保持各自管理。
+## 离线验证
 
-## ROS 2 离线验证
-
-在每台设备统一 clone 的根目录分别运行：
+完整 P7/P8 PTY 离线套件：
 
 ```bash
+cd ~/lunar-robot/code
 ./tools/run_offline_validation.sh
 ```
 
-该入口执行 P7/P8 集成 PTY 离线场景，不会访问真实串口、CAN、相机、雷达或电机。测试结果带有仓库 SHA 保存到用户状态目录，供 `device_status.sh` 展示。不同设备依赖缺失时按错误输出补齐依赖，不得把跳过或未运行标记为通过。
-
-完整套件与单个场景分开记录。运行单场景：
+单个 P7 场景：
 
 ```bash
 ./tools/run_p7_scenario.sh normal
 ```
 
-分别构建两个 ROS 工作区并记录各自的构建 SHA：
+Mac Lunar Robot Console “模块测试”页执行固定 allowlist 的 OFFLINE/SIMULATION 测试。NUC 当前 `lunar-console-module-tests.service` 从 `~/lunar-robot/code` 运行，状态文件、报告、场景日志和 ROS_HOME 在 `~/lunar-robot/tests/`；视觉测试使用 `~/lunar-robot/lab/vision`。停止运行中的 GUI 测试请点“停止”；命令行测试用 `Ctrl-C`，然后读取退出状态与 run report。每次测试以报告记录的 commit SHA、模式、输入源和结果为准。
+
+只在核实报告为 `OFFLINE` 或 `SIMULATION` 后，记录为相应的软件/仿真验证。`LIVE` 是对现有 ROS 图的只读观察，不能算作硬件验收。视觉模型和 P6/P7 仿真通过都不代表真实相机、雷达、底盘或机械臂已通过。
+
+## 查询与快进同步
+
+Mac 在本仓库根目录查询三端状态：
 
 ```bash
-./tools/build_ros2_offline_workspaces.sh
+./tools/device_status.sh
 ```
 
-记录文件位于 `$XDG_STATE_HOME/lunar-cave-robot/tests/`。固件构建状态由归档工作区的固件构建入口写入同一状态目录；不能用 ROS/PTy 结果代替 STM32 编译结果。
-
-## STM32 固件构建
-
-在 ThinkBook 的 Linux 环境安装独立 ARM GNU 工具链后，在统一仓库工作区运行：
+只在审核目标 commit 后同步新版源码：
 
 ```bash
-export STM32CUBECLT_PATH=/path/to/arm-gnu-toolchain
-./tools/build_stm32_firmware.sh chassis
-./tools/build_stm32_firmware.sh arm
+./tools/sync_devices.sh
 ```
 
-脚本在 `$XDG_CACHE_HOME/lunar-cave-robot/stm32/`（默认 `~/.cache/lunar-cave-robot/stm32/`）建立仓库外构建目录和日志，并分别写入 `firmware-chassis-build` / `firmware-arm-build` 状态记录。它只运行 CMake 配置和编译，不调用烧录、串口或调试器命令。工具链路径、编译器版本、已知的机械臂生成文件阻塞及最近审计结果见[STM32 构建审计](STM32_BUILD_AUDIT.md)。
+默认目标是 ThinkBook 和 NUC 的 `~/lunar-robot/code`。同步脚本确认 Git 来源、`main` 分支、工作区干净和远端可快进；条件不符时停止，不覆盖本地修改。脚本不构建、不启动机器人，也不改写历史目录。不要通过 `THINKBOOK_REPO`、`NUC_REPO` 把默认目标改指到以下保护区：
 
-## NUC 部署与回滚
+- NUC `/home/tzb/tzb_ws`
+- NUC `/home/tzb/Nav2_rea_ws`
+- ThinkBook `/home/qibai/robot_p0/tzb_ws`
+- ThinkBook `/home/qibai/robot_p0/Nav2_rea_ws`
+- 任一设备 `~/lunar-robot/archive/` 或 `~/lunar-robot/lab/`
 
-Git 同步只更新源码，不等于将该版本部署到车载运行目录。部署前应由负责人确认目标 SHA、设备专用参数、驱动 SDK 与安全门槛，并沿用 `docs/REAL_ROBOT_SAFETY_GATES.md` 的受控流程。运行程序和执行器需显式人工启动；P9 脚本不会自动启动。
+在设备上确认本地版本：
 
-记录部署版本时，由部署负责人在 NUC 写入 `~/.local/state/lunar-cave-robot/deployed-sha`（或 `$XDG_STATE_HOME` 对应位置），内容为实际部署源码 SHA，并保存相应配置/构建记录。回滚应选择已审核的提交 SHA，先确认工作目录干净，再在部署工作流中由负责人执行；不要用强制 reset 覆盖工作区。源码统一 clone 保留 Git 历史，可据状态报告确认从哪个提交回到目标提交。
+```bash
+git -C ~/lunar-robot/code rev-parse HEAD
+git -C ~/lunar-robot/code status --short --branch
+```
+
+## NUC 实机部署边界
+
+同步到 NUC 的 `~/lunar-robot/code` 只表示源码已到位，不表示部署已验收或机器人运行。启动任何真实传感器、驱动器或执行器之前，负责人需要审核目标 SHA、设备参数和[`真实机器人安全门槛`](REAL_ROBOT_SAFETY_GATES.md)，再按受控步骤记录实机验收。当前 PR #8 STM32 安全状态机、机械臂产品固件输入、真实传感器/运动验收仍有未完成项。
+
+本项目不使用新版部署脚本写入 NUC 原始 ROS 工作区。不得为了版本统一重置原始目录、历史 P7/P8 基线、模型或设备配置。

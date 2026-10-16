@@ -4,10 +4,17 @@ set -euo pipefail
 repo_root="$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" rev-parse --show-toplevel)"
 service_dir="$HOME/.config/systemd/user"
 service_file="$service_dir/lunar-console-module-tests.service"
+required_repo=$(realpath -m -- "$HOME/lunar-robot/code")
+resolved_repo=$(realpath -m -- "$repo_root")
+if [[ "$resolved_repo" != "$required_repo" ]]; then
+  echo "Console 模块测试服务只允许安装到 $required_repo；拒绝 $resolved_repo" >&2
+  exit 2
+fi
 mkdir -p "$service_dir"
 
 python3 - "$service_file" "$repo_root" <<'PY'
 from pathlib import Path
+import os
 import sys
 
 def quoted(value: str) -> str:
@@ -15,6 +22,14 @@ def quoted(value: str) -> str:
 
 service_file, repo_root = Path(sys.argv[1]), sys.argv[2]
 agent_dir = f"{repo_root}/tools/console-agent"
+repo_path = Path(repo_root)
+if repo_path.name == "code":
+    project_root = repo_path.parent
+    state_home = Path(os.environ.get("LUNAR_CONSOLE_STATE_HOME", project_root / "tests" / "state")).expanduser()
+    field_lab_root = Path(os.environ.get("LUNAR_CONSOLE_FIELD_LAB_ROOT", project_root / "lab" / "vision")).expanduser()
+else:
+    state_home = Path(os.environ.get("LUNAR_CONSOLE_STATE_HOME", Path.home() / ".local" / "state")).expanduser()
+    field_lab_root = Path(os.environ.get("LUNAR_CONSOLE_FIELD_LAB_ROOT", Path.home() / "lunar-field-lab-p9i")).expanduser()
 body = "\n".join([
     "[Unit]",
     "Description=Lunar Robot Console restricted module test runner",
@@ -24,6 +39,8 @@ body = "\n".join([
     "Type=simple",
     f"WorkingDirectory={agent_dir}",
     f"Environment=LUNAR_CONSOLE_REPO={quoted(repo_root)}",
+    f"Environment=XDG_STATE_HOME={quoted(str(state_home))}",
+    f"Environment=LUNAR_CONSOLE_FIELD_LAB_ROOT={quoted(str(field_lab_root))}",
     "Environment=LUNAR_CONSOLE_TEST_BIND=127.0.0.1",
     "Environment=ROS_DOMAIN_ID=187",
     "Environment=ROS_LOCALHOST_ONLY=1",
@@ -60,6 +77,11 @@ service_file.write_text(body, encoding="utf-8")
 PY
 
 systemctl --user daemon-reload
-systemctl --user enable --now lunar-console-module-tests.service
+systemctl --user enable lunar-console-module-tests.service
+if systemctl --user is-active --quiet lunar-console-module-tests.service; then
+  systemctl --user restart lunar-console-module-tests.service
+else
+  systemctl --user start lunar-console-module-tests.service
+fi
 printf 'Installed and started %s\n' "$service_file"
 printf 'Optional YOLO model path file: %s/.config/lunar-console/yolo-model-dir\n' "$HOME"

@@ -16,8 +16,27 @@ sync_device() {
 set -euo pipefail
 remote_url=$1
 device_repo=$2
-if [[ "$device_repo" == __HOME__ ]]; then device_repo="$HOME/lunar-cave-robot"; fi
+if [[ "$device_repo" == __HOME__ ]]; then device_repo="$HOME/lunar-robot/code"; fi
 expected_sha=$3
+required_target=$(realpath -m -- "$HOME/lunar-robot/code")
+resolved_target=$(realpath -m -- "$device_repo")
+if [[ -L "$HOME/lunar-robot" || -L "$HOME/lunar-robot/code" ]]; then
+  echo "拒绝通过符号链接写入新版路径：$HOME/lunar-robot/code" >&2
+  exit 19
+fi
+if [[ "$resolved_target" != "$required_target" ]]; then
+  echo "新版同步只允许写入 $required_target；拒绝目标 $resolved_target" >&2
+  exit 19
+fi
+for protected_root in "$HOME/tzb_ws" "$HOME/Nav2_rea_ws" "$HOME/robot_p0/tzb_ws" "$HOME/robot_p0/Nav2_rea_ws"; do
+  resolved_protected=$(realpath -m -- "$protected_root")
+  case "$resolved_target" in
+    "$resolved_protected"|"$resolved_protected"/*)
+      echo "拒绝在原始 ROS 工作区范围内同步：$resolved_target" >&2
+      exit 19
+      ;;
+  esac
+done
 
 normalize_repo() {
   local value=$1
@@ -44,7 +63,7 @@ fi
 if [[ ! -e "$device_repo" ]]; then
   parent_dir=$(dirname -- "$device_repo")
   mkdir -p "$parent_dir"
-  clone_temp=$(mktemp -d "$parent_dir/.lunar-cave-robot-clone.XXXXXX")
+  clone_temp=$(mktemp -d "$parent_dir/.lunar-robot-code-clone.XXXXXX")
   git clone --single-branch --branch main "$remote_url" "$clone_temp"
   if [[ -e "$device_repo" || -L "$device_repo" ]]; then
     echo "目标目录在克隆期间出现；保留目标并停止：$device_repo" >&2

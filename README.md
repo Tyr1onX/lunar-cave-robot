@@ -1,6 +1,8 @@
 # Lunar Cave Robot｜月球洞穴机器人
 
-吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 Tyr1onX/lunar-cave-robot 是团队源码的统一入口；ThinkBook 用于开发和离线测试，NUC 用于车载部署准备。P9-E 审查时的 main 基线为 6a48dc52f5d7f5b263845bdec0639f59144a4486；最近完整 P7/P8 离线套件在代码 SHA 07a56c3a33882aa2866f1076d8597776e2579bcb 上通过 12/12，main 后续只有文档提交。PR #8 安全状态机仍开放，P9-E 审查发现若干机械臂控制时序缺口。机械臂缺少真实 XRobot 产品输入；归档源码也不代表实体控制器当前固件版本。
+吉甲大师战队的移动机器人与机械臂协作项目。GitHub 私有仓库 `Tyr1onX/lunar-cave-robot` 的 `main` 是新版正式源码来源。ThinkBook 和 NUC 的新版项目根目录统一为 `~/lunar-robot/`，正式代码位于 `~/lunar-robot/code`；目录用途、迁移状态和安全边界见[工作区布局与迁移记录](docs/WORKSPACE_LAYOUT.md)。NUC 原始 ROS 工程的位置、保护边界和核查证据见[工作区交接](docs/WORKSPACE_HANDOFF.md)。实体传感器、驱动器和机器人运动仍未验收，P7/P8 离线通过不能替代实机验收。
+
+NUC 的目录结构、安全操作及原始工程 README 现状见 [NUC 使用指南](docs/NUC_GETTING_STARTED.md)。
 
 ## 源码地图
 
@@ -12,7 +14,7 @@
 | [`firmware/chassis/`](firmware/chassis/) | STM32H723 六轮底盘工程；含 CubeMX、CMake、Keil、HAL/CMSIS、FreeRTOS 与团队控制源码 |
 | [`hardware/`](hardware/) | 机械 CAD、电气/PCB、接线、BOM 和设备资料归档入口；当前仅放资产接收说明，未找到可归档原始设计文件 |
 | [`tools/`](tools/) | P4～P9 离线验证、感知测试、源码完整性检查、三端状态查询与安全同步入口 |
-| [docs/](docs/) | [新人技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
+| [docs/](docs/) | [技术总览](docs/TECHNICAL_OVERVIEW.md)、架构、验收、安全、硬件负责人清单与部署资料 |
 | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | 第三方源码及许可证来源摘要；各依赖原始许可文件保留在对应源码目录 |
 
 两个 ROS 2 工作空间保持独立。`tzb_ws` 与 `Nav2_rea_ws` 中存在历史重名消息包；不要把两者合并到同一个 colcon 工作空间，也不要在一个终端随意叠加两套 `install/setup.bash`。
@@ -39,22 +41,23 @@ MID-360 → 定位/建图 → Nav2 → 底盘主机桥 → UART 14 字节帧 →
 - 相机采集、传感器标定、真实 MCU 应答、物理急停、机械限位、底盘制动和实机抓取仍未验收。
 - 本轮没有打开 STM32 串口、烧录固件或启动实体机器人运动。
 
-新成员先读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
+建议先阅读[技术总览](docs/TECHNICAL_OVERVIEW.md)。详见[P8 验收报告](docs/P8_VALIDATION_REPORT.md)、[项目状态](docs/PROJECT_STATUS.md)、[发布审计](docs/RELEASE_AUDIT.md)、[硬件负责人清单](docs/HARDWARE_OWNER_CHECKLIST.md)、[PR #8 接入审查](docs/P9E_PR8_INTEGRATION_REVIEW.md)、[XRobot 构建恢复记录](docs/XROBOT_ARM_BUILD_RECOVERY.md)、[P9-I 感知离线验证](docs/P9I_VISION_OFFLINE_VALIDATION.md)、[资产清单](docs/PROJECT_ASSETS.md)和[P9-B 安全审计](docs/STM32_SAFETY_AUDIT.md)。
 
 ## 开发与离线验证
 
-推荐环境为 Ubuntu 22.04、ROS 2 Humble、colcon，以及各 ROS 包声明的系统依赖。首次构建按[P8 部署说明](docs/P8_DEPLOYMENT.md)检查依赖；两个工作空间分开构建、分开运行。
+推荐环境为 Ubuntu 22.04、ROS 2 Humble、colcon，以及各 ROS 包声明的系统依赖。P8 部署文档是历史验收基线；当前目录和操作说明见[工作区布局](docs/WORKSPACE_LAYOUT.md)与[新版流程](docs/DEPLOYMENT_WORKFLOW.md)。两个 ROS 工作空间仍分开构建、分开运行。
 
 ```bash
-git clone --branch main git@github.com:Tyr1onX/lunar-cave-robot.git
-cd lunar-cave-robot
+mkdir -p ~/lunar-robot
+git clone --branch main git@github.com:Tyr1onX/lunar-cave-robot.git ~/lunar-robot/code
+cd ~/lunar-robot/code
 P7_SIMULATED_OPERATOR_ACTION=enable-offline-simulator ./tools/p7_offline/run.sh
 ```
 
-完整的 12 项离线故障场景可通过 `./tools/run_offline_validation.sh` 运行。脚本只调用仓库内隔离 PTY 测试，并把测试结果写入用户状态目录；不会启动设备驱动或实体机器人。源码和脚本自身的完整性检查入口为 `python3 tools/verify_project_assets.py`。
+完整的 12 项离线故障场景可通过 `./tools/run_offline_validation.sh` 运行。脚本只调用仓库内隔离 PTY 测试，并将测试记录写入 `~/lunar-robot/tests/state/lunar-cave-robot/`；ROS 构建结果留在 `code/` 内，不会启动设备驱动或实体机器人。源码和脚本自身的完整性检查入口为 `python3 tools/verify_project_assets.py`。
 GitHub Actions 在 PR 与 main push 上自动运行底盘生产协议解析器主机测试，并在相应安全 FSM 测试脚本存在的分支上运行状态机测试；工作流不连接 STM32 或电机。
 
-固件编译入口（构建目录和日志位于用户缓存目录，不会连接控制器）：
+固件编译入口（默认构建目录和日志位于 `~/lunar-robot/tests/cache/`，不会连接控制器）：
 
 ```bash
 export STM32CUBECLT_PATH=/path/to/arm-gnu-toolchain
@@ -73,9 +76,9 @@ GitHub `main` 是源码版本来源。Mac 连接 ThinkBook 和 NUC 后，在仓�
 ./tools/sync_devices.sh
 ```
 
-状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。默认统一目录为 ThinkBook `~/lunar-cave-robot`、NUC `~/lunar-cave-robot`；原有 P0～P8 工作空间不移动、不覆盖。可以通过 `THINKBOOK_REPO`、`NUC_REPO` 环境变量更改目标路径。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问；同步还需要 Mac SSH agent 中已授权 GitHub 的密钥，密钥不会复制到设备。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)与[设备状态](docs/DEVICE_STATUS.md)。
+状态查询只读；同步脚本只克隆新目录或对干净的 `main` 工作树执行快进更新。遇到未提交修改、分支分叉或错误仓库时会停止，不重置工作区。它不会启动 ROS 节点或机器人程序。ThinkBook 和 NUC 的同步目标固定为 `~/lunar-robot/code`；脚本拒绝同步到其它目录，避免覆盖原始工程或历史版本。Mac 侧一键查询依赖 SSH 别名 `thinkbook`、`nuc` 和 GitHub 只读访问；同步还需要 Mac SSH agent 中已授权 GitHub 的密钥，密钥不会复制到设备。设备路径、备份策略和回滚步骤见[部署流程](docs/DEPLOYMENT_WORKFLOW.md)、[设备状态](docs/DEVICE_STATUS.md)和[工作区布局](docs/WORKSPACE_LAYOUT.md)。
 
-状态查询会分别显示 P7/P8 全套、单场景、两个 ROS 工作区构建以及两套 STM32 固件构建记录。单场景通过 `./tools/run_p7_scenario.sh normal` 运行并单独记账，不会覆盖完整套件结果；两个 ROS 工作区可用 `./tools/build_ros2_offline_workspaces.sh` 独立构建并自动记录各自结果。测试记录附带执行时 SHA、分支、时间和测试范围；未运行显示“未记录”。
+状态查询会分别显示 P7/P8 全套、单场景、两个 ROS 工作区构建以及两套 STM32 固件构建记录。单场景通过 `./tools/run_p7_scenario.sh normal` 运行并单独记账，不会覆盖完整套件结果；两个 ROS 工作区可用 `./tools/build_ros2_offline_workspaces.sh` 独立构建并自动记录各自结果。Mac Lunar Robot Console 的模块测试服务也从 `~/lunar-robot/code` 运行，报告写入 `~/lunar-robot/tests/state/`。测试记录附带执行时 SHA、分支、时间和测试范围；未运行显示“未记录”。
 
 ## 仓库及分享边界
 
