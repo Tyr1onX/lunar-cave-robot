@@ -82,7 +82,7 @@ Mac Lunar Robot Console 的“模块测试”页使用固定白名单测试 ID�
 
 ## 后续部署与验收
 
-1. 新人从 GitHub `main` 获取正式代码，在 ThinkBook `~/lunar-robot/code` 开发；通过 PR 合并后，再按审核的 commit 同步 NUC 的 `~/lunar-robot/code`。
+1. 从 GitHub `main` 获取正式代码，在 ThinkBook `~/lunar-robot/code` 开发；通过 PR 合并后，再按审核的 commit 同步 NUC 的 `~/lunar-robot/code`。
 2. 目前两台设备都位于本次核验 SHA；后续 NUC 代码同步只同步该独立路径，不重置旧目录或历史基线。
 3. 真实机器人启动仍需负责人审核目标 SHA、参数和 `docs/REAL_ROBOT_SAFETY_GATES.md` 的安全门槛，按传感器、底盘、机械臂逐项验收。
 4. 解除真实机械臂固件构建阻塞前，需要产品对应的 XRobot 生成输入并修复 PR #8 记录的安全时序缺口。真实硬件验收完成前，不把任何模拟/离线记录标记为实机通过。
