@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from console_agent.workspaces import (
     ModuleSpec,
@@ -38,11 +39,11 @@ class WorkspaceInventoryTests(unittest.TestCase):
         with _CACHE_LOCK:
             _INVENTORY_CACHE.clear()
 
-    def _fake_process(self, command: bytes, environment: bytes) -> Path:
+    def _fake_process(self, command: bytes, environment: bytes, *, comm: str = "python3") -> Path:
         proc = Path(self.temporary.name) / "proc"
         process = proc / "412"
         process.mkdir(parents=True)
-        (process / "comm").write_text("python3\n", encoding="utf-8")
+        (process / "comm").write_text(f"{comm}\n", encoding="utf-8")
         (process / "cmdline").write_bytes(command)
         (process / "environ").write_bytes(environment)
         (process / "cwd").symlink_to(self.root, target_is_directory=True)
@@ -152,6 +153,35 @@ class WorkspaceInventoryTests(unittest.TestCase):
 
         self.assertEqual(reading["workspaces"][0]["process_count"], 0)
         self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
+
+    def test_unreadable_unrelated_session_process_does_not_make_scan_partial(self) -> None:
+        proc = self._fake_process(
+            b"/usr/lib/systemd/systemd --user\0",
+            b"",
+            comm="sd-pam",
+        )
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "ok")
+        self.assertIsNone(reading["process_scan"]["reason"])
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
+
+    def test_unreadable_ros_candidate_keeps_command_evidence_and_marks_scope_partial(self) -> None:
+        command = f"{self.root}/install/yolo_node/lib/yolo_node/yolo_detector\0".encode()
+        proc = self._fake_process(command, b"", comm="yolo_detector")
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(reading["process_scan"]["status"], "partial")
+        self.assertIn("环境字段不可读", reading["process_scan"]["reason"])
+        self.assertEqual(workspace["runtime_status"], "running")
+        self.assertEqual(workspace["processes"][0]["package"], "yolo_node")
+        self.assertEqual(workspace["processes"][0]["domain_evidence"], "unavailable")
+        self.assertEqual(workspace["graph_relationship"], "unknown")
 
     def test_overlaid_workspaces_with_duplicate_package_are_not_guessed(self) -> None:
         arm_root = Path(self.temporary.name) / "arm"

@@ -17,6 +17,14 @@ _CONFIG_DIRS = {"config", "cfg", "params", "param"}
 _INVENTORY_CACHE_SECONDS = 30.0
 _GRAPH_MAX_AGE_MS = 5000
 _PACKAGE_PATH_PATTERN = re.compile(r"(?:install|lib|share)/([^/]+)/")
+_ROS_PROCESS_NAMES = {
+    "component_container", "component_container_mt", "ros2_control_node",
+    "robot_state_publisher", "rviz2", "controller_server", "planner_server",
+    "bt_navigator", "waypoint_follower", "behavior_server", "smoother_server",
+    "velocity_smoother", "map_server", "amcl", "slam_toolbox", "gzserver",
+    "gz", "gazebo", "ign", "laserMapping", "livox_ros_driver2_node",
+}
+_INTERPRETER_PROCESS_NAMES = {"python", "python3", "python3.10", "bash", "sh"}
 _CACHE_LOCK = threading.Lock()
 _INVENTORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -227,6 +235,27 @@ def _package_from_text(text: str, known_packages: set[str]) -> str | None:
     return None
 
 
+def _is_likely_ros_process(comm: str, cmdline: str, specs: tuple[WorkspaceSpec, ...], known_packages: set[str]) -> bool:
+    """Limit detailed /proc reads to processes that may belong to ROS workspaces.
+
+    Linux can deny access to environment, cwd, executable and maps for a
+    non-dumpable same-UID session process. Such a process is not workspace
+    evidence; unreadable metadata on an unrelated process must not make the
+    ROS workspace scan incomplete.
+    """
+    if any(str(root) in cmdline for spec in specs for root in spec.source_roots):
+        return True
+    if _package_from_text(f"{comm} {cmdline}", known_packages):
+        return True
+    try:
+        tokens = shlex.split(cmdline)
+    except ValueError:
+        tokens = cmdline.split()
+    basenames = {Path(token).name for token in tokens}
+    ros_command = "ros2" in basenames and bool({"launch", "run"} & set(tokens))
+    return ros_command or Path(comm).name in _ROS_PROCESS_NAMES | _INTERPRETER_PROCESS_NAMES
+
+
 def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[dict[str, list[dict[str, Any]]], str, str | None]:
     found: dict[str, list[dict[str, Any]]] = {spec.id: [] for spec in specs}
     observed_at = _utc_now()
@@ -238,6 +267,11 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         return found, "unknown", f"process table could not be read: {type(exc).__name__}"
 
     current_uid = os.getuid()
+    package_sets = {
+        spec.id: {item["name"] for item in _collect_source_inventory(spec).get("packages", [])}
+        for spec in specs
+    }
+    known_packages = set().union(*package_sets.values()) if package_sets else set()
     ambiguous_process = False
     for process_dir in entries:
         if not process_dir.name.isdigit():
@@ -251,23 +285,36 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             cmdline = raw_cmdline.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
             if not raw_cmdline or not cmdline:
                 continue
-            environment = _read_process_environment(process_dir / "environ")
-            try:
-                cwd = str((process_dir / "cwd").resolve())
-            except OSError:
-                cwd = ""
-            try:
-                executable = str((process_dir / "exe").resolve())
-            except OSError:
-                executable = ""
         except FileNotFoundError:
             continue
         except PermissionError:
             scan_status = "partial"
-            scan_reason = "部分当前 UID 进程信息不可读"
+            scan_reason = "部分当前 UID 进程身份信息不可读"
             continue
         except OSError:
             continue
+
+        if not _is_likely_ros_process(comm, cmdline, specs, known_packages):
+            continue
+
+        environment_readable = True
+        try:
+            environment = _read_process_environment(process_dir / "environ")
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            environment = {}
+            environment_readable = False
+            scan_status = "partial"
+            scan_reason = "部分 ROS 候选进程的 allowlisted 环境字段不可读"
+        try:
+            cwd = str((process_dir / "cwd").resolve())
+        except OSError:
+            cwd = ""
+        try:
+            executable = str((process_dir / "exe").resolve())
+        except OSError:
+            executable = ""
 
         candidates: list[tuple[WorkspaceSpec, list[str]]] = []
         for spec in specs:
@@ -291,11 +338,6 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         if not candidates:
             continue
 
-        package_sets = {
-            spec.id: {item["name"] for item in _collect_source_inventory(spec).get("packages", [])}
-            for spec, _evidence in candidates
-        }
-        known_packages = set().union(*package_sets.values())
         package = _package_from_text(cmdline, known_packages)
         try:
             command_tokens = shlex.split(cmdline)
@@ -318,7 +360,7 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             except PermissionError:
                 maps = ""
                 scan_status = "partial"
-                scan_reason = "部分当前 UID 进程映射不可读"
+                scan_reason = "部分 ROS 候选进程的只读映射信息不可读"
             except OSError:
                 maps = ""
             package = _package_from_text(maps, known_packages)
@@ -352,6 +394,8 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         except ValueError:
             domain_id = None
             domain_evidence = "invalid"
+        if not environment_readable:
+            domain_evidence = "unavailable"
         local_only = environment.get("ROS_LOCALHOST_ONLY")
         raw_mode = environment.get("LUNAR_CONSOLE_RUN_MODE", "").strip().lower()
         run_mode = raw_mode if raw_mode in {"hardware", "simulation", "offline", "read-only"} else "unknown"
@@ -493,7 +537,7 @@ def collect_workspaces(
         "collected_at": observed_at,
         "process_scan": {
             "status": scan_status,
-            "scope": "Agent UID only",
+            "scope": "Agent UID; ROS/workspace candidates only",
             "source": str(proc_root),
             "observed_at": observed_at,
             "reason": scan_reason,
