@@ -27,6 +27,8 @@ struct TestCockpitView: View {
                 .background(Palette.panelRaised, in: Capsule())
             }
 
+            HealthCockpitSummary(events: model.healthEvents)
+
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 13) {
                     HStack(spacing: 8) {

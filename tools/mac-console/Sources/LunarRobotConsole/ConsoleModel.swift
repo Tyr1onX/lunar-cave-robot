@@ -66,6 +66,10 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var githubMainSHA: String?
     @Published private(set) var githubMessage = "尚未读取 GitHub main"
     @Published private(set) var lastSuccessfulRead: Date?
+    @Published private(set) var healthEvents: [HealthEvent] = []
+
+    private(set) var hasEverConnectedToAgent = false
+    private(set) var lastKnownDomainID: Int?
 
     private var tunnel: Process?
     private var tunnelErrorPipe: Pipe?
@@ -80,6 +84,11 @@ final class ConsoleModel: ObservableObject {
     private var isReadingVisionFrame = false
     private var lastLogRead = Date.distantPast
     private var lastFrameUpdateUptime: TimeInterval?
+    private var healthEventTracker = HealthEventTracker()
+
+    init() {
+        refreshHealthEvents()
+    }
 
     private let apiRoot = URL(string: "http://127.0.0.1:18765")!
     private let session: URLSession = {
@@ -178,7 +187,7 @@ final class ConsoleModel: ObservableObject {
                 guard let self, self.tunnel === terminated else { return }
                 self.tunnelRunning = false
                 self.connectionMessage = diagnostic ?? "SSH 隧道已退出（状态 \(terminated.terminationStatus)）"
-                self.invalidateAgentData(message: "等待 NUC Agent")
+                self.invalidateAgentData(message: "NUC Agent 连接中断 · \(self.connectionMessage)")
             }
         }
         do {
@@ -193,6 +202,20 @@ final class ConsoleModel: ObservableObject {
             tunnelRunning = false
             connectionMessage = "无法启动 SSH：\(error.localizedDescription)"
         }
+    }
+
+    private func refreshHealthEvents(observedAt: Date = Date()) {
+        let candidates = HealthEvaluator.evaluate(
+            agentOnline: agentOnline,
+            hasEverConnectedToAgent: hasEverConnectedToAgent,
+            agentMessage: agentMessage,
+            lastSuccessfulRead: lastSuccessfulRead,
+            lastKnownDomainID: lastKnownDomainID,
+            snapshot: snapshot,
+            vision: vision,
+            evaluationTime: observedAt
+        )
+        healthEvents = healthEventTracker.update(candidates)
     }
 
     private func refresh() async {
@@ -223,8 +246,10 @@ final class ConsoleModel: ObservableObject {
                 throw URLError(.cannotParseResponse)
             }
             snapshot = received
+            lastKnownDomainID = received.ros.domainId
             lastSuccessfulRead = Date()
             agentMessage = "真实快照已更新 · \(received.collectedAt)"
+            refreshHealthEvents()
             if Date().timeIntervalSince(lastLogRead) > 6 { refreshLogs() }
         } catch {
             guard requestSession == agentSession else { return }
@@ -234,7 +259,9 @@ final class ConsoleModel: ObservableObject {
 
     func markAgentAvailable(message: String) {
         agentOnline = true
+        hasEverConnectedToAgent = true
         agentMessage = message
+        refreshHealthEvents()
     }
 
     func selectVisionStream(_ stream: VisionStreamID) {
@@ -260,6 +287,7 @@ final class ConsoleModel: ObservableObject {
         visionFrameRoundTripMs = nil
         macFrameUpdateHz = nil
         lastFrameUpdateUptime = nil
+        refreshHealthEvents()
     }
 
     func applyLogReading(_ reading: LogReading, requestSession: Int) {
@@ -271,6 +299,7 @@ final class ConsoleModel: ObservableObject {
         guard agentOnline, requestSession == agentSession else { return }
         vision = reading
         visionMessage = nil
+        refreshHealthEvents()
         guard reading.stream(selectedVisionStream)?.status == "streaming" else {
             visionFrame = nil
             visionFrameRoundTripMs = nil
@@ -303,6 +332,7 @@ final class ConsoleModel: ObservableObject {
         visionFrameRoundTripMs = nil
         macFrameUpdateHz = nil
         lastFrameUpdateUptime = nil
+        refreshHealthEvents()
     }
 
     func applyVisionFrameError(_ message: String, streamID: VisionStreamID, requestSession: Int) {
