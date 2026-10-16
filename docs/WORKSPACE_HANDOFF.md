@@ -86,3 +86,12 @@ Mac Lunar Robot Console 的“模块测试”页使用固定白名单测试 ID�
 2. 目前两台设备都位于本次核验 SHA；后续 NUC 代码同步只同步该独立路径，不重置旧目录或历史基线。
 3. 真实机器人启动仍需负责人审核目标 SHA、参数和 `docs/REAL_ROBOT_SAFETY_GATES.md` 的安全门槛，按传感器、底盘、机械臂逐项验收。
 4. 解除真实机械臂固件构建阻塞前，需要产品对应的 XRobot 生成输入并修复 PR #8 记录的安全时序缺口。真实硬件验收完成前，不把任何模拟/离线记录标记为实机通过。
+
+## NUC 备份覆盖范围（2026-10-16）
+
+- **GitHub：** 新版正式源码的 `main` 已分别在 ThinkBook 与 NUC 的 `~/lunar-robot/code` 检查到相同 SHA `c2f4a5f`。GitHub 是新版代码版本库，不是 NUC 硬盘的完整镜像；模型、运行日志、设备专属配置与被 Git 忽略的资产不能据此宣称已备份。
+- **ThinkBook：** `~/lunar-robot/archive` 保留历史工作树和 Git bundle，`~/lunar-robot/tests/state` 保存迁移时的测试状态。这些是历史快照，不能代替 NUC 当前目录的经校验完整备份。ThinkBook 未配置与 NUC 当前 `lab/vision/models` 一一对应的独立模型目录。
+- **原始工程比对：** NUC `~/tzb_ws/src/lite_motion_planner/launch/bring_launch.launch.py` 与 ThinkBook `~/robot_p0` 同路径样本的 SHA-256 一致；但原始 YOLO `yolo_detector.py` 和导航 `bringup.launch.py` 的 SHA-256 不一致。可能存在合法的历史版本差异，不能推断丢失或篡改；也不能将 ThinkBook 历史副本标记为 NUC 当前原始目录的完整镜像。
+- **建议策略：** 以 GitHub 保管正式代码、文档及脱敏配置模板；以 ThinkBook 定期制作并校验 NUC 原始工程、设备参数、必要模型、测试报告的独立快照，明确快照日期、路径、哈希与恢复方法。STM32 设备实际固件版本需另行记录，源码快照不等于实机固件备份。
+- **安全与冗余：** 不把 SSH 密钥、令牌、个人隐私或大体量运行数据直接提交 Git。对不可再采集的标定文件、设备专属数据，建议再加一份加密的离线或异地备份，防止 NUC 和 ThinkBook 同时损坏。任何备份作业不得写入或重建 NUC 原始 ROS 工作空间。
+- **本次状态：** 以上为备份范围审计与策略说明，**没有执行新的 NUC→ThinkBook 完整备份，也没有声称已完成全量一致性校验**。
