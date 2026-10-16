@@ -32,7 +32,7 @@ NUC `/home/tzb/Nav2_rea_ws` 没有 Git 元数据和交接前哈希清单。当�
 - **ThinkBook `/home/qibai/lunar-robot/code`** 用于开发、构建和离线验证。
 - **NUC `/home/tzb/lunar-robot/code`** 是独立新版 checkout，Console 服务从这里运行；不表示新版已获准实机部署。
 - 两台设备 `code` 都在 `c2f4a5ffb6fc764713af6040b11cd648b750b3a5`，分支为 `main`，工作树干净。
-- 目录用途、实际树和迁移内容见[工作区布局](WORKSPACE_LAYOUT.md)。历史 P7/P8、脏工作树、模型、构建结果、测试状态和日志已按设备复制进 `archive/` / `tests/`；来源路径保留，未为统一版本而重置或清理。
+- 目录用途、实际树和迁移内容见[工作区布局](WORKSPACE_LAYOUT.md)。历史 P7/P8、脏工作树、模型、构建结果、测试状态和日志已按设备归档到 `archive/` / `tests/`；未为统一版本而重置或删除。2026-10-16 又将 NUC 五个迁移前旧目录整体移动到 `~/lunar-robot/archive/old-copies/`，归档内保留路径映射与 Git 历史。此后这些五个旧路径不再存在于 `/home/tzb/` 顶层；原始的 `~/tzb_ws`、`~/Nav2_rea_ws` 仍保留原处。
 - 旧版 NUC `~/lunar-cave-robot` 与其它历史工作树保持原位。P7/P0 等进程此前仍使用旧路径，因此没有移动这些目录。
 
 新版同步脚本默认目标为 `~/lunar-robot/code`，只对来源正确、干净且可快进的 `main` 执行同步。新版 ROS 构建只使用 `code/` 内仓库源码；报告、测试状态、ROS_HOME 和配置保存在 `tests/`；视觉与仿真在 `lab/`。没有任何新版脚本将 `/home/tzb/tzb_ws` 或 `/home/tzb/Nav2_rea_ws` 设为构建或部署目录。
