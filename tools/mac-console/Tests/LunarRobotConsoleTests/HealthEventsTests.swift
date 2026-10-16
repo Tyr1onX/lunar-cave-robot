@@ -237,6 +237,47 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(HealthSummaryState.resolve([normal]), .normal)
     }
 
+    func testCockpitSummaryRequiresWorkspaceTelemetryAndConfirmedExpectations() throws {
+        let normal = HealthEvent(
+            id: "normal",
+            title: "正常项目",
+            state: .normal,
+            observation: "",
+            resource: "",
+            dataTime: "",
+            rosDomain: "",
+            runMode: .live,
+            suggestedCheck: ""
+        )
+        XCTAssertEqual(
+            HealthSummaryState.resolve([normal], requireWorkspaceTelemetry: true),
+            .unknown,
+            "Older Agent snapshots without workspace inventory cannot produce a green all-workspace summary."
+        )
+
+        let unconfigured = try decodeWorkspaceInventory(runExpectation: "unconfigured")
+        XCTAssertTrue(unconfigured.hasUnconfirmedHealth)
+        XCTAssertEqual(
+            HealthSummaryState.resolve([normal], workspaceInventory: unconfigured, requireWorkspaceTelemetry: true),
+            .unknown,
+            "Observed processes are insufficient while runtime expectations remain unconfigured."
+        )
+
+        let confirmed = try decodeWorkspaceInventory(runExpectation: "confirmed")
+        XCTAssertFalse(confirmed.hasUnconfirmedHealth)
+        XCTAssertEqual(
+            HealthSummaryState.resolve([normal], workspaceInventory: confirmed, requireWorkspaceTelemetry: true),
+            .normal
+        )
+    }
+
+    private func decodeWorkspaceInventory(runExpectation: String) throws -> WorkspaceInventoryReading {
+        let json = #"{"status":"ok","workspaces":[{"id":"original-navigation","label":"原始导航与雷达工程","source_kind":"original","source_status":"present","runtime_status":"running","run_expectation":"\#(runExpectation)","graph_relationship":"shared_domain","modules":[{"id":"navigation","label":"导航","source_status":"present","runtime_status":"running","run_expectation":"\#(runExpectation)"}]}]}"#
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(WorkspaceInventoryReading.self, from: Data(json.utf8))
+    }
+
     func testSustainedAnomalyRecoversAndStartsANewEpisode() throws {
         var tracker = HealthEventTracker()
         let t0 = "2026-10-14T05:00:00.000Z"

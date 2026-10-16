@@ -206,9 +206,14 @@ struct HealthEventTracker {
 }
 
 enum HealthSummaryState {
-    static func resolve(_ events: [HealthEvent]) -> HealthState {
+    static func resolve(
+        _ events: [HealthEvent],
+        workspaceInventory: WorkspaceInventoryReading? = nil,
+        requireWorkspaceTelemetry: Bool = false
+    ) -> HealthState {
         if events.contains(where: { $0.state == .abnormal }) { return .abnormal }
         if events.isEmpty || events.contains(where: { $0.state == .unknown }) { return .unknown }
+        if requireWorkspaceTelemetry && (workspaceInventory == nil || workspaceInventory?.hasUnconfirmedHealth == true) { return .unknown }
         if events.contains(where: { $0.state == .notRunning }) { return .notRunning }
         return .normal
     }

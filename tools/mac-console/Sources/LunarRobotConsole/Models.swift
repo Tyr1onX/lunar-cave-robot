@@ -93,6 +93,111 @@ struct ROSReading: Decodable {
     let reason: String?
 }
 
+struct WorkspaceInventoryReading: Decodable {
+    let status: String?
+    let source: String?
+    let collectedAt: String?
+    let processScan: WorkspaceProcessScanReading?
+    let graphSource: WorkspaceGraphSourceReading?
+    let workspaces: [WorkspaceReading]?
+
+    var entries: [WorkspaceReading] { workspaces ?? [] }
+
+    var hasUnconfirmedHealth: Bool {
+        guard status == "ok", !entries.isEmpty else { return true }
+        return entries.contains { workspace in
+            guard workspace.runtimeStatus == "running",
+                  workspace.runExpectation == "confirmed",
+                  workspace.graphRelationship == "shared_domain" else { return true }
+            guard let modules = workspace.modules, !modules.isEmpty else { return true }
+            return modules.contains { $0.runtimeStatus != "running" || $0.runExpectation != "confirmed" }
+        }
+    }
+
+    var unconfirmedWorkspaceCount: Int {
+        entries.filter { workspace in
+            workspace.runtimeStatus != "running" || workspace.runExpectation != "confirmed" ||
+                workspace.graphRelationship != "shared_domain" ||
+                (workspace.modules ?? []).isEmpty ||
+                (workspace.modules ?? []).contains { $0.runtimeStatus != "running" || $0.runExpectation != "confirmed" }
+        }.count
+    }
+}
+
+struct WorkspaceProcessScanReading: Decodable {
+    let status: String?
+    let scope: String?
+    let source: String?
+    let observedAt: String?
+    let reason: String?
+}
+
+struct WorkspaceGraphSourceReading: Decodable {
+    let domainId: Int?
+    let observedAt: String?
+    let graphAgeMs: Int?
+    let source: String?
+}
+
+struct WorkspaceReading: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let sourceKind: String?
+    let root: String?
+    let sourceStatus: String?
+    let sourceObservedAt: String?
+    let packageCount: Int?
+    let packages: [WorkspacePackageReading]?
+    let launchCount: Int?
+    let launchFiles: [String]?
+    let configCount: Int?
+    let configFiles: [String]?
+    let runtimeStatus: String?
+    let runtimeScope: String?
+    let runtimeObservedAt: String?
+    let processCount: Int?
+    let processes: [WorkspaceProcessReading]?
+    let domainIds: [Int]?
+    let runMode: String?
+    let runExpectation: String?
+    let graphDomainId: Int?
+    let graphObservedAt: String?
+    let graphRelationship: String?
+    let graphReason: String?
+    let modules: [WorkspaceModuleReading]?
+    let reason: String?
+}
+
+struct WorkspacePackageReading: Decodable, Identifiable {
+    var id: String { "\(name):\(path)" }
+    let name: String
+    let path: String
+}
+
+struct WorkspaceProcessReading: Decodable, Identifiable {
+    var id: Int { pid }
+    let pid: Int
+    let processName: String?
+    let package: String?
+    let domainId: Int?
+    let domainEvidence: String?
+    let localhostOnly: String?
+    let runMode: String?
+    let matchedBy: [String]?
+    let observedAt: String?
+}
+
+struct WorkspaceModuleReading: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let packages: [String]?
+    let sourceStatus: String?
+    let runtimeStatus: String?
+    let runExpectation: String?
+    let interfaceTopics: [String]?
+    let reason: String?
+}
+
 struct TestRecord: Decodable, Identifiable {
     var id: String { recordID }
     private let recordID: String
@@ -132,6 +237,7 @@ struct ConsoleSnapshot: Decodable {
     let git: GitReading
     let deployment: DeploymentReading
     let ros: ROSReading
+    let workspaces: WorkspaceInventoryReading?
     let tests: TestReading
     let safety: SafetyReading
 }
