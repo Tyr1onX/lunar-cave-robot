@@ -165,6 +165,12 @@ private struct HealthEventRow: View {
                 HealthEvidenceField(label: "运行模式", value: event.runMode.rawValue)
                 HealthEvidenceField(label: "来源", value: event.source)
             }
+            HStack(alignment: .top, spacing: 12) {
+                HealthEvidenceField(label: "模块", value: event.module)
+                HealthEvidenceField(label: "规则 ID", value: event.ruleID)
+                HealthEvidenceField(label: "严重程度", value: event.severity.label)
+            }
+            HealthEvidenceField(label: "源码位置", value: event.sourceLocation)
             HealthEvidenceField(label: "异常持续性", value: event.persistenceLabel)
             Text("建议检查 · \(event.suggestedCheck)")
                 .font(.system(size: 9)).foregroundStyle(Palette.muted).textSelection(.enabled)
