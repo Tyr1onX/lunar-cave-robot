@@ -111,7 +111,7 @@ private struct WorkspaceEvidenceCard: View {
                                     Text(moduleRuntimeLabel(module.runtimeStatus))
                                         .font(.system(size: 8, weight: .medium)).foregroundStyle(runtimeTint(module.runtimeStatus))
                                 }
-                                Text("包：\((module.packages ?? []).joined(separator: ", ").isEmpty ? "未知" : (module.packages ?? []).joined(separator: ", ")) · 运行预期：未配置")
+                                Text("包：\((module.packages ?? []).joined(separator: ", ").isEmpty ? "未知" : (module.packages ?? []).joined(separator: ", ")) · 运行预期：\(expectationLabel(module.runExpectation))")
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
                                 if let reason = module.reason {
                                     Text(reason).font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
@@ -120,6 +120,15 @@ private struct WorkspaceEvidenceCard: View {
                                     Text("源码接口候选：\(topics.joined(separator: ", "))")
                                         .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
                                         .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if workspace.graphRelationship == "shared_domain" {
+                                    let matches = module.observedInterfaceTopics ?? []
+                                    Text("Agent Graph 同名 Topic（仅名称匹配）：\(matches.isEmpty ? "当前未发现" : matches.joined(separator: ", "))")
+                                        .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text("Agent Graph Topic 匹配：未知（Domain / Graph 关系未确认）")
+                                        .font(.system(size: 8)).foregroundStyle(Palette.muted)
                                 }
                             }
                             .padding(.vertical, 3)
@@ -268,6 +277,14 @@ private func runtimeLabel(_ status: String?, count: Int?) -> String {
 
 private func moduleRuntimeLabel(_ status: String?) -> String {
     status == "running" ? "进程已发现" : "运行状态未知"
+}
+
+private func expectationLabel(_ expectation: String?) -> String {
+    switch expectation {
+    case "confirmed": return "已确认"
+    case "unconfigured": return "未配置"
+    default: return "未知"
+    }
 }
 
 private func runtimeTint(_ status: String?) -> Color {

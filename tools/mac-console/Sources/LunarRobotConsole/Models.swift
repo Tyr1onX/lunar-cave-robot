@@ -195,6 +195,7 @@ struct WorkspaceModuleReading: Decodable, Identifiable {
     let runtimeStatus: String?
     let runExpectation: String?
     let interfaceTopics: [String]?
+    let observedInterfaceTopics: [String]?
     let reason: String?
 }
 
