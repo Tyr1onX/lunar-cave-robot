@@ -87,11 +87,11 @@ Mac Lunar Robot Console 的“模块测试”页使用固定白名单测试 ID�
 3. 真实机器人启动仍需负责人审核目标 SHA、参数和 `docs/REAL_ROBOT_SAFETY_GATES.md` 的安全门槛，按传感器、底盘、机械臂逐项验收。
 4. 解除真实机械臂固件构建阻塞前，需要产品对应的 XRobot 生成输入并修复 PR #8 记录的安全时序缺口。真实硬件验收完成前，不把任何模拟/离线记录标记为实机通过。
 
-## NUC 备份覆盖范围（2026-10-16）
+## NUC 备份与校验（2026-10-16）
 
-- **GitHub：** 新版正式源码的 `main` 已分别在 ThinkBook 与 NUC 的 `~/lunar-robot/code` 检查到相同 SHA `c2f4a5f`。GitHub 是新版代码版本库，不是 NUC 硬盘的完整镜像；模型、运行日志、设备专属配置与被 Git 忽略的资产不能据此宣称已备份。
-- **ThinkBook：** `~/lunar-robot/archive` 保留历史工作树和 Git bundle，`~/lunar-robot/tests/state` 保存迁移时的测试状态。这些是历史快照，不能代替 NUC 当前目录的经校验完整备份。ThinkBook 未配置与 NUC 当前 `lab/vision/models` 一一对应的独立模型目录。
-- **原始工程比对：** NUC `~/tzb_ws/src/lite_motion_planner/launch/bring_launch.launch.py` 与 ThinkBook `~/robot_p0` 同路径样本的 SHA-256 一致；但原始 YOLO `yolo_detector.py` 和导航 `bringup.launch.py` 的 SHA-256 不一致。可能存在合法的历史版本差异，不能推断丢失或篡改；也不能将 ThinkBook 历史副本标记为 NUC 当前原始目录的完整镜像。
-- **建议策略：** 以 GitHub 保管正式代码、文档及脱敏配置模板；以 ThinkBook 定期制作并校验 NUC 原始工程、设备参数、必要模型、测试报告的独立快照，明确快照日期、路径、哈希与恢复方法。STM32 设备实际固件版本需另行记录，源码快照不等于实机固件备份。
-- **安全与冗余：** 不把 SSH 密钥、令牌、个人隐私或大体量运行数据直接提交 Git。对不可再采集的标定文件、设备专属数据，建议再加一份加密的离线或异地备份，防止 NUC 和 ThinkBook 同时损坏。任何备份作业不得写入或重建 NUC 原始 ROS 工作空间。
-- **本次状态：** 以上为备份范围审计与策略说明，**没有执行新的 NUC→ThinkBook 完整备份，也没有声称已完成全量一致性校验**。
+- **GitHub 的职责：** 新版正式源码、固件源码、技术文档及提交历史。ThinkBook 与 NUC 的 `~/lunar-robot/code` 已核实对应 GitHub `main` SHA `c2f4a5ffb6fc764713af6040b11cd648b750b3a5`；GitHub **不是** NUC 用户主目录和实时运行环境的完整备份。
+- **ThinkBook 独立快照：** `/home/qibai/lunar-robot/archive/nuc-backups/2026-10-16-nuc/`，约 **4.8 GB**，权限受限。NUC 源端只读，通过 SSH 向 ThinkBook 同步；没有写入、构建或移动 NUC 原始 `/home/tzb/tzb_ws` 和 `/home/tzb/Nav2_rea_ws`。
+- **快照内容：** `original/` 完整保存两套原始 ROS 工作空间；`models/` 保存视觉模型；`configs/` 保存 Console systemd 服务/覆盖配置、Orbbec udev 规则、设备操作入口和 Ubuntu 软件包版本清单；`records/` 保存测试报告、ROS 测试日志、串口日志；`project/` 保存当前新版代码 checkout 及视觉/仿真实验环境；`hardware-support/` 保存 MID-360 开发工作区、历史 `nav_ws`、`serial_t`、OrbbecSDK、OpenVINO 工具和 Livox-SDK2。
+- **实际校验：** NUC 两套原始工程与 ThinkBook 的 **12,970 个普通文件 SHA-256 完全一致**，**636 个符号链接路径与目标完全一致**；当前视觉模型 5 个文件 SHA-256 完全一致。ThinkBook 备份总计 **31,538 个普通文件、665 个符号链接**，生成 `BACKUP_SHA256SUMS` 后执行全量本地自检并通过。恢复检查可在备份根目录运行 `./verify.sh`。
+- **保留边界：** 此备份**不是 Ubuntu 整盘镜像**，未备份 SSH 私钥、所有个人应用及系统缓存；NUC 的 `~/lunar-robot/archive/` 是历史重复副本集合，本次没有再次全量复制它，ThinkBook 的既有 `~/lunar-robot/archive/` 仍保存独立历史工作树。此次快照不代表 NUC 全部磁盘字节、所有历史档案或真实控制器当前固件已被备份。逐项来源、排除范围与恢复注意事项见 ThinkBook 快照中的 `README.md`。
+- **恢复与后续：** 先在隔离目录恢复、校验哈希并修复 ROS/venv/systemd 绝对路径，不直接覆盖原始工作空间；不得把代码/模型可恢复等同于机器人实机运行验收。未来新增的数据需单独再备份；不可再采集的设备标定和关键记录建议另有一份加密离线或异地副本。
