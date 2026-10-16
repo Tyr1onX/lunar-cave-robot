@@ -25,6 +25,12 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(event("ros-graph-freshness", in: events).source, "NUC Agent · ROS graph observer")
         XCTAssertEqual(event("vision-rgb", in: events).source, "nuc-ros2-read-only-subscriber")
         XCTAssertNotEqual(event("vision-rgb", in: events).observedAt, "未知")
+        for item in events {
+            XCTAssertFalse(item.module.isEmpty)
+            XCTAssertFalse(item.ruleID.isEmpty)
+            XCTAssertFalse(item.sourceLocation.isEmpty)
+            XCTAssertEqual(item.severity, .informational)
+        }
     }
 
     func testUnconfiguredModulesAreNotReportedAsFailures() throws {
@@ -76,6 +82,7 @@ final class HealthEventsTests: XCTestCase {
 
         let agent = event("agent-connection", in: events)
         XCTAssertEqual(agent.state, .abnormal)
+        XCTAssertEqual(agent.severity, .error)
         XCTAssertEqual(agent.rosDomain, "实际 42 · 预期 未配置")
         XCTAssertNotEqual(agent.dataTime, "无成功读取")
         XCTAssertTrue(events.filter { $0.id != "agent-connection" }.allSatisfy { $0.state == .unknown })
@@ -94,6 +101,7 @@ final class HealthEventsTests: XCTestCase {
             vision: nil
         )
         XCTAssertEqual(event("ros-domain", in: mismatch).state, .abnormal)
+        XCTAssertEqual(event("ros-domain", in: mismatch).severity, .error)
         XCTAssertTrue(event("ros-domain", in: mismatch).observation.contains("17"))
         XCTAssertTrue(event("ros-domain", in: mismatch).observation.contains("42"))
 
@@ -107,6 +115,7 @@ final class HealthEventsTests: XCTestCase {
             vision: nil
         )
         XCTAssertEqual(event("ros-domain", in: noExpectation).state, .unknown)
+        XCTAssertEqual(event("ros-domain", in: noExpectation).severity, .warning)
     }
 
     func testDomainMismatchSuppressesNodeAndVisionFindings() throws {
@@ -137,6 +146,37 @@ final class HealthEventsTests: XCTestCase {
             XCTAssertTrue(event(id, in: events).observation.contains("Domain"))
         }
         XCTAssertEqual(Set(events.filter { $0.state == .abnormal }.map(\.id)), ["ros-domain"])
+    }
+
+    func testInvalidExpectedDomainSuppressesNodeAndVisionFindings() throws {
+        let events = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeSnapshot(
+                expectedDomainID: nil,
+                expectedDomainError: "必须是 0 到 232 之间的整数",
+                expectedNodes: ["/camera_node", "/lidar_node"],
+                nodes: ["/camera_node"]
+            ),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_100),
+                depth: stream(.depth, status: "stale", age: 2_200),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+
+        XCTAssertEqual(event("ros-graph-freshness", in: events).state, .normal)
+        XCTAssertEqual(event("ros-domain", in: events).state, .unknown)
+        XCTAssertTrue(event("ros-domain", in: events).observation.contains("配置无效"))
+        XCTAssertEqual(event("expected-ros-nodes", in: events).state, .unknown)
+        for id in ["vision-rgb", "vision-depth", "vision-yolo"] {
+            XCTAssertEqual(event(id, in: events).state, .unknown, "\(id) must not cascade from invalid Domain configuration")
+            XCTAssertTrue(event(id, in: events).observation.contains("Domain"))
+        }
+        XCTAssertEqual(Set(events.filter { $0.state == .abnormal }.map(\.id)), [])
     }
 
     func testExpiredGraphSuppressesNodeAndVisionFindings() throws {
@@ -373,6 +413,7 @@ final class HealthEventsTests: XCTestCase {
     private func makeSnapshot(
         domainID: Int? = 42,
         expectedDomainID: Int? = 42,
+        expectedDomainError: String? = nil,
         expectedNodes: [String] = ["/camera_node"],
         nodes: [String] = ["/camera_node"],
         graphAgeMs: Int? = 1_000,
@@ -388,6 +429,9 @@ final class HealthEventsTests: XCTestCase {
         ros["domain_id"] = domainID ?? NSNull()
         ros["expected_domain_id"] = expectedDomainID ?? NSNull()
         ros["graph_age_ms"] = graphAgeMs ?? NSNull()
+        if let expectedDomainError {
+            ros["expected_domain_error"] = expectedDomainError
+        }
         let value: [String: Any] = [
             "schema_version": 1,
             "collected_at": collectedAt,
