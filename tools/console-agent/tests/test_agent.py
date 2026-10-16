@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from console_agent.collectors import _disable_default_parameter_event_publisher, collect_logs
+from console_agent.collectors import ROSGraphObserver, _disable_default_parameter_event_publisher, collect_logs
 from console_agent.server import HOST, ReadOnlyHandler, main
 
 
@@ -179,6 +179,42 @@ class AgentHTTPTests(unittest.TestCase):
         _disable_default_parameter_event_publisher(node)
         self.assertEqual(len(node.destroyed), 1)
         self.assertIsNone(node._parameter_event_publisher)
+
+    def test_ros_snapshot_reports_monotonic_graph_age_and_configured_expectations(self) -> None:
+        observer = ROSGraphObserver.__new__(ROSGraphObserver)
+        observer._lock = threading.Lock()
+        observer._snapshot = {"status": "ok", "domain_id": 42, "nodes": [], "topics": []}
+        observer._last_observed_at = "2026-10-14T05:00:00.000Z"
+        observer._last_observed_mono = __import__("time").monotonic() - 6.0
+        with patch.dict(os.environ, {
+            "LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID": "42",
+            "LUNAR_CONSOLE_EXPECTED_ROS_NODES": "/camera/camera_node, yolo_detector, /camera/camera_node",
+        }):
+            reading = observer.snapshot()
+
+        self.assertEqual(reading["observed_at"], "2026-10-14T05:00:00.000Z")
+        self.assertGreaterEqual(reading["graph_age_ms"], 6000)
+        self.assertEqual(reading["expected_domain_id"], 42)
+        self.assertEqual(reading["expected_nodes"], ["/camera/camera_node", "/yolo_detector"])
+        self.assertIsNone(reading["expected_domain_error"])
+        self.assertIsNone(reading["expected_nodes_error"])
+
+    def test_ros_expectation_errors_are_reported_without_inventing_defaults(self) -> None:
+        observer = ROSGraphObserver.__new__(ROSGraphObserver)
+        observer._lock = threading.Lock()
+        observer._snapshot = {"status": "unknown", "domain_id": 0, "nodes": [], "topics": []}
+        observer._last_observed_at = None
+        observer._last_observed_mono = None
+        with patch.dict(os.environ, {
+            "LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID": "999",
+            "LUNAR_CONSOLE_EXPECTED_ROS_NODES": "/valid_node,/invalid-node",
+        }):
+            reading = observer.snapshot()
+
+        self.assertIsNone(reading["expected_domain_id"])
+        self.assertIsNotNone(reading["expected_domain_error"])
+        self.assertEqual(reading["expected_nodes"], [])
+        self.assertIsNotNone(reading["expected_nodes_error"])
 
 
 if __name__ == "__main__":
