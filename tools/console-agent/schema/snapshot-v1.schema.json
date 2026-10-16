@@ -157,13 +157,14 @@
       }
     },
     "workspace_module": {
-      "type": "object", "required": ["id", "label", "packages", "source_status", "runtime_status", "run_expectation", "interface_topics", "reason"], "additionalProperties": false,
+      "type": "object", "required": ["id", "label", "packages", "source_status", "runtime_status", "run_expectation", "interface_topics", "observed_interface_topics", "reason"], "additionalProperties": false,
       "properties": {
         "id": {"type": "string"}, "label": {"type": "string"},
         "packages": {"type": "array", "items": {"type": "string"}},
         "source_status": {"enum": ["present", "unknown"]}, "runtime_status": {"enum": ["running", "unknown"]},
         "run_expectation": {"const": "unconfigured"},
         "interface_topics": {"type": "array", "items": {"type": "string"}},
+        "observed_interface_topics": {"type": "array", "items": {"type": "string"}},
         "reason": {"type": "string"}
       }
     },

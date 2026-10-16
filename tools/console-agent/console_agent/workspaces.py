@@ -436,6 +436,13 @@ def collect_workspaces(
             module_source = "present" if any(name in packages for name in module.packages) else "unknown"
             module_processes = [process for process in processes if process.get("package") in module.packages]
             module_runtime = "running" if module_processes else "unknown"
+            graph_topics = []
+            if relationship == "shared_domain":
+                observed_names = {
+                    topic.get("name") for topic in (active_graph.get("topics") or [])
+                    if isinstance(topic, dict) and isinstance(topic.get("name"), str)
+                }
+                graph_topics = [topic for topic in module.interface_topics if topic in observed_names]
             modules.append({
                 "id": module.id,
                 "label": module.label,
@@ -444,6 +451,7 @@ def collect_workspaces(
                 "runtime_status": module_runtime,
                 "run_expectation": "unconfigured",
                 "interface_topics": list(module.interface_topics),
+                "observed_interface_topics": graph_topics,
                 "reason": "源码接口候选不代表运行时存在；未配置运行预期，不据此产生故障事件。",
             })
 

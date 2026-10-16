@@ -83,7 +83,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         )
 
         reading = collect_workspaces(
-            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 100},
+            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 100,
+             "topics": [{"name": "/yolo/detections", "types": ["vision_msgs/msg/Detection2DArray"]}]},
             specs=(self.spec,),
             proc_root=proc,
         )
@@ -94,6 +95,7 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertEqual(workspace["graph_relationship"], "different_domain")
         self.assertEqual(workspace["modules"][0]["runtime_status"], "running")
         self.assertEqual(workspace["modules"][0]["run_expectation"], "unconfigured")
+        self.assertEqual(workspace["modules"][0]["observed_interface_topics"], [])
         self.assertNotIn("abnormal", json.dumps(reading, ensure_ascii=False))
 
     def test_unset_domain_and_stale_graph_do_not_claim_communication(self) -> None:
@@ -103,7 +105,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         )
 
         reading = collect_workspaces(
-            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 6000},
+            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 6000,
+             "topics": [{"name": "/yolo/detections", "types": ["vision_msgs/msg/Detection2DArray"]}]},
             specs=(self.spec,),
             proc_root=proc,
         )
@@ -120,13 +123,15 @@ class WorkspaceInventoryTests(unittest.TestCase):
         )
 
         reading = collect_workspaces(
-            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 100},
+            {"status": "ok", "domain_id": 187, "observed_at": "2026-10-16T10:00:00Z", "graph_age_ms": 100,
+             "topics": [{"name": "/yolo/detections", "types": ["vision_msgs/msg/Detection2DArray"]}]},
             specs=(self.spec,),
             proc_root=proc,
         )
 
         self.assertEqual(reading["workspaces"][0]["graph_relationship"], "shared_domain")
         self.assertIn("仍需以 graph 实际发现为准", reading["workspaces"][0]["graph_reason"])
+        self.assertEqual(reading["workspaces"][0]["modules"][0]["observed_interface_topics"], ["/yolo/detections"])
 
     def test_partial_process_scan_keeps_workspace_graph_relationship_unknown(self) -> None:
         relationship, reason = _graph_relationship(
