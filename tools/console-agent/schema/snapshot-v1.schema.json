@@ -71,6 +71,33 @@
         "reason": {"type": "string"}
       }
     },
+    "workspaces": {
+      "type": "object", "required": ["status", "source", "collected_at", "process_scan", "graph_source", "workspaces"], "additionalProperties": false,
+      "properties": {
+        "status": {"enum": ["ok", "unknown"]},
+        "source": {"const": "nuc-read-only-workspace-and-process-observer"},
+        "collected_at": {"type": "string", "format": "date-time"},
+        "process_scan": {
+          "type": "object", "required": ["status", "scope", "source", "observed_at", "reason"], "additionalProperties": false,
+          "properties": {
+            "status": {"enum": ["ok", "partial", "unknown"]},
+            "scope": {"type": "string"}, "source": {"type": "string"},
+            "observed_at": {"type": "string", "format": "date-time"},
+            "reason": {"type": ["string", "null"]}
+          }
+        },
+        "graph_source": {
+          "type": "object", "required": ["domain_id", "observed_at", "graph_age_ms", "source"], "additionalProperties": false,
+          "properties": {
+            "domain_id": {"type": ["integer", "null"]},
+            "observed_at": {"type": ["string", "null"]},
+            "graph_age_ms": {"type": ["integer", "null"]},
+            "source": {"type": "string"}
+          }
+        },
+        "workspaces": {"type": "array", "items": {"$ref": "#/$defs/workspace"}}
+      }
+    },
     "tests": {
       "type": "object", "required": ["status", "records"], "additionalProperties": false,
       "properties": {
@@ -93,6 +120,54 @@
     }
   },
   "$defs": {
+    "workspace": {
+      "type": "object",
+      "required": ["id", "label", "source_kind", "root", "source_status", "source_observed_at", "package_count", "packages", "launch_count", "launch_files", "config_count", "config_files", "runtime_status", "runtime_scope", "runtime_observed_at", "process_count", "processes", "domain_ids", "run_mode", "run_expectation", "graph_domain_id", "graph_observed_at", "graph_relationship", "graph_reason", "modules", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "label": {"type": "string"},
+        "source_kind": {"enum": ["new", "original"]}, "root": {"type": "string"},
+        "source_status": {"enum": ["present", "unknown"]}, "source_observed_at": {"type": "string", "format": "date-time"},
+        "package_count": {"type": "integer"},
+        "packages": {"type": "array", "items": {"type": "object", "required": ["name", "path"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "path": {"type": "string"}}}},
+        "launch_count": {"type": "integer"}, "launch_files": {"type": "array", "items": {"type": "string"}},
+        "config_count": {"type": "integer"}, "config_files": {"type": "array", "items": {"type": "string"}},
+        "runtime_status": {"enum": ["running", "not_running", "unknown"]}, "runtime_scope": {"type": "string"},
+        "runtime_observed_at": {"type": "string", "format": "date-time"}, "process_count": {"type": "integer"},
+        "processes": {"type": "array", "items": {"$ref": "#/$defs/workspace_process"}},
+        "domain_ids": {"type": "array", "items": {"type": "integer"}},
+        "run_mode": {"enum": ["hardware", "simulation", "offline", "read-only", "mixed", "unknown"]},
+        "run_expectation": {"const": "unconfigured"},
+        "graph_domain_id": {"type": ["integer", "null"]}, "graph_observed_at": {"type": ["string", "null"]},
+        "graph_relationship": {"enum": ["shared_domain", "partially_shared", "different_domain", "unknown"]},
+        "graph_reason": {"type": "string"},
+        "modules": {"type": "array", "items": {"$ref": "#/$defs/workspace_module"}},
+        "reason": {"type": ["string", "null"]}
+      }
+    },
+    "workspace_process": {
+      "type": "object", "required": ["pid", "process_name", "package", "domain_id", "domain_evidence", "localhost_only", "run_mode", "matched_by", "observed_at"], "additionalProperties": false,
+      "properties": {
+        "pid": {"type": "integer"}, "process_name": {"type": "string"},
+        "package": {"type": ["string", "null"]}, "domain_id": {"type": ["integer", "null"]},
+        "domain_evidence": {"enum": ["observed", "unset", "invalid"]}, "localhost_only": {"enum": ["0", "1", null]},
+        "run_mode": {"enum": ["hardware", "simulation", "offline", "read-only", "unknown"]},
+        "matched_by": {"type": "array", "items": {"enum": ["working_directory", "executable_path", "command_path", "overlay_environment"]}},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "workspace_module": {
+      "type": "object", "required": ["id", "label", "packages", "source_status", "runtime_status", "run_expectation", "interface_topics", "observed_interface_topics", "reason"], "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"}, "label": {"type": "string"},
+        "packages": {"type": "array", "items": {"type": "string"}},
+        "source_status": {"enum": ["present", "unknown"]}, "runtime_status": {"enum": ["running", "unknown"]},
+        "run_expectation": {"const": "unconfigured"},
+        "interface_topics": {"type": "array", "items": {"type": "string"}},
+        "observed_interface_topics": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"}
+      }
+    },
     "reading": {
       "type": "object", "required": ["status", "reason"], "additionalProperties": false,
       "properties": {"status": {"enum": ["ok", "unknown"]}, "reason": {"type": "string"}}
