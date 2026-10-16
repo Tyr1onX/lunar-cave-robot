@@ -27,10 +27,55 @@ enum HealthPersistence: Equatable {
     case sustained
 }
 
+enum HealthSeverity: String, Equatable {
+    case informational
+    case warning
+    case error
+
+    var label: String {
+        switch self {
+        case .informational: return "提示"
+        case .warning: return "待确认"
+        case .error: return "异常"
+        }
+    }
+}
+
+private struct HealthRuleMetadata {
+    let module: String
+    let ruleID: String
+    let sourceLocation: String
+
+    static func forEvent(_ id: String) -> HealthRuleMetadata {
+        switch id {
+        case "agent-connection":
+            return HealthRuleMetadata(module: "Agent 连接", ruleID: "agent.connection", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.evaluate")
+        case "ros-graph-freshness":
+            return HealthRuleMetadata(module: "ROS graph", ruleID: "ros.graph.freshness", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.rosGraphState")
+        case "ros-domain":
+            return HealthRuleMetadata(module: "ROS Domain", ruleID: "ros.domain.expectation", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.evaluate")
+        case "expected-ros-nodes":
+            return HealthRuleMetadata(module: "ROS 节点", ruleID: "ros.node.expectation", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.evaluate")
+        case "vision-rgb":
+            return HealthRuleMetadata(module: "RGB 图像", ruleID: "vision.rgb.freshness", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.visionEvent")
+        case "vision-depth":
+            return HealthRuleMetadata(module: "深度图像", ruleID: "vision.depth.freshness", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.visionEvent")
+        case "vision-yolo":
+            return HealthRuleMetadata(module: "YOLO 输出", ruleID: "vision.yolo.confidence_gate", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator.visionEvent")
+        default:
+            return HealthRuleMetadata(module: "未分类", ruleID: "health.unknown", sourceLocation: "tools/mac-console/Sources/LunarRobotConsole/HealthEvents.swift#HealthEvaluator")
+        }
+    }
+}
+
 struct HealthEvent: Identifiable, Equatable {
     let id: String
     let title: String
     let state: HealthState
+    let module: String
+    let ruleID: String
+    let severity: HealthSeverity
+    let sourceLocation: String
     let observation: String
     let resource: String
     let dataTime: String
@@ -72,6 +117,11 @@ struct HealthEvent: Identifiable, Equatable {
         self.id = id
         self.title = title
         self.state = state
+        let metadata = HealthRuleMetadata.forEvent(id)
+        self.module = metadata.module
+        self.ruleID = metadata.ruleID
+        self.severity = Self.severity(for: state)
+        self.sourceLocation = metadata.sourceLocation
         self.observation = observation
         self.resource = resource
         self.dataTime = dataTime
@@ -82,6 +132,14 @@ struct HealthEvent: Identifiable, Equatable {
         self.source = source
         self.firstObservedAt = firstObservedAt ?? observedAt
         self.observationCount = observationCount
+    }
+
+    private static func severity(for state: HealthState) -> HealthSeverity {
+        switch state {
+        case .normal, .notRunning: return .informational
+        case .unknown: return .warning
+        case .abnormal: return .error
+        }
     }
 
     func withObservationHistory(firstObservedAt: String, observationCount: Int) -> HealthEvent {
@@ -275,6 +333,7 @@ enum HealthEvaluator {
             agentOnline: agentOnline,
             graphState: graphState,
             domainState: domainState,
+            domainExpectationInvalid: ros?.expectedDomainError != nil,
             domainID: ros?.domainId,
             expectedDomainID: ros?.expectedDomainId
         )
@@ -346,6 +405,7 @@ enum HealthEvaluator {
         agentOnline: Bool,
         graphState: HealthState,
         domainState: HealthState,
+        domainExpectationInvalid: Bool,
         domainID: Int?,
         expectedDomainID: Int?
     ) -> String? {
@@ -357,6 +417,9 @@ enum HealthEvaluator {
         }
         if graphState != .normal {
             return "ROS graph 新鲜度尚未确认；下游节点和视觉检查状态为未知。"
+        }
+        if domainExpectationInvalid {
+            return "预期 ROS Domain 配置无效；无法确认当前 graph 是否属于目标运行域，下游节点和视觉检查状态为未知。"
         }
         if domainState == .abnormal {
             return "ROS Domain 实际值 \(domainID.map(String.init) ?? "未知") 与预期值 \(expectedDomainID.map(String.init) ?? "未知") 不匹配；下游检查状态为未知。"
