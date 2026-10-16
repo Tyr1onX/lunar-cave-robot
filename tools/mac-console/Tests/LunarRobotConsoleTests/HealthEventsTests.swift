@@ -21,6 +21,10 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(event("vision-rgb", in: events).state, .normal)
         XCTAssertEqual(event("vision-depth", in: events).state, .normal)
         XCTAssertEqual(event("vision-yolo", in: events).state, .normal)
+        XCTAssertEqual(event("ros-graph-freshness", in: events).observedAt, "2026-10-14T05:00:00.000Z")
+        XCTAssertEqual(event("ros-graph-freshness", in: events).source, "NUC Agent · ROS graph observer")
+        XCTAssertEqual(event("vision-rgb", in: events).source, "nuc-ros2-read-only-subscriber")
+        XCTAssertNotEqual(event("vision-rgb", in: events).observedAt, "未知")
     }
 
     func testUnconfiguredModulesAreNotReportedAsFailures() throws {
@@ -41,18 +45,18 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertFalse(events.contains { $0.state == .abnormal })
     }
 
-    func testGraphDataAndRGBDepthFrameTimeoutsAreDetected() throws {
+    func testFreshGraphAllowsRGBDepthFrameTimeoutsToBeDetected() throws {
         let events = HealthEvaluator.evaluate(
             agentOnline: true,
             hasEverConnectedToAgent: true,
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(graphAgeMs: 6_000),
+            snapshot: try makeSnapshot(graphAgeMs: 1_000),
             vision: makeVision(rgb: stream(.rgb, status: "stale", age: 2_200), depth: stream(.depth, status: "stale", age: 2_800), yolo: stream(.yolo, status: "waiting"))
         )
 
-        XCTAssertEqual(event("ros-graph-freshness", in: events).state, .abnormal)
+        XCTAssertEqual(event("ros-graph-freshness", in: events).state, .normal)
         XCTAssertEqual(event("vision-rgb", in: events).state, .abnormal)
         XCTAssertEqual(event("vision-depth", in: events).state, .abnormal)
         XCTAssertTrue(event("vision-rgb", in: events).observation.contains("2200 ms"))
@@ -75,6 +79,8 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(agent.rosDomain, "实际 42 · 预期 未配置")
         XCTAssertNotEqual(agent.dataTime, "无成功读取")
         XCTAssertTrue(events.filter { $0.id != "agent-connection" }.allSatisfy { $0.state == .unknown })
+        XCTAssertTrue(agent.source.contains("Mac Console"))
+        XCTAssertNotEqual(agent.observedAt, "未知")
     }
 
     func testDomainMismatchRequiresAnExplicitFreshExpectation() throws {
@@ -103,14 +109,188 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(event("ros-domain", in: noExpectation).state, .unknown)
     }
 
-    func testSyntheticFramesRemainLabeledAsSyntheticAndDoNotClaimHardwareHealth() {
+    func testDomainMismatchSuppressesNodeAndVisionFindings() throws {
+        let events = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeSnapshot(
+                domainID: 17,
+                expectedDomainID: 42,
+                expectedNodes: ["/camera_node", "/lidar_node"],
+                nodes: ["/camera_node"]
+            ),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_100),
+                depth: stream(.depth, status: "stale", age: 2_200),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+
+        XCTAssertEqual(event("ros-domain", in: events).state, .abnormal)
+        XCTAssertEqual(event("expected-ros-nodes", in: events).state, .unknown)
+        XCTAssertTrue(event("expected-ros-nodes", in: events).observation.contains("Domain"))
+        for id in ["vision-rgb", "vision-depth", "vision-yolo"] {
+            XCTAssertEqual(event(id, in: events).state, .unknown, "\(id) must not cascade into a false fault")
+            XCTAssertTrue(event(id, in: events).observation.contains("Domain"))
+        }
+        XCTAssertEqual(Set(events.filter { $0.state == .abnormal }.map(\.id)), ["ros-domain"])
+    }
+
+    func testExpiredGraphSuppressesNodeAndVisionFindings() throws {
+        let events = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeSnapshot(
+                expectedNodes: ["/camera_node", "/lidar_node"],
+                nodes: ["/camera_node"],
+                graphAgeMs: 6_000
+            ),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 3_000),
+                depth: stream(.depth, status: "stale", age: 3_000),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+
+        XCTAssertEqual(event("ros-graph-freshness", in: events).state, .abnormal)
+        XCTAssertEqual(event("ros-domain", in: events).state, .unknown)
+        XCTAssertEqual(event("expected-ros-nodes", in: events).state, .unknown)
+        for id in ["vision-rgb", "vision-depth", "vision-yolo"] {
+            XCTAssertEqual(event(id, in: events).state, .unknown, "\(id) must be suppressed when the graph is stale")
+            XCTAssertTrue(event(id, in: events).observation.contains("graph"))
+        }
+        XCTAssertEqual(Set(events.filter { $0.state == .abnormal }.map(\.id)), ["ros-graph-freshness"])
+    }
+
+    func testUnknownHealthStatusCannotResolveToGreen() {
+        let normal = HealthEvent(
+            id: "normal",
+            title: "正常项目",
+            state: .normal,
+            observation: "",
+            resource: "",
+            dataTime: "",
+            rosDomain: "",
+            runMode: .live,
+            suggestedCheck: ""
+        )
+        let unknown = HealthEvent(
+            id: "unknown",
+            title: "未知项目",
+            state: .unknown,
+            observation: "",
+            resource: "",
+            dataTime: "",
+            rosDomain: "",
+            runMode: .unknown,
+            suggestedCheck: ""
+        )
+
+        XCTAssertEqual(HealthSummaryState.resolve([normal, unknown]), .unknown)
+        XCTAssertEqual(HealthSummaryState.resolve([]), .unknown)
+        XCTAssertEqual(HealthSummaryState.resolve([normal]), .normal)
+    }
+
+    func testSustainedAnomalyRecoversAndStartsANewEpisode() throws {
+        var tracker = HealthEventTracker()
+        let t0 = "2026-10-14T05:00:00.000Z"
+        let t1 = "2026-10-14T05:00:01.000Z"
+        let t2 = "2026-10-14T05:00:02.000Z"
+        let t3 = "2026-10-14T05:00:03.000Z"
+        let snapshot = try makeSnapshot()
+
+        let firstRaw = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: snapshot,
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_000),
+                depth: stream(.depth, status: "streaming", age: 40),
+                yolo: stream(.yolo, status: "waiting"),
+                collectedAt: t0
+            )
+        )
+        let first = event("vision-rgb", in: tracker.update(firstRaw))
+        XCTAssertEqual(first.persistence, .singleSnapshot)
+        XCTAssertEqual(first.observationCount, 1)
+
+        let secondRaw = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: snapshot,
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_500),
+                depth: stream(.depth, status: "streaming", age: 40),
+                yolo: stream(.yolo, status: "waiting"),
+                collectedAt: t1
+            )
+        )
+        let second = event("vision-rgb", in: tracker.update(secondRaw))
+        XCTAssertEqual(second.persistence, .sustained)
+        XCTAssertEqual(second.observationCount, 2)
+        XCTAssertEqual(second.firstObservedAt, t0)
+        XCTAssertEqual(second.observedAt, t1)
+        XCTAssertEqual(second.observationWindow, "\(t0) → \(t1)")
+
+        let recoveredRaw = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: snapshot,
+            vision: makeVision(
+                rgb: stream(.rgb, status: "streaming", age: 80),
+                depth: stream(.depth, status: "streaming", age: 40),
+                yolo: stream(.yolo, status: "waiting"),
+                collectedAt: t2
+            )
+        )
+        let recovered = event("vision-rgb", in: tracker.update(recoveredRaw))
+        XCTAssertEqual(recovered.state, .normal)
+        XCTAssertEqual(recovered.persistence, .singleSnapshot)
+        XCTAssertEqual(recovered.observationCount, 1)
+
+        let recurredRaw = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: snapshot,
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_000),
+                depth: stream(.depth, status: "streaming", age: 40),
+                yolo: stream(.yolo, status: "waiting"),
+                collectedAt: t3
+            )
+        )
+        let recurred = event("vision-rgb", in: tracker.update(recurredRaw))
+        XCTAssertEqual(recurred.state, .abnormal)
+        XCTAssertEqual(recurred.persistence, .singleSnapshot)
+        XCTAssertEqual(recurred.observationCount, 1)
+    }
+
+    func testSyntheticFramesRemainLabeledAsSyntheticAndDoNotClaimHardwareHealth() throws {
         let events = HealthEvaluator.evaluate(
             agentOnline: true,
             hasEverConnectedToAgent: true,
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: 42,
-            snapshot: nil,
+            snapshot: try makeSnapshot(),
             vision: makeVision(rgb: stream(.rgb, status: "streaming", age: 40, frameID: "lunar-v0.2a-synthetic/rgb"), depth: stream(.depth, status: "waiting"), yolo: stream(.yolo, status: "waiting"))
         )
 
@@ -121,7 +301,7 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(event("vision-yolo", in: events).state, .unknown)
     }
 
-    func testYOLOMissingOrStaleOutputIsUnknownBecauseOfConfidenceGate() {
+    func testYOLOMissingOrStaleOutputIsUnknownBecauseOfConfidenceGate() throws {
         for status in ["stale", "waiting", "unavailable"] {
             let events = HealthEvaluator.evaluate(
                 agentOnline: true,
@@ -129,7 +309,7 @@ final class HealthEventsTests: XCTestCase {
                 agentMessage: "Agent 在线",
                 lastSuccessfulRead: nil,
                 lastKnownDomainID: 42,
-                snapshot: nil,
+                snapshot: try makeSnapshot(),
                 vision: makeVision(rgb: stream(.rgb, status: "streaming", age: 30), depth: stream(.depth, status: "streaming", age: 30), yolo: stream(.yolo, status: status, age: 4_000, publisherCount: status == "unavailable" ? 0 : 1))
             )
 
@@ -146,12 +326,13 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(domainID: 17, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
+            snapshot: try makeSnapshot(domainID: 42, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
             vision: makeVision(rgb: stream(.rgb, status: "stale", age: 2_100), depth: stream(.depth, status: "stale", age: 2_400), yolo: stream(.yolo, status: "waiting"))
         )
 
         let abnormalIDs = Set(events.filter { $0.state == .abnormal }.map(\.id))
-        XCTAssertTrue(abnormalIDs.isSuperset(of: ["ros-domain", "expected-ros-nodes", "vision-rgb", "vision-depth"]))
+        XCTAssertTrue(abnormalIDs.isSuperset(of: ["expected-ros-nodes", "vision-rgb", "vision-depth"]))
+        XCTAssertFalse(abnormalIDs.contains("ros-domain"))
         XCTAssertEqual(event("vision-yolo", in: events).state, .unknown)
     }
 
@@ -194,7 +375,8 @@ final class HealthEventsTests: XCTestCase {
         expectedDomainID: Int? = 42,
         expectedNodes: [String] = ["/camera_node"],
         nodes: [String] = ["/camera_node"],
-        graphAgeMs: Int? = 1_000
+        graphAgeMs: Int? = 1_000,
+        collectedAt: String = "2026-10-14T05:00:00.000Z"
     ) throws -> ConsoleSnapshot {
         var ros: [String: Any] = [
             "status": "ok",
@@ -208,7 +390,7 @@ final class HealthEventsTests: XCTestCase {
         ros["graph_age_ms"] = graphAgeMs ?? NSNull()
         let value: [String: Any] = [
             "schema_version": 1,
-            "collected_at": "2026-10-14T05:00:00.000Z",
+            "collected_at": collectedAt,
             "source": "nuc-read-only-agent",
             "host": ["hostname": "robot", "platform": "x86_64", "os_release": []],
             "system": [
@@ -268,7 +450,12 @@ final class HealthEventsTests: XCTestCase {
         )
     }
 
-    private func makeVision(rgb: VisionStreamReading, depth: VisionStreamReading, yolo: VisionStreamReading) -> VisionReading {
-        VisionReading(status: "ok", source: "nuc-ros2-read-only-subscriber", collectedAt: "2026-10-14T05:00:00.010Z", reason: nil, streams: [rgb, depth, yolo])
+    private func makeVision(
+        rgb: VisionStreamReading,
+        depth: VisionStreamReading,
+        yolo: VisionStreamReading,
+        collectedAt: String = "2026-10-14T05:00:00.010Z"
+    ) -> VisionReading {
+        VisionReading(status: "ok", source: "nuc-ros2-read-only-subscriber", collectedAt: collectedAt, reason: nil, streams: [rgb, depth, yolo])
     }
 }

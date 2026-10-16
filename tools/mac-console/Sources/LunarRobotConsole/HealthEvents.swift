@@ -22,6 +22,11 @@ enum HealthRunMode: String, Equatable {
     case unknown = "未知"
 }
 
+enum HealthPersistence: Equatable {
+    case singleSnapshot
+    case sustained
+}
+
 struct HealthEvent: Identifiable, Equatable {
     let id: String
     let title: String
@@ -32,6 +37,123 @@ struct HealthEvent: Identifiable, Equatable {
     let rosDomain: String
     let runMode: HealthRunMode
     let suggestedCheck: String
+    let observedAt: String
+    let source: String
+    let firstObservedAt: String
+    let observationCount: Int
+
+    var persistence: HealthPersistence {
+        state == .abnormal && observationCount > 1 ? .sustained : .singleSnapshot
+    }
+
+    var persistenceLabel: String {
+        persistence == .sustained ? "持续异常 · \(observationCount) 次观测" : "单次快照"
+    }
+
+    var observationWindow: String {
+        firstObservedAt == observedAt ? observedAt : "\(firstObservedAt) → \(observedAt)"
+    }
+
+    init(
+        id: String,
+        title: String,
+        state: HealthState,
+        observation: String,
+        resource: String,
+        dataTime: String,
+        rosDomain: String,
+        runMode: HealthRunMode,
+        suggestedCheck: String,
+        observedAt: String = "未知",
+        source: String = "未知来源",
+        firstObservedAt: String? = nil,
+        observationCount: Int = 1
+    ) {
+        self.id = id
+        self.title = title
+        self.state = state
+        self.observation = observation
+        self.resource = resource
+        self.dataTime = dataTime
+        self.rosDomain = rosDomain
+        self.runMode = runMode
+        self.suggestedCheck = suggestedCheck
+        self.observedAt = observedAt
+        self.source = source
+        self.firstObservedAt = firstObservedAt ?? observedAt
+        self.observationCount = observationCount
+    }
+
+    func withObservationHistory(firstObservedAt: String, observationCount: Int) -> HealthEvent {
+        HealthEvent(
+            id: id,
+            title: title,
+            state: state,
+            observation: observation,
+            resource: resource,
+            dataTime: dataTime,
+            rosDomain: rosDomain,
+            runMode: runMode,
+            suggestedCheck: suggestedCheck,
+            observedAt: observedAt,
+            source: source,
+            firstObservedAt: firstObservedAt,
+            observationCount: observationCount
+        )
+    }
+}
+
+struct HealthEventTracker {
+    private struct Record {
+        let firstObservedAt: String
+        var lastObservationKey: String
+        var observationCount: Int
+    }
+
+    private var records: [String: Record] = [:]
+
+    mutating func update(_ events: [HealthEvent]) -> [HealthEvent] {
+        let currentIDs = Set(events.map(\.id))
+        for id in Array(records.keys) where !currentIDs.contains(id) {
+            records.removeValue(forKey: id)
+        }
+
+        return events.map { event in
+            guard event.state == .abnormal else {
+                records.removeValue(forKey: event.id)
+                return event.withObservationHistory(firstObservedAt: event.observedAt, observationCount: 1)
+            }
+
+            let observationKey = "\(event.source)|\(event.observedAt)"
+            if var record = records[event.id] {
+                if record.lastObservationKey != observationKey {
+                    record.lastObservationKey = observationKey
+                    record.observationCount += 1
+                }
+                records[event.id] = record
+                return event.withObservationHistory(
+                    firstObservedAt: record.firstObservedAt,
+                    observationCount: record.observationCount
+                )
+            }
+
+            records[event.id] = Record(
+                firstObservedAt: event.observedAt,
+                lastObservationKey: observationKey,
+                observationCount: 1
+            )
+            return event.withObservationHistory(firstObservedAt: event.observedAt, observationCount: 1)
+        }
+    }
+}
+
+enum HealthSummaryState {
+    static func resolve(_ events: [HealthEvent]) -> HealthState {
+        if events.contains(where: { $0.state == .abnormal }) { return .abnormal }
+        if events.isEmpty || events.contains(where: { $0.state == .unknown }) { return .unknown }
+        if events.contains(where: { $0.state == .notRunning }) { return .notRunning }
+        return .normal
+    }
 }
 
 enum HealthEvaluator {
@@ -45,8 +167,11 @@ enum HealthEvaluator {
         lastSuccessfulRead: Date?,
         lastKnownDomainID: Int?,
         snapshot: ConsoleSnapshot?,
-        vision: VisionReading?
+        vision: VisionReading?,
+        evaluationTime: Date = Date()
     ) -> [HealthEvent] {
+        let evaluationTimeText = formatted(evaluationTime) ?? "未知"
+        let snapshotObservedAt = snapshot?.collectedAt ?? evaluationTimeText
         let ros = snapshot?.ros
         let domainID = ros?.domainId ?? lastKnownDomainID
         let mode = runMode(agentOnline: agentOnline, snapshot: snapshot, vision: vision)
@@ -84,7 +209,9 @@ enum HealthEvaluator {
             dataTime: snapshot?.collectedAt ?? formatted(lastSuccessfulRead) ?? "无成功读取",
             rosDomain: domainLabel(actual: domainID, expected: ros?.expectedDomainId),
             runMode: agentOnline ? .live : (hasEverConnectedToAgent ? .live : .unknown),
-            suggestedCheck: "系统诊断 → SSH 隧道；NUC Agent 的 loopback HTTP 8765 端口与 Mac 固定转发 18765"
+            suggestedCheck: "系统诊断 → SSH 隧道；NUC Agent 的 loopback HTTP 8765 端口与 Mac 固定转发 18765",
+            observedAt: agentOnline && snapshot != nil ? snapshotObservedAt : evaluationTimeText,
+            source: agentOnline ? "NUC Agent · /health 与 /v1/snapshot" : "Mac Console · SSH 隧道与 Agent 探测"
         ))
 
         let graphState = rosGraphState(agentOnline: agentOnline, snapshot: snapshot)
@@ -107,20 +234,25 @@ enum HealthEvaluator {
             dataTime: ros?.observedAt ?? snapshot?.collectedAt ?? "无成功观测时间",
             rosDomain: domainLabel(actual: domainID, expected: ros?.expectedDomainId),
             runMode: mode,
-            suggestedCheck: "系统诊断 → 运行时节点与 Topic；核对 NUC Agent 的 ROS graph 观测时间"
+            suggestedCheck: "系统诊断 → 运行时节点与 Topic；核对 NUC Agent 的 ROS graph 观测时间",
+            observedAt: snapshotObservedAt,
+            source: "NUC Agent · ROS graph observer"
         ))
 
         let domainState: HealthState
         let domainObservation: String
-        if !agentOnline || ros?.status != "ok" || graphState == .abnormal || graphState == .unknown {
+        if !agentOnline || ros?.status != "ok" || graphState != .normal {
             domainState = .unknown
             domainObservation = "ROS graph 未处于可验证的新鲜状态，暂不判断 Domain 是否符合预期。"
         } else if let error = ros?.expectedDomainError {
             domainState = .unknown
             domainObservation = "预期 Domain 配置无效：\(error)"
-        } else if let actual = ros?.domainId, let expected = ros?.expectedDomainId {
+        } else if let expected = ros?.expectedDomainId, let actual = ros?.domainId {
             domainState = actual == expected ? .normal : .abnormal
             domainObservation = "Agent 观测 Domain \(actual)；配置的预期 Domain 为 \(expected)。"
+        } else if let expected = ros?.expectedDomainId {
+            domainState = .unknown
+            domainObservation = "预期 Domain 为 \(expected)，但当前 ROS graph 未提供可比较的实际 Domain。"
         } else {
             domainState = .unknown
             domainObservation = "观测 Domain \(ros?.domainId.map(String.init) ?? "未知")；未配置预期 Domain，不推断不一致。"
@@ -134,15 +266,24 @@ enum HealthEvaluator {
             dataTime: ros?.observedAt ?? snapshot?.collectedAt ?? "无成功观测时间",
             rosDomain: domainLabel(actual: domainID, expected: ros?.expectedDomainId),
             runMode: mode,
-            suggestedCheck: "核对当前运行模式的预期 Domain 配置与 NUC Agent 观测值"
+            suggestedCheck: "核对当前运行模式的预期 Domain 配置与 NUC Agent 观测值",
+            observedAt: snapshotObservedAt,
+            source: "NUC Agent · ROS graph observer"
         ))
 
+        let downstreamUnknownReason = downstreamBlockReason(
+            agentOnline: agentOnline,
+            graphState: graphState,
+            domainState: domainState,
+            domainID: ros?.domainId,
+            expectedDomainID: ros?.expectedDomainId
+        )
         let nodeState: HealthState
         let nodeObservation: String
         let configuredNodes = ros?.expectedNodes ?? []
-        if !agentOnline || ros?.status != "ok" || graphState == .abnormal || graphState == .unknown {
+        if let downstreamUnknownReason {
             nodeState = .unknown
-            nodeObservation = "ROS graph 未处于可验证的新鲜状态，无法判断预期节点是否存在。"
+            nodeObservation = downstreamUnknownReason
         } else if let error = ros?.expectedNodesError {
             nodeState = .unknown
             nodeObservation = "预期节点配置无效：\(error)"
@@ -174,7 +315,9 @@ enum HealthEvaluator {
             dataTime: ros?.observedAt ?? snapshot?.collectedAt ?? "无成功观测时间",
             rosDomain: domainLabel(actual: domainID, expected: ros?.expectedDomainId),
             runMode: mode,
-            suggestedCheck: "核对 Agent 的预期节点集合是否对应当前运行模式；查看系统诊断中的实时节点列表与 ROS 日志"
+            suggestedCheck: "核对 Agent 的预期节点集合是否对应当前运行模式；查看系统诊断中的实时节点列表与 ROS 日志",
+            observedAt: snapshotObservedAt,
+            source: "NUC Agent · ROS graph observer"
         ))
 
         for streamID in VisionStreamID.allCases {
@@ -185,7 +328,10 @@ enum HealthEvaluator {
                 agentOnline: agentOnline,
                 domainID: domainID,
                 expectedDomainID: ros?.expectedDomainId,
-                fallbackDataTime: snapshot?.collectedAt ?? "无成功观测时间"
+                fallbackDataTime: snapshotObservedAt,
+                observedAt: vision?.collectedAt ?? snapshotObservedAt,
+                source: vision?.source ?? "NUC Agent · ROS vision observer",
+                downstreamUnknownReason: downstreamUnknownReason
             ))
         }
         return events
@@ -196,6 +342,28 @@ enum HealthEvaluator {
         return age > rosGraphTimeoutMs ? .abnormal : .normal
     }
 
+    private static func downstreamBlockReason(
+        agentOnline: Bool,
+        graphState: HealthState,
+        domainState: HealthState,
+        domainID: Int?,
+        expectedDomainID: Int?
+    ) -> String? {
+        guard agentOnline else {
+            return "NUC Agent 已断连；节点和视觉检查状态为未知，避免将缺少数据连带判为故障。"
+        }
+        if graphState == .abnormal {
+            return "ROS graph 数据已过期；下游节点和视觉检查状态为未知，避免使用过期发现结果。"
+        }
+        if graphState != .normal {
+            return "ROS graph 新鲜度尚未确认；下游节点和视觉检查状态为未知。"
+        }
+        if domainState == .abnormal {
+            return "ROS Domain 实际值 \(domainID.map(String.init) ?? "未知") 与预期值 \(expectedDomainID.map(String.init) ?? "未知") 不匹配；下游检查状态为未知。"
+        }
+        return nil
+    }
+
     private static func visionEvent(
         streamID: VisionStreamID,
         reading: VisionStreamReading?,
@@ -203,7 +371,10 @@ enum HealthEvaluator {
         agentOnline: Bool,
         domainID: Int?,
         expectedDomainID: Int?,
-        fallbackDataTime: String
+        fallbackDataTime: String,
+        observedAt: String,
+        source: String,
+        downstreamUnknownReason: String?
     ) -> HealthEvent {
         let title = "\(streamID.label) 图像数据"
         let topic = reading?.topic ?? defaultTopic(streamID)
@@ -218,7 +389,11 @@ enum HealthEvaluator {
         let eventState: HealthState
         var observation: String
         let check: String
-        if !agentOnline {
+        if let downstreamUnknownReason {
+            eventState = .unknown
+            observation = downstreamUnknownReason
+            check = "先核实 NUC Agent 可达性、ROS graph 新鲜度及 Domain，再检查下游图像 Topic"
+        } else if !agentOnline {
             eventState = .unknown
             observation = "Agent 当前不可用；图像 Topic 状态未知。"
             check = "先确认 NUC Agent 与固定 SSH 转发可读，再查看图像 Topic"
@@ -291,7 +466,9 @@ enum HealthEvaluator {
             dataTime: receivedTime,
             rosDomain: domain,
             runMode: mode,
-            suggestedCheck: check
+            suggestedCheck: check,
+            observedAt: observedAt,
+            source: source
         )
     }
 

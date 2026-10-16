@@ -13,6 +13,10 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(snapshot.deployment.status, "unknown")
         XCTAssertEqual(snapshot.tests.records.first?.scope, "Nav2_rea_ws")
         XCTAssertEqual(snapshot.safety.control, "disabled")
+        XCTAssertNil(snapshot.ros.observedAt, "The console must decode snapshots from Agents predating health telemetry.")
+        XCTAssertNil(snapshot.ros.graphAgeMs)
+        XCTAssertNil(snapshot.ros.expectedDomainId)
+        XCTAssertNil(snapshot.ros.expectedNodes)
     }
 
     func testLogEntryDecodesFileModificationTimeAsMetadata() throws {
