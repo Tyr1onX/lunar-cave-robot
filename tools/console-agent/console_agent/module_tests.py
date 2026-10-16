@@ -41,12 +41,28 @@ def utc_now() -> str:
 
 def _repo_root() -> Path:
     configured = os.environ.get("LUNAR_CONSOLE_REPO")
-    return Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parents[3]
+    repo = Path(configured).expanduser().resolve() if configured else Path(__file__).resolve().parents[3]
+    protected = (
+        Path("/home/tzb/tzb_ws"),
+        Path("/home/tzb/Nav2_rea_ws"),
+        Path.home() / "robot_p0" / "tzb_ws",
+        Path.home() / "robot_p0" / "Nav2_rea_ws",
+    )
+    for workspace in protected:
+        workspace = workspace.resolve()
+        if repo == workspace or workspace in repo.parents:
+            raise RuntimeError(f"refusing to run module tests from protected original ROS workspace: {workspace}")
+    return repo
 
 
 def _state_root() -> Path:
     configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured).expanduser() if configured else Path.home() / ".local" / "state"
+    if configured:
+        base = Path(configured).expanduser()
+    else:
+        repo = _repo_root()
+        project_root = repo.parent if repo.name == "code" else None
+        base = project_root / "tests" / "state" if project_root is not None else Path.home() / ".local" / "state"
     return base / "lunar-cave-robot" / "module-tests"
 
 
@@ -203,7 +219,12 @@ def _check_arm_fk(repo: Path) -> list[str]:
 
 def _field_lab_root() -> Path:
     configured = os.environ.get("LUNAR_CONSOLE_FIELD_LAB_ROOT", "").strip()
-    return Path(configured).expanduser() if configured else Path.home() / "lunar-field-lab-p9i"
+    if configured:
+        return Path(configured).expanduser()
+    repo = _repo_root()
+    if repo.name == "code":
+        return repo.parent / "lab" / "vision"
+    return Path.home() / "lunar-field-lab-p9i"
 
 
 def _yolo_model_dir() -> Path | None:
@@ -296,7 +317,7 @@ def _check_yolo(repo: Path) -> list[str]:
     field_lab = _field_lab_root()
     model = _yolo_model_dir()
     if model is None:
-        issues.append("未找到模型目录；配置 LUNAR_CONSOLE_YOLO_MODEL_DIR 或准备 lunar-field-lab-p9i/models/blue_block")
+        issues.append("未找到模型目录；配置 LUNAR_CONSOLE_YOLO_MODEL_DIR 或在 lab/vision/models/blue_block 准备模型")
     else:
         required = ("metadata.yaml", "yoloe-26l-seg.xml", "yoloe-26l-seg.bin")
         missing = [name for name in required if not (model / name).is_file()]

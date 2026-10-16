@@ -18,7 +18,15 @@ fi
 case "$result" in PASS|FAIL|NOT_RUN) ;; *) echo "invalid result: $result" >&2; exit 2 ;; esac
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/lunar-cave-robot/tests"
+state_home=${XDG_STATE_HOME:-}
+if [[ -z "$state_home" ]]; then
+  if [[ "$(basename -- "$repo_root")" == code ]]; then
+    state_home="$(dirname -- "$repo_root")/tests/state"
+  else
+    state_home="$HOME/.local/state"
+  fi
+fi
+state_dir="$state_home/lunar-cave-robot/tests"
 timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)
 branch=$(git -C "$repo_root" branch --show-current 2>/dev/null || printf detached)

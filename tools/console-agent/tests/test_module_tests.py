@@ -8,7 +8,9 @@ import time
 import unittest
 from http.client import HTTPConnection
 from pathlib import Path
+from unittest.mock import patch
 
+from console_agent import module_tests
 from console_agent.module_tests import ModuleTestHTTPServer, TestManager, TestSpec, serve
 
 
@@ -66,6 +68,11 @@ class ModuleTestHTTPTests(unittest.TestCase):
         status, _, _ = self.request("POST", "/v1/tests/run", {"test_id": "../../anything"})
         self.assertEqual(status, 404)
         self.assertEqual(self.manager._runs, {})
+
+    def test_module_runner_refuses_original_ros_workspace_paths(self) -> None:
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_REPO": "/home/tzb/tzb_ws/child"}):
+            with self.assertRaisesRegex(RuntimeError, "protected original ROS workspace"):
+                module_tests._repo_root()
 
     def test_report_persists_input_code_sha_parameters_and_logs(self) -> None:
         self.script.write_text("print('offline test passed')\n", encoding="utf-8")

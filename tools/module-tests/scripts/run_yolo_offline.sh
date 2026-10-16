@@ -2,7 +2,13 @@
 set -eo pipefail
 
 repo_root="${LUNAR_CONSOLE_REPO:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-field_lab="${LUNAR_CONSOLE_FIELD_LAB_ROOT:-$HOME/lunar-field-lab-p9i}"
+if [[ -n "${LUNAR_CONSOLE_FIELD_LAB_ROOT:-}" ]]; then
+  field_lab=$LUNAR_CONSOLE_FIELD_LAB_ROOT
+elif [[ "$(basename -- "$repo_root")" == code ]]; then
+  field_lab="$(dirname -- "$repo_root")/lab/vision"
+else
+  field_lab="$HOME/lunar-field-lab-p9i"
+fi
 model_dir="${LUNAR_CONSOLE_YOLO_MODEL_DIR:-}"
 if [[ -z "$model_dir" && -f "$HOME/.config/lunar-console/yolo-model-dir" ]]; then
   IFS= read -r model_dir < "$HOME/.config/lunar-console/yolo-model-dir" || true

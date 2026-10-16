@@ -21,7 +21,7 @@ device_status() {
   if ! output=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$host" bash -s -- "$device_repo" "$github_sha" <<'REMOTE'
 set -u
 device_repo=$1
-if [[ "$device_repo" == __HOME__ ]]; then device_repo="$HOME/lunar-cave-robot"; fi
+if [[ "$device_repo" == __HOME__ ]]; then device_repo="$HOME/lunar-robot/code"; fi
 github_sha=$2
 if [[ ! -d "$device_repo/.git" ]]; then
   printf '  SHA: unknown\n  分支: unknown\n  未提交修改: unknown\n  与 GitHub 差异: 统一工作目录不存在\n  P7/P8 全套: 未记录\n  P7 单场景: 未记录\n  ROS Nav2 工作区构建: 未记录\n  ROS 机械臂工作区构建: 未记录\n  底盘协议主机测试: 未记录\n  底盘 STM32 构建: 未记录\n  机械臂 STM32 构建: 未记录\n  当前部署版本: 未记录\n'
@@ -54,7 +54,15 @@ else
     diff='GitHub main 不可读取，差异未知'
   fi
 fi
-state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/lunar-cave-robot"
+state_home=${XDG_STATE_HOME:-}
+if [[ -z "$state_home" ]]; then
+  if [[ "$(basename -- "$device_repo")" == code ]]; then
+    state_home="$(dirname -- "$device_repo")/tests/state"
+  else
+    state_home="$HOME/.local/state"
+  fi
+fi
+state_dir="$state_home/lunar-cave-robot"
 tests_dir="$state_dir/tests"
 read_test_record() {
   local key=$1 file="$tests_dir/$1.yaml"

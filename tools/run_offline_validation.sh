@@ -2,7 +2,15 @@
 set -uo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/lunar-cave-robot"
+state_home=${XDG_STATE_HOME:-}
+if [[ -z "$state_home" ]]; then
+  if [[ "$(basename -- "$repo_root")" == code ]]; then
+    state_home="$(dirname -- "$repo_root")/tests/state"
+  else
+    state_home="$HOME/.local/state"
+  fi
+fi
+state_dir="$state_home/lunar-cave-robot"
 timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
 results_dir="$state_dir/runs/p7-$run_id"
