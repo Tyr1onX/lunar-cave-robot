@@ -29,6 +29,35 @@ def _unknown(reason: str) -> dict[str, Any]:
     return {"status": "unknown", "reason": reason}
 
 
+def _expected_ros_domain_id() -> tuple[int | None, str | None]:
+    raw = os.environ.get("LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID", "").strip()
+    if not raw:
+        return None, None
+    try:
+        domain_id = int(raw)
+    except ValueError:
+        return None, "LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID must be an integer from 0 to 232"
+    if not 0 <= domain_id <= 232:
+        return None, "LUNAR_CONSOLE_EXPECTED_ROS_DOMAIN_ID must be an integer from 0 to 232"
+    return domain_id, None
+
+
+def _expected_ros_nodes() -> tuple[list[str], str | None]:
+    raw = os.environ.get("LUNAR_CONSOLE_EXPECTED_ROS_NODES", "").strip()
+    if not raw:
+        return [], None
+    expected: set[str] = set()
+    for item in raw.split(","):
+        name = item.strip()
+        if not name:
+            continue
+        full_name = "/" + name.strip("/")
+        if not re.fullmatch(r"/(?:[A-Za-z_][A-Za-z0-9_]*/)*[A-Za-z_][A-Za-z0-9_]*", full_name):
+            return [], "LUNAR_CONSOLE_EXPECTED_ROS_NODES must contain comma-separated ROS node names"
+        expected.add(full_name)
+    return sorted(expected), None
+
+
 def _read_cpu_counters() -> tuple[int, int] | None:
     try:
         fields = Path("/proc/stat").read_text(encoding="ascii").splitlines()[0].split()
@@ -236,6 +265,8 @@ class ROSGraphObserver:
             "topics": [],
             "reason": "ROS graph observer is starting",
         }
+        self._last_observed_at: str | None = None
+        self._last_observed_mono: float | None = None
         self._vision = VisionObserver()
         self._thread = threading.Thread(target=self._run, name="ros-graph-observer", daemon=True)
         self._thread.start()
@@ -249,7 +280,20 @@ class ROSGraphObserver:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return dict(self._snapshot)
+            result = dict(self._snapshot)
+            observed_at = self._last_observed_at
+            observed_mono = self._last_observed_mono
+        expected_domain_id, expected_domain_error = _expected_ros_domain_id()
+        expected_nodes, expected_nodes_error = _expected_ros_nodes()
+        result.update({
+            "observed_at": observed_at,
+            "graph_age_ms": None if observed_mono is None else round(max(0.0, time.monotonic() - observed_mono) * 1000),
+            "expected_domain_id": expected_domain_id,
+            "expected_domain_error": expected_domain_error,
+            "expected_nodes": expected_nodes,
+            "expected_nodes_error": expected_nodes_error,
+        })
+        return result
 
     def vision_snapshot(self) -> dict[str, Any]:
         return self._vision.snapshot()
@@ -262,8 +306,13 @@ class ROSGraphObserver:
         self._thread.join(timeout=2.0)
 
     def _store_snapshot(self, value: dict[str, Any]) -> None:
+        observed_at = utc_now() if value.get("status") == "ok" else None
+        observed_mono = time.monotonic() if observed_at is not None else None
         with self._lock:
             self._snapshot = value
+            if observed_at is not None:
+                self._last_observed_at = observed_at
+                self._last_observed_mono = observed_mono
 
     def _run(self) -> None:
         context = None
@@ -379,6 +428,12 @@ def collect_ros() -> dict[str, Any]:
             "nodes": [],
             "topics": [],
             "reason": "ROS graph observer has not started",
+            "observed_at": None,
+            "graph_age_ms": None,
+            "expected_domain_id": _expected_ros_domain_id()[0],
+            "expected_domain_error": _expected_ros_domain_id()[1],
+            "expected_nodes": _expected_ros_nodes()[0],
+            "expected_nodes_error": _expected_ros_nodes()[1],
         }
     return observer.snapshot()
 

@@ -59,6 +59,12 @@
       "properties": {
         "status": {"enum": ["ok", "unknown"]},
         "domain_id": {"type": ["integer", "null"]},
+        "observed_at": {"type": ["string", "null"]},
+        "graph_age_ms": {"type": ["integer", "null"]},
+        "expected_domain_id": {"type": ["integer", "null"]},
+        "expected_domain_error": {"type": ["string", "null"]},
+        "expected_nodes": {"type": "array", "items": {"type": "string"}},
+        "expected_nodes_error": {"type": ["string", "null"]},
         "nodes": {"type": "array", "items": {"type": "object", "required": ["name", "namespace"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "namespace": {"type": "string"}}}},
         "topics": {"type": "array", "items": {"type": "object", "required": ["name", "types"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "types": {"type": "array", "items": {"type": "string"}}}}},
         "discovery": {"type": "string"},
