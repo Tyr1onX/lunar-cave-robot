@@ -10,7 +10,7 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain"),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", expectedNodes: ["/camera_node"]),
             vision: makeVision(rgb: stream(.rgb, status: "streaming", age: 80), depth: stream(.depth, status: "streaming", age: 90), yolo: stream(.yolo, status: "streaming", age: 120))
         )
 
@@ -143,11 +143,73 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "shared_domain"),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown"),
             vision: noImage
         )
         XCTAssertEqual(event("module-camera", in: complete).state, .abnormal)
-        XCTAssertTrue(event("module-camera", in: complete).observation.contains("完整进程扫描未发现"))
+        XCTAssertTrue(event("module-camera", in: complete).observation.contains("匹配的显式预期 Domain"))
+
+        let noConfiguredDomain = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", expectedDomainID: nil),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: noConfiguredDomain).state, .unknown)
+        XCTAssertFalse(noConfiguredDomain.contains { $0.id == "module-camera" && $0.state == .abnormal })
+
+        let invalidDomainConfiguration = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(
+                expectation: "confirmed",
+                runtimeStatus: "not_running",
+                graphRelationship: "unknown",
+                expectedDomainID: nil,
+                expectedDomainError: "ROS_DOMAIN_ID must be in 0...232"
+            ),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: invalidDomainConfiguration).state, .unknown)
+        XCTAssertFalse(invalidDomainConfiguration.contains { $0.id == "module-camera" && $0.state == .abnormal })
+
+        let anotherModuleRunning = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(
+                expectation: "confirmed",
+                runtimeStatus: "not_running",
+                graphRelationship: "shared_domain",
+                workspaceProcessPackages: ["yolo_node"]
+            ),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: anotherModuleRunning).state, .abnormal)
+
+        let anotherWorkspaceModuleRunning = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(
+                expectation: "confirmed",
+                runtimeStatus: "not_running",
+                graphRelationship: "unknown",
+                newWorkspaceProcessPackages: ["yolo_node"]
+            ),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: anotherWorkspaceModuleRunning).state, .abnormal)
 
         let partial = HealthEvaluator.evaluate(
             agentOnline: true,
@@ -155,7 +217,7 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "shared_domain", processScanStatus: "partial"),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", processScanStatus: "partial"),
             vision: noImage
         )
         XCTAssertEqual(event("module-camera", in: partial).state, .unknown)
@@ -198,7 +260,14 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "different_domain", expectedDomainID: nil),
+            snapshot: try makeCameraSnapshot(
+                expectation: "confirmed",
+                runtimeStatus: "not_running",
+                graphRelationship: "different_domain",
+                expectedDomainID: nil,
+                workspaceProcessPackages: ["yolo_node"],
+                workspaceProcessDomainIDs: [17]
+            ),
             vision: makeVision(
                 rgb: stream(.rgb, status: "unavailable", publisherCount: 0),
                 depth: stream(.depth, status: "unavailable", publisherCount: 0),
@@ -223,6 +292,46 @@ final class HealthEventsTests: XCTestCase {
         )
         XCTAssertEqual(event("module-camera", in: workspaceDomainUnknown).state, .unknown)
         XCTAssertFalse(workspaceDomainUnknown.contains { $0.id == "module-camera" && $0.state == .abnormal })
+    }
+
+    func testSharedCameraTopicAcrossWorkspacesDoesNotImplyTargetSource() throws {
+        let otherWorkspaceCameraOnly = try makeCameraSnapshot(
+            expectation: "confirmed",
+            runtimeStatus: "not_running",
+            graphRelationship: "unknown",
+            newWorkspaceProcessPackages: ["orbbec_camera"]
+        )
+        XCTAssertEqual(otherWorkspaceCameraOnly.workspaces?.workspaces?.count, 3)
+        XCTAssertEqual(otherWorkspaceCameraOnly.workspaces?.workspaces?.first(where: { $0.id == "new-engineering" })?.modules?.first(where: { $0.id == "camera" })?.interfaceTopics,
+                       ["/camera/color/image_raw", "/camera/depth/image_rect_raw", "/camera/depth/color/points", "/camera/color/camera_info"])
+
+        let duplicateWorkspaceEvidence = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: otherWorkspaceCameraOnly,
+            vision: makeVision(rgb: stream(.rgb, status: "streaming", age: 30), depth: stream(.depth, status: "streaming", age: 35), yolo: stream(.yolo, status: "waiting"))
+        )
+        XCTAssertEqual(event("module-camera", in: duplicateWorkspaceEvidence).state, .unknown)
+        XCTAssertTrue(event("module-camera", in: duplicateWorkspaceEvidence).observation.contains("另一工作区"))
+
+        let duplicatePublishers = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain"),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "streaming", age: 30, publisherCount: 2),
+                depth: stream(.depth, status: "streaming", age: 35, publisherCount: 2),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+        XCTAssertEqual(event("module-camera", in: duplicatePublishers).state, .unknown)
+        XCTAssertTrue(event("module-camera", in: duplicatePublishers).observation.contains("多个发布者"))
     }
 
     func testInvalidModuleExpectationKeepsCameraStateUnknown() throws {
@@ -641,16 +750,19 @@ final class HealthEventsTests: XCTestCase {
         domainID: Int? = 42,
         expectedDomainID: Int? = 42,
         expectedDomainError: String? = nil,
-        expectedNodes: [String] = ["/camera_node"],
-        nodes: [String] = ["/camera_node"],
+        expectedNodes: [String] = [],
+        nodes: [String]? = nil,
         graphAgeMs: Int? = 1_000,
         collectedAt: String = "2026-10-14T05:00:00.000Z",
-        workspaceData: [String: Any]? = nil
+        workspaceData: [String: Any]? = nil,
+        graphTopics: [String] = []
     ) throws -> ConsoleSnapshot {
         var ros: [String: Any] = [
             "status": "ok",
             "nodes": nodes.map(nodeValue),
-            "topics": [],
+            "topics": graphTopics.map { name in
+                ["name": name, "types": [topicType(name)]]
+            },
             "observed_at": "2026-10-14T05:00:00.000Z",
             "expected_nodes": expectedNodes
         ]
@@ -695,70 +807,286 @@ final class HealthEventsTests: XCTestCase {
         graphRelationship: String,
         domainID: Int? = 42,
         expectedDomainID: Int? = 42,
-        expectedNodes: [String] = ["/camera_node"],
-        nodes: [String] = ["/camera_node"],
+        expectedNodes: [String] = [],
+        nodes: [String]? = nil,
         graphAgeMs: Int? = 1_000,
         processScanStatus: String = "ok",
-        expectationStatus: String? = nil
+        expectationStatus: String? = nil,
+        expectedDomainError: String? = nil,
+        workspaceProcessPackages: [String]? = nil,
+        workspaceProcessDomainIDs: [Int?]? = nil,
+        newWorkspaceProcessPackages: [String] = []
     ) throws -> ConsoleSnapshot {
         let observedAt = "2026-10-14T05:00:00.000Z"
-        let effectiveExpectationStatus = expectationStatus ?? (expectation == "confirmed" ? "configured" : "unconfigured")
+        let effectiveExpectationStatus = expectationStatus ?? (expectation == "confirmed" ? "configured" : (expectation == "unknown" ? "invalid" : "unconfigured"))
+        let effectiveProcessPackages = workspaceProcessPackages ?? (runtimeStatus == "running" ? ["orbbec_camera"] : [])
+        let effectiveProcessDomains = workspaceProcessDomainIDs ?? effectiveProcessPackages.map { _ in domainID }
+        let cameraRuntime = moduleRuntimeStatus(package: "orbbec_camera", processes: effectiveProcessPackages, scanStatus: processScanStatus)
+        let workspaceRuntime = workspaceRuntimeStatus(processes: effectiveProcessPackages, scanStatus: processScanStatus)
+        var graphTopics: [String] = []
+        if effectiveProcessPackages.contains("orbbec_camera") || newWorkspaceProcessPackages.contains("orbbec_camera") {
+            graphTopics += ["/camera/color/image_raw", "/camera/depth/image_rect_raw"]
+        }
+        if effectiveProcessPackages.contains("yolo_node") || newWorkspaceProcessPackages.contains("yolo_node") {
+            graphTopics += ["/yolo/detections", "/yolo/annotated_image"]
+        }
+        let inventoryExpectationStatus = expectationStatus ?? effectiveExpectationStatus
+        let targetWorkspace = agentWorkspace(
+            id: "original-arm-vision",
+            label: "原始机械臂与视觉工程",
+            sourceKind: "original",
+            root: "/home/tzb/tzb_ws",
+            packages: ["orbbec_camera", "yolo_node", "pose_estimator", "lite_motion_planner", "rm_serial_driver"],
+            processPackages: effectiveProcessPackages,
+            processDomainIDs: effectiveProcessDomains,
+            processScanStatus: processScanStatus,
+            runtimeStatus: workspaceRuntime,
+            graphRelationship: graphRelationship,
+            graphDomainID: domainID,
+            graphAgeMs: graphAgeMs,
+            graphTopics: graphTopics,
+            observedAt: observedAt,
+            expectationStatus: inventoryExpectationStatus,
+            cameraExpectation: expectation,
+            cameraRuntimeStatus: cameraRuntime
+        )
+        let newWorkspaceRuntime = workspaceRuntimeStatus(processes: newWorkspaceProcessPackages, scanStatus: processScanStatus)
+        let newWorkspaceCameraRuntime = moduleRuntimeStatus(package: "orbbec_camera", processes: newWorkspaceProcessPackages, scanStatus: processScanStatus)
+        let newWorkspaceDomainIDs = newWorkspaceProcessPackages.map { _ in domainID }
+        let newWorkspaceRelationship = newWorkspaceProcessPackages.isEmpty
+            ? "unknown"
+            : (processScanStatus == "ok" && newWorkspaceDomainIDs.allSatisfy { $0 == domainID } ? "shared_domain" : "unknown")
+        let newWorkspace = agentWorkspace(
+            id: "new-engineering",
+            label: "新版工程",
+            sourceKind: "new",
+            root: "/home/tzb/lunar-robot/code",
+            packages: ["orbbec_camera", "yolo_node", "pose_estimator", "lite_motion_planner", "rm_serial_driver", "livox_ros_driver2", "point_lio", "fast_lio", "dlio", "bringup", "rm_navigation", "chassis_serial_bridge"],
+            processPackages: newWorkspaceProcessPackages,
+            processDomainIDs: newWorkspaceDomainIDs,
+            processScanStatus: processScanStatus,
+            runtimeStatus: newWorkspaceRuntime,
+            graphRelationship: newWorkspaceRelationship,
+            graphDomainID: domainID,
+            graphAgeMs: graphAgeMs,
+            graphTopics: graphTopics,
+            observedAt: observedAt,
+            expectationStatus: inventoryExpectationStatus,
+            cameraExpectation: "unconfigured",
+            cameraRuntimeStatus: newWorkspaceCameraRuntime
+        )
+        let navWorkspace = agentWorkspace(
+            id: "original-navigation",
+            label: "原始导航与雷达工程",
+            sourceKind: "original",
+            root: "/home/tzb/Nav2_rea_ws",
+            packages: ["livox_ros_driver2", "point_lio", "fast_lio", "dlio", "bringup", "rm_navigation", "behavior_ext_plugins", "rm_serial_driver"],
+            processPackages: [],
+            processDomainIDs: [],
+            processScanStatus: processScanStatus,
+            runtimeStatus: workspaceRuntimeStatus(processes: [], scanStatus: processScanStatus),
+            graphRelationship: "unknown",
+            graphDomainID: domainID,
+            graphAgeMs: graphAgeMs,
+            graphTopics: graphTopics,
+            observedAt: observedAt,
+            expectationStatus: inventoryExpectationStatus,
+            cameraExpectation: "unconfigured",
+            cameraRuntimeStatus: "unknown",
+            includeCamera: false
+        )
         let workspaceData: [String: Any] = [
-            "status": processScanStatus == "ok" ? "ok" : "unknown",
+            "status": processScanStatus == "unknown" ? "unknown" : "ok",
             "source": "nuc-read-only-workspace-and-process-observer",
             "collected_at": observedAt,
             "expectation_status": effectiveExpectationStatus,
             "expectation_source": effectiveExpectationStatus == "configured" ? "LUNAR_CONSOLE_EXPECTED_MODULES" : NSNull() as Any,
             "expectation_observed_at": observedAt,
-            "expectation_error": NSNull(),
+            "expectation_error": effectiveExpectationStatus == "invalid" ? "LUNAR_CONSOLE_EXPECTED_MODULES contains an invalid entry" : NSNull() as Any,
             "process_scan": [
                 "status": processScanStatus,
-                "scope": "Agent UID",
+                "scope": "Agent UID; process identity and workspace references",
                 "source": "/proc",
                 "observed_at": observedAt,
-                "reason": NSNull()
+                "reason": processScanStatus == "ok" ? NSNull() as Any : "部分 Agent UID 进程信息不可读"
             ],
             "graph_source": [
                 "domain_id": domainID ?? NSNull() as Any,
                 "observed_at": observedAt,
                 "graph_age_ms": graphAgeMs ?? NSNull() as Any,
-                "source": "existing Agent ROS graph observer"
+                "source": "existing Agent ROS graph observer; no additional ROS participant is started"
             ],
-            "workspaces": [[
-                "id": "original-arm-vision",
-                "label": "原始机械臂与视觉工程",
-                "source_kind": "original",
-                "source_status": "present",
-                "runtime_status": runtimeStatus,
-                "runtime_observed_at": observedAt,
-                "graph_relationship": graphRelationship,
-                "graph_domain_id": domainID ?? NSNull() as Any,
-                "graph_reason": "fixture graph relation",
-                "modules": [[
-                    "id": "camera",
-                    "label": "相机",
-                    "source_status": "present",
-                    "runtime_status": runtimeStatus,
-                    "execution_state": runtimeStatus == "not_running" ? "not_running" : "unknown",
-                    "run_expectation": expectation,
-                    "run_expectation_source": expectation == "confirmed" ? "LUNAR_CONSOLE_EXPECTED_MODULES" : NSNull() as Any,
-                    "run_expectation_observed_at": observedAt,
-                    "run_expectation_reason": "test fixture",
-                    "interface_topics": ["/camera/color/image_raw", "/camera/depth/image_rect_raw"],
-                    "observed_interface_topics": [],
-                    "reason": "test fixture"
-                ]]
-            ]]
+            "workspaces": [newWorkspace, targetWorkspace, navWorkspace]
         ]
+        let effectiveNodes = nodes ?? ((effectiveProcessPackages.contains("orbbec_camera") || newWorkspaceProcessPackages.contains("orbbec_camera")) ? ["/camera_node"] : [])
         return try makeSnapshot(
             domainID: domainID,
             expectedDomainID: expectedDomainID,
+            expectedDomainError: expectedDomainError,
             expectedNodes: expectedNodes,
-            nodes: nodes,
+            nodes: effectiveNodes,
             graphAgeMs: graphAgeMs,
             collectedAt: observedAt,
-            workspaceData: workspaceData
+            workspaceData: workspaceData,
+            graphTopics: graphTopics
         )
+    }
+
+    private func moduleRuntimeStatus(package: String, processes: [String], scanStatus: String) -> String {
+        if processes.contains(package) { return "running" }
+        return scanStatus == "ok" ? "not_running" : "unknown"
+    }
+
+    private func workspaceRuntimeStatus(processes: [String], scanStatus: String) -> String {
+        if !processes.isEmpty { return "running" }
+        return scanStatus == "ok" ? "not_running" : "unknown"
+    }
+
+    private func agentProcess(pid: Int, package: String, domainID: Int?, observedAt: String) -> [String: Any] {
+        [
+            "pid": pid,
+            "process_name": package,
+            "package": package,
+            "domain_id": domainID ?? NSNull() as Any,
+            "domain_evidence": domainID == nil ? "unset" : "observed",
+            "localhost_only": "1",
+            "run_mode": "unknown",
+            "run_mode_evidence": "unknown",
+            "matched_by": ["overlay_environment"],
+            "observed_at": observedAt
+        ]
+    }
+
+    private func agentModule(
+        id: String,
+        label: String,
+        packages: [String],
+        runtimeStatus: String,
+        runExpectation: String,
+        interfaceTopics: [String],
+        observedTopics: [String],
+        observedAt: String
+    ) -> [String: Any] {
+        [
+            "id": id,
+            "label": label,
+            "packages": packages,
+            "source_status": "present",
+            "runtime_status": runtimeStatus,
+            "execution_state": runtimeStatus == "not_running" ? "not_running" : "unknown",
+            "run_expectation": runExpectation,
+            "run_expectation_source": runExpectation == "confirmed" ? "LUNAR_CONSOLE_EXPECTED_MODULES" : NSNull() as Any,
+            "run_expectation_observed_at": observedAt,
+            "run_expectation_reason": runExpectation == "confirmed" ? "由显式 Agent 配置声明为当前运行模式的预期模块。" : "未配置此模块的运行预期。",
+            "interface_topics": interfaceTopics,
+            "observed_interface_topics": observedTopics,
+            "reason": "源码接口候选不代表运行时存在；运行预期仅来自显式配置。"
+        ]
+    }
+
+    private func agentWorkspace(
+        id: String,
+        label: String,
+        sourceKind: String,
+        root: String,
+        packages: [String],
+        processPackages: [String],
+        processDomainIDs: [Int?],
+        processScanStatus: String,
+        runtimeStatus: String,
+        graphRelationship: String,
+        graphDomainID: Int?,
+        graphAgeMs: Int?,
+        graphTopics: [String],
+        observedAt: String,
+        expectationStatus: String,
+        cameraExpectation: String,
+        cameraRuntimeStatus: String,
+        includeCamera: Bool = true
+    ) -> [String: Any] {
+        let packagePaths = packages.map { ["name": $0, "path": "src/\($0)/package.xml"] }
+        let pidBase = id == "new-engineering" ? 5_000 : (id == "original-arm-vision" ? 6_000 : 7_000)
+        let processRecords = processPackages.enumerated().map { index, package in
+            agentProcess(
+                pid: pidBase + index,
+                package: package,
+                domainID: index < processDomainIDs.count ? processDomainIDs[index] : nil,
+                observedAt: observedAt
+            )
+        }
+        let discoveredDomains = Array(Set(processDomainIDs.compactMap { $0 })).sorted()
+        var modules: [[String: Any]] = []
+        for spec in agentModuleSpecs(for: id) where packages.contains(where: { spec.packages.contains($0) }) && (includeCamera || spec.id != "camera") {
+            let status: String
+            if spec.id == "camera" {
+                status = cameraRuntimeStatus
+            } else if processPackages.contains(where: { spec.packages.contains($0) }) {
+                status = "running"
+            } else {
+                status = processScanStatus == "ok" ? "not_running" : "unknown"
+            }
+            let expectation: String
+            if expectationStatus == "invalid" {
+                expectation = "unknown"
+            } else if id == "original-arm-vision" && spec.id == "camera" {
+                expectation = cameraExpectation
+            } else {
+                expectation = "unconfigured"
+            }
+            modules.append(agentModule(
+                id: spec.id, label: spec.label, packages: spec.packages, runtimeStatus: status,
+                runExpectation: expectation, interfaceTopics: spec.topics,
+                observedTopics: graphRelationship == "shared_domain" ? spec.topics.filter { graphTopics.contains($0) } : [], observedAt: observedAt
+            ))
+        }
+        let runtimeValue: Any = runtimeStatus
+        return [
+            "id": id,
+            "label": label,
+            "source_kind": sourceKind,
+            "root": root,
+            "source_status": "present",
+            "source_observed_at": observedAt,
+            "package_count": packagePaths.count,
+            "packages": packagePaths,
+            "launch_count": 0,
+            "launch_files": [],
+            "config_count": 0,
+            "config_files": [],
+            "runtime_status": runtimeValue,
+            "runtime_scope": "Agent UID 可见进程；/proc 与工作区路径只读检查",
+            "runtime_observed_at": observedAt,
+            "process_count": processRecords.count,
+            "processes": processRecords,
+            "domain_ids": discoveredDomains,
+            "run_mode": "unknown",
+            "execution_state": runtimeStatus == "not_running" ? "not_running" : "unknown",
+            "run_expectation": "unconfigured",
+            "graph_domain_id": graphDomainID ?? NSNull() as Any,
+            "graph_observed_at": observedAt,
+            "graph_relationship": graphRelationship,
+            "graph_reason": graphRelationship == "shared_domain" ? "进程 Domain 与 Agent 当前观测 Domain \(graphDomainID ?? -1) 相同。" : "Agent Graph 与此工作区的 Domain 关系尚未确认。",
+            "modules": modules,
+            "reason": NSNull() as Any
+        ]
+    }
+
+    private func agentModuleSpecs(for workspaceID: String) -> [(id: String, label: String, packages: [String], topics: [String])] {
+        let camera = ("camera", "相机", ["orbbec_camera"], ["/camera/color/image_raw", "/camera/depth/image_rect_raw", "/camera/depth/color/points", "/camera/color/camera_info"])
+        let yolo = ("yolo", "YOLO", ["yolo_node"], ["/camera/color/image_raw", "/yolo/detections", "/yolo/annotated_image"])
+        let pose = ("pose", "位姿估计", ["pose_estimator"], ["/camera/depth/color/points", "/camera/color/camera_info", "/yolo/detections", "/pose_estimator/object_pose"])
+        let arm = ("arm", "机械臂", ["lite_motion_planner", "rm_serial_driver"], ["/serial/arm_joint_state", "/tzb_catch/arm_joint_command", "/tzb_catch/gripper_command"])
+        let lidar = ("lidar", "雷达与定位", ["livox_ros_driver2", "point_lio", "fast_lio", "dlio"], ["/livox/lidar", "/imu/data", "/terrain_map"])
+        let navigation = ("navigation", "导航", ["bringup", "rm_navigation"], ["/scan", "/map", "/cmd_vel"])
+        let chassis = ("chassis", "底盘", ["chassis_serial_bridge"], ["/cmd_vel", "/chassis/serial_link_status"])
+        let originalNavigation = ("navigation", "Nav2 导航", ["bringup", "rm_navigation", "behavior_ext_plugins"], ["/scan", "/map", "/cmd_vel", "/cmd_vel_chassis"])
+        let originalChassis = ("chassis", "底盘", ["rm_serial_driver"], ["/cmd_vel_chassis"])
+        switch workspaceID {
+        case "new-engineering": return [camera, yolo, pose, arm, lidar, navigation, chassis]
+        case "original-arm-vision": return [camera, yolo, pose, arm]
+        case "original-navigation": return [lidar, originalNavigation, originalChassis]
+        default: return []
+        }
     }
 
     private func nodeValue(_ value: String) -> [String: String] {
@@ -767,6 +1095,12 @@ final class HealthEventsTests: XCTestCase {
             "name": components.last ?? "node",
             "namespace": components.count > 1 ? "/" + components.dropLast().joined(separator: "/") : "/"
         ]
+    }
+
+    private func topicType(_ name: String) -> String {
+        if name.hasSuffix("/detections") { return "vision_msgs/msg/Detection2DArray" }
+        if name.hasSuffix("/image_raw") || name.hasSuffix("/annotated_image") { return "sensor_msgs/msg/Image" }
+        return "sensor_msgs/msg/PointCloud2"
     }
 
     private func stream(_ id: VisionStreamID, status: String, age: Int? = nil, publisherCount: Int = 1, frameID: String? = nil, topicType: String? = nil) -> VisionStreamReading {

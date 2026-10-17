@@ -489,10 +489,15 @@ enum HealthEvaluator {
             )
         }
         if let selected = confirmed.first {
-            guard inventory.expectationStatus != "unconfigured" else {
+            let expectationSourceIsExplicit = inventory.expectationStatus == "configured" &&
+                inventory.expectationSource == "LUNAR_CONSOLE_EXPECTED_MODULES" &&
+                inventory.expectationObservedAt != nil &&
+                selected.module.runExpectationSource == inventory.expectationSource &&
+                selected.module.runExpectationObservedAt != nil
+            guard expectationSourceIsExplicit else {
                 return ModuleHealthContext(
                     resolution: .invalid, workspace: selected.workspace, module: selected.module, candidates: candidates,
-                    reason: "模块字段与运行预期清单状态不一致；下游状态保持未知。", inventory: inventory
+                    reason: "模块运行预期缺少有效配置来源或观测时间；下游状态保持未知。", inventory: inventory
                 )
             }
             return ModuleHealthContext(
@@ -545,6 +550,8 @@ enum HealthEvaluator {
         let eventTime = vision?.collectedAt ?? context.workspace?.runtimeObservedAt ?? snapshot?.collectedAt ?? evaluationTime
         let resource = "进程包 · orbbec_camera · Topic · /camera/color/image_raw、/camera/depth/image_rect_raw"
         let domain = domainLabel(actual: context.workspace?.graphDomainId ?? domainID, expected: expectedDomainID)
+        let workspaceDomains = context.workspace?.domainIds?.map(String.init).joined(separator: ", ") ?? "未知"
+        let graphDomainEvidence = "Agent Graph Domain \(snapshot?.ros?.domainId.map(String.init) ?? "未知")，显式预期 Domain \(snapshot?.ros?.expectedDomainId.map(String.init) ?? "未配置")"
         let observation: String
         let state: HealthState
         let check: String
@@ -594,29 +601,41 @@ enum HealthEvaluator {
                     check = "检查只读 Agent 工作区来源和进程扫描状态"
                     break
                 }
-                if module.runtimeStatus == "not_running", workspace.graphRelationship != "shared_domain" {
+                let otherCameraEvidence = context.candidates.filter { $0.workspace.id != workspace.id }
+                if otherCameraEvidence.contains(where: { $0.module.runtimeStatus != "not_running" }) {
                     state = .unknown
-                    observation = workspace.graphRelationship == "different_domain"
-                        ? "相机进程未发现，但工作区其他进程的 ROS Domain 与 Agent Graph 不一致；无法确认缺失发生在目标运行域。"
-                        : "相机进程未发现，但工作区与 Agent Graph 的 Domain 关系未知；无法确认缺失发生在目标运行域。"
-                    check = "核对工作区进程的 ROS_DOMAIN_ID 与 Agent Graph Domain，再评估模块缺失"
+                    observation = "另一工作区的相机模块运行状态为运行中或未知；相同 RGB/深度 Topic 的来源无法归属于当前预期工作区。"
+                    check = "核对各工作区的相机进程、Domain 与 Topic 发布者来源"
                     break
                 }
-                let otherRunning = context.candidates.contains {
-                    $0.workspace.id != workspace.id && $0.module.runtimeStatus == "running"
-                }
-                if otherRunning {
+                let workspaceFullyStopped = workspace.runtimeStatus == "not_running" &&
+                    workspace.processCount == 0 && workspace.domainIds?.isEmpty == true
+                let graphDomain = snapshot?.ros?.domainId
+                let configuredDomain = snapshot?.ros?.expectedDomainId
+                let configuredDomainMatchesGraph = graphDomain != nil &&
+                    configuredDomain != nil && graphDomain == configuredDomain &&
+                    snapshot?.ros?.expectedDomainError == nil
+                let workspaceDomainConfirmed = workspace.graphRelationship == "shared_domain" ||
+                    (workspace.graphRelationship == "unknown" && workspaceFullyStopped && configuredDomainMatchesGraph)
+                if module.runtimeStatus == "not_running", !workspaceDomainConfirmed {
                     state = .unknown
-                    observation = "另一个工作区也发现相机关联进程；当前预期工作区归属有歧义。"
-                    check = "核对工作区进程归属及 Domain；不要依据同名 Topic 推断发布节点"
-                } else if module.runtimeStatus == "not_running" {
+                    observation = workspace.graphRelationship == "different_domain"
+                        ? "相机进程未发现；工作区进程 Domain [\(workspaceDomains)] 与 Agent Graph Domain \(snapshot?.ros?.domainId.map(String.init) ?? "未知") 不一致，无法确认缺失发生在目标运行域。"
+                        : "相机进程未发现，且没有共享 Domain 关系或“工作区全停 + 显式预期 Domain 匹配”证据；无法确认缺失发生在目标运行域。"
+                    check = "核对有效的预期 ROS Domain、Agent Graph Domain 与工作区进程证据，再评估模块缺失"
+                    break
+                }
+                if module.runtimeStatus == "not_running" {
                     if hasImagePublisher {
                         state = .unknown
                         observation = "预期工作区进程扫描未发现相机进程，但 ROS Graph 中存在图像发布者；发布者归属未确认。"
                         check = "核对相机进程归属、工作区路径及 ROS Domain"
                     } else {
                         state = .abnormal
-                        observation = "运行预期由 \(module.runExpectationSource ?? "Agent 显式配置") 声明；完整进程扫描未发现相机关联进程，RGB 与深度 Topic 也没有发布者。"
+                        let runtimeEvidence = workspaceFullyStopped
+                            ? "工作区无关联进程，且\(graphDomainEvidence)"
+                            : "工作区进程 Domain [\(workspaceDomains)] 与新鲜 Agent Graph 共享"
+                        observation = "运行预期由 \(module.runExpectationSource ?? "Agent 显式配置") 声明；完整进程扫描未发现相机关联进程；\(runtimeEvidence)；RGB 与深度 Topic 均无发布者。"
                         check = "系统诊断 → 工作区进程证据；核对当前模式是否应启动原始或新版相机工作区"
                     }
                 } else if module.runtimeStatus != "running" {
@@ -633,6 +652,13 @@ enum HealthEvaluator {
                     check = "检查 Agent 视觉只读观测接口与 RGB/深度 Topic"
                 } else {
                     let streams = [("RGB", rgb!), ("深度", depth!)]
+                    if streams.contains(where: { $0.1.publisherCount > 1 }) {
+                        state = .unknown
+                        let publishers = streams.map { "\($0.0) \($0.1.topic)=\($0.1.publisherCount) 个发布者" }.joined(separator: "；")
+                        observation = "相机工作区进程与 Graph Domain 可见（工作区进程 Domain [\(workspaceDomains)]）；同名图像 Topic 存在多个发布者，Agent 未提供可归属到工作区的发布者身份，不能确认目标相机数据源。\(publishers)"
+                        check = "检查 ROS Graph 中的图像发布者节点，并确认其工作区来源"
+                        break
+                    }
                     let abnormal = streams.filter { label, stream in
                         stream.status == "unavailable" || stream.status == "stale" || stream.status == "waiting" ||
                         stream.status == "unsupported" || (stream.status == "streaming" && stream.frameAgeMs.map { $0 > imageTimeoutMs } == true)
@@ -649,7 +675,7 @@ enum HealthEvaluator {
                         check = "检查 Gemini 336L 驱动日志、RGB/深度发布者与 USB 设备状态"
                     } else if allFresh {
                         state = .normal
-                        observation = "运行预期、相机关联进程和共享 Domain 已确认；RGB \(streamEvidence(rgb!))；深度 \(streamEvidence(depth!))。数据流正常不等同于传感器精度或实体硬件已验收。"
+                        observation = "运行预期来源、相机关联进程和工作区 Domain [\(workspaceDomains)] 与 Agent Graph Domain 可见；RGB \(streamEvidence(rgb!))；深度 \(streamEvidence(depth!))。数据流与进程共同支持该模块运行，仍不代表传感器精度或实体硬件已验收。"
                         check = "持续观察 RGB/深度帧龄；30 FPS 是源码 launch 请求值，不是本规则的性能阈值"
                     } else {
                         state = .unknown
@@ -678,7 +704,7 @@ enum HealthEvaluator {
     private static func streamEvidence(_ stream: VisionStreamReading) -> String {
         let fps = stream.frameRateHz.map { String(format: "%.2f Hz", $0) } ?? "接收 FPS 未知"
         let age = stream.frameAgeMs.map { "\($0) ms" } ?? "帧龄未知"
-        return "\(stream.topic) 帧龄 \(age)、\(fps)、Header \(stream.sourceStamp ?? "未知")"
+        return "\(stream.topic) 发布者 \(stream.publisherCount)、帧龄 \(age)、\(fps)、Header \(stream.sourceStamp ?? "未知")"
     }
 
     private static func rosGraphState(agentOnline: Bool, snapshot: ConsoleSnapshot?) -> HealthState {
