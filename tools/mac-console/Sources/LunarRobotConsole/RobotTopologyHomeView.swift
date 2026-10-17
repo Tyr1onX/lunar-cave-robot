@@ -350,7 +350,7 @@ enum RobotTopologyPresentationLayout {
         var remaining = Set(ids)
         var result: [String] = []
         while !remaining.isEmpty {
-            let ready = remaining.filter { id in
+            var ready = remaining.filter { id in
                 !visibleEdges.contains { edge in
                     guard let destination = RobotTopologyCatalog.node(edge.destinationNodeID),
                           destination.groupID == id,
@@ -361,6 +361,9 @@ enum RobotTopologyPresentationLayout {
                 if lhs == "safety" { return false }
                 if rhs == "safety" { return true }
                 return (orderIndex[lhs] ?? 0) < (orderIndex[rhs] ?? 0)
+            }
+            if remaining.count > 1 {
+                ready.removeAll { $0 == "safety" }
             }
             guard !ready.isEmpty else {
                 result.append(contentsOf: remaining.sorted { (orderIndex[$0] ?? 0) < (orderIndex[$1] ?? 0) })

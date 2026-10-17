@@ -336,6 +336,7 @@ final class RobotTopologyTests: XCTestCase {
     }
 
     func testRecursiveVerticalLayoutsFitWidthsAndPlaceDependenciesTopDown() {
+        XCTAssertEqual(RobotTopologyPresentationLayout.orderedSubsystemIDs().last, "safety")
         let states: [Set<String>] = [[], ["perception"], ["localization", "navigation"], Set(RobotTopologyCatalog.subsystemIDs)]
         for expanded in states {
             for width in [CGFloat(320), 640, 1_180, 1_520] {
