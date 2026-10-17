@@ -38,6 +38,9 @@ class WorkspaceInventoryTests(unittest.TestCase):
         )
         with _CACHE_LOCK:
             _INVENTORY_CACHE.clear()
+        self.expectation_environment = patch.dict("os.environ", {"LUNAR_CONSOLE_EXPECTED_MODULES": ""}, clear=False)
+        self.expectation_environment.start()
+        self.addCleanup(self.expectation_environment.stop)
 
     def _fake_process(
         self,
@@ -81,6 +84,51 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertEqual(workspace["modules"][0]["execution_state"], "not_running")
         self.assertEqual(workspace["modules"][0]["run_expectation"], "unconfigured")
         self.assertNotIn("abnormal", json.dumps(reading, ensure_ascii=False))
+
+    def test_explicit_module_expectation_is_opt_in_and_workspace_scoped(self) -> None:
+        second_workspace = WorkspaceSpec(
+            id="original-navigation",
+            label="原始导航工程",
+            source_kind="original",
+            root=self.root,
+            source_roots=(self.root,),
+            modules=(ModuleSpec("navigation", "导航", ("bringup",), ("/scan",)),),
+        )
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_EXPECTED_MODULES": "original-vision:yolo"}):
+            reading = collect_workspaces(specs=(self.spec, second_workspace), proc_root=self._empty_proc())
+
+        self.assertEqual(reading["expectation_status"], "configured")
+        self.assertEqual(reading["expectation_source"], "LUNAR_CONSOLE_EXPECTED_MODULES")
+        yolo, = reading["workspaces"][0]["modules"]
+        navigation, = reading["workspaces"][1]["modules"]
+        self.assertEqual(yolo["run_expectation"], "confirmed")
+        self.assertEqual(yolo["run_expectation_source"], "LUNAR_CONSOLE_EXPECTED_MODULES")
+        self.assertIsNotNone(yolo["run_expectation_observed_at"])
+        self.assertIn("显式 Agent 配置", yolo["run_expectation_reason"])
+        self.assertEqual(navigation["run_expectation"], "unconfigured")
+        self.assertIsNone(navigation["run_expectation_source"])
+        self.assertIsNone(reading["expectation_error"])
+
+    def test_invalid_module_expectation_fails_closed(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"LUNAR_CONSOLE_EXPECTED_MODULES": "original-vision:yolo,original-vision:not-a-module"},
+        ):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=self._empty_proc())
+
+        self.assertEqual(reading["expectation_status"], "invalid")
+        self.assertIn("unknown workspace/module", reading["expectation_error"])
+        self.assertEqual(reading["workspaces"][0]["modules"][0]["run_expectation"], "unknown")
+        self.assertEqual(reading["workspaces"][0]["modules"][0]["run_expectation_source"], None)
+        self.assertNotIn("confirmed", json.dumps(reading, ensure_ascii=False))
+
+    def test_malformed_module_expectation_fails_closed(self) -> None:
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_EXPECTED_MODULES": "original-vision:yolo,"}):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=self._empty_proc())
+
+        self.assertEqual(reading["expectation_status"], "invalid")
+        self.assertIn("comma-separated", reading["expectation_error"])
+        self.assertEqual(reading["workspaces"][0]["modules"][0]["run_expectation"], "unknown")
 
     def test_explicit_simulation_mode_is_reported_as_process_declaration(self) -> None:
         proc = self._fake_process(
