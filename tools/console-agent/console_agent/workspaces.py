@@ -403,6 +403,7 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         local_only = environment.get("ROS_LOCALHOST_ONLY")
         raw_mode = environment.get("LUNAR_CONSOLE_RUN_MODE", "").strip().lower()
         run_mode = raw_mode if raw_mode in {"hardware", "simulation", "offline", "read-only"} else "unknown"
+        run_mode_evidence = "explicit_environment" if run_mode != "unknown" else "unknown"
         for spec, evidence in selected:
             found[spec.id].append({
                 "pid": int(process_dir.name),
@@ -412,6 +413,7 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
                 "domain_evidence": domain_evidence,
                 "localhost_only": local_only if local_only in {"0", "1"} else None,
                 "run_mode": run_mode,
+                "run_mode_evidence": run_mode_evidence,
                 "matched_by": sorted(set(evidence)),
                 "observed_at": observed_at,
             })
@@ -452,6 +454,22 @@ def _graph_relationship(
     return "different_domain", f"工作区进程 Domain {sorted(domains)} 与 Agent Domain {graph_domain} 不同；该工作区运行状态未知，不据此判故障。"
 
 
+def _execution_state(processes: list[dict[str, Any]], scan_status: str, runtime_status: str) -> str:
+    """Describe observed process/mode evidence without asserting device health."""
+    if runtime_status == "not_running":
+        return "not_running"
+    if runtime_status != "running" or scan_status != "ok" or not processes:
+        return "unknown"
+    if any(process.get("run_mode_evidence") != "explicit_environment" for process in processes):
+        return "unknown"
+    modes = {process.get("run_mode", "unknown") for process in processes}
+    if modes == {"simulation"}:
+        return "simulation_running"
+    if modes == {"hardware"}:
+        return "hardware_declared_running"
+    return "unknown"
+
+
 def collect_workspaces(
     graph: dict[str, Any] | None = None,
     *,
@@ -483,7 +501,13 @@ def collect_workspaces(
         for module in spec.modules:
             module_source = "present" if any(name in packages for name in module.packages) else "unknown"
             module_processes = [process for process in processes if process.get("package") in module.packages]
-            module_runtime = "running" if module_processes else "unknown"
+            if module_processes:
+                module_runtime = "running"
+            elif module_source == "present" and scan_status == "ok" and not any(process.get("package") is None for process in processes):
+                module_runtime = "not_running"
+            else:
+                module_runtime = "unknown"
+            module_execution_state = _execution_state(module_processes, scan_status, module_runtime)
             graph_topics = []
             if relationship == "shared_domain":
                 observed_names = {
@@ -497,6 +521,7 @@ def collect_workspaces(
                 "packages": list(module.packages),
                 "source_status": module_source,
                 "runtime_status": module_runtime,
+                "execution_state": module_execution_state,
                 "run_expectation": "unconfigured",
                 "interface_topics": list(module.interface_topics),
                 "observed_interface_topics": graph_topics,
@@ -526,6 +551,7 @@ def collect_workspaces(
             "processes": processes,
             "domain_ids": domain_ids,
             "run_mode": run_mode,
+            "execution_state": _execution_state(processes, scan_status, runtime_status),
             "run_expectation": "unconfigured",
             "graph_domain_id": active_graph.get("domain_id"),
             "graph_observed_at": active_graph.get("observed_at"),

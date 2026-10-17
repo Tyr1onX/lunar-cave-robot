@@ -16,7 +16,7 @@ struct WorkspaceMonitoringPanel: View {
                             Divider().overlay(Palette.line)
                         }
                     }
-                    Text("进程已发现不代表模块正常。运行预期尚未核实的模块保留未知状态；Domain 不一致或 Graph 过期时不判下游故障。历史快照不参与实时健康判定。")
+                    Text("进程已发现不代表模块或硬件正常。实体模式仅表示进程环境声明；运行预期尚未核实的模块不产生故障结论。Domain 不一致或 Graph 过期时不判下游故障。历史快照不参与实时健康判定。")
                         .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                 }
             } else {
@@ -43,9 +43,12 @@ struct WorkspaceCockpitSummary: View {
                                 HStack {
                                     Text(workspace.label).font(.system(size: 10, weight: .semibold))
                                     Spacer(minLength: 4)
-                                    Text(runtimeLabel(workspace.runtimeStatus, count: workspace.processCount))
+                                    Text(WorkspaceExecutionPresentation.label(
+                                        executionState: workspace.executionState,
+                                        runtimeStatus: workspace.runtimeStatus
+                                    ))
                                         .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(runtimeTint(workspace.runtimeStatus))
+                                        .foregroundStyle(executionTint(workspace.executionState))
                                 }
                                 Text("Domain \(domainsLabel(workspace.domainIds)) · 模式 \(modeLabel(workspace.runMode)) · \(freshness == .live ? "观测时间" : "上次观测") \(workspace.runtimeObservedAt ?? workspace.sourceObservedAt ?? "未知")")
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
@@ -102,6 +105,14 @@ private struct WorkspaceEvidenceCard: View {
                 WorkspaceEvidenceValue(label: "Graph 关系", value: graphLabel(workspace.graphRelationship, domain: workspace.graphDomainId))
             }
 
+            WorkspaceEvidenceValue(
+                label: "执行状态",
+                value: WorkspaceExecutionPresentation.label(
+                    executionState: workspace.executionState,
+                    runtimeStatus: workspace.runtimeStatus
+                )
+            )
+
             DisclosureGroup("模块与源码接口候选") {
                 VStack(alignment: .leading, spacing: 7) {
                     if let modules = workspace.modules, !modules.isEmpty {
@@ -110,8 +121,11 @@ private struct WorkspaceEvidenceCard: View {
                                 HStack {
                                     Text(module.label).font(.system(size: 9, weight: .semibold))
                                     Spacer()
-                                    Text(moduleRuntimeLabel(module.runtimeStatus))
-                                        .font(.system(size: 8, weight: .medium)).foregroundStyle(runtimeTint(module.runtimeStatus))
+                                    Text(WorkspaceExecutionPresentation.label(
+                                        executionState: module.executionState,
+                                        runtimeStatus: module.runtimeStatus
+                                    ))
+                                        .font(.system(size: 8, weight: .medium)).foregroundStyle(executionTint(module.executionState))
                                 }
                                 Text("包：\((module.packages ?? []).joined(separator: ", ").isEmpty ? "未知" : (module.packages ?? []).joined(separator: ", ")) · 运行预期：\(expectationLabel(module.runExpectation))")
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
@@ -153,7 +167,7 @@ private struct WorkspaceEvidenceCard: View {
                     WorkspaceEvidenceValue(label: "Graph 数据", value: "Domain \(workspace.graphDomainId.map(String.init) ?? "未知") · \(workspace.graphObservedAt ?? "时间未知")")
                     if let processes = workspace.processes, !processes.isEmpty {
                         ForEach(processes) { process in
-                            Text("PID \(process.pid) · \(process.processName ?? "未知") · 包 \(process.package ?? "未知") · Domain \(process.domainId.map { String($0) } ?? process.domainEvidence ?? "未知") · LOCALHOST_ONLY \(process.localhostOnly ?? "未知") · 模式 \(modeLabel(process.runMode)) · 依据 \((process.matchedBy ?? []).joined(separator: ", "))")
+                            Text("PID \(process.pid) · \(process.processName ?? "未知") · 包 \(process.package ?? "未知") · Domain \(process.domainId.map { String($0) } ?? process.domainEvidence ?? "未知") · LOCALHOST_ONLY \(process.localhostOnly ?? "未知") · 模式 \(modeLabel(process.runMode)) · 模式来源 \(runModeEvidenceLabel(process.runModeEvidence)) · 归属依据 \((process.matchedBy ?? []).joined(separator: ", "))")
                                 .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                         }
@@ -237,7 +251,7 @@ private struct WorkspaceScanSummary: View {
 
     private var processStatus: String {
         switch inventory.processScan?.status {
-        case "ok": return "完整 · Agent UID 可见范围"
+        case "ok": return "完整 · ROS/工作区候选（Agent UID）"
         case "partial": return "部分可读 · 工作区 Graph 关系为未知"
         default: return "未知"
         }
@@ -287,10 +301,6 @@ private func runtimeLabel(_ status: String?, count: Int?) -> String {
     }
 }
 
-private func moduleRuntimeLabel(_ status: String?) -> String {
-    status == "running" ? "进程已发现" : "运行状态未知"
-}
-
 private func expectationLabel(_ expectation: String?) -> String {
     switch expectation {
     case "confirmed": return "已确认"
@@ -300,7 +310,19 @@ private func expectationLabel(_ expectation: String?) -> String {
 }
 
 private func runtimeTint(_ status: String?) -> Color {
-    status == "running" ? Palette.accent : Palette.warning
+    switch status {
+    case "running": return Palette.blue
+    case "not_running": return Palette.muted
+    default: return Palette.warning
+    }
+}
+
+private func executionTint(_ state: String?) -> Color {
+    switch state {
+    case "not_running": return Palette.muted
+    case "simulation_running", "hardware_declared_running": return Palette.blue
+    default: return Palette.warning
+    }
 }
 
 private func domainsLabel(_ domains: [Int]?) -> String {
@@ -310,12 +332,32 @@ private func domainsLabel(_ domains: [Int]?) -> String {
 
 private func modeLabel(_ mode: String?) -> String {
     switch mode {
-    case "hardware": return "hardware（显式标签）"
-    case "simulation": return "simulation（显式标签）"
-    case "offline": return "offline（显式标签）"
-    case "read-only": return "read-only（显式标签）"
+    case "hardware": return "实体模式（进程环境声明，硬件状态未知）"
+    case "simulation": return "仿真模式（进程环境声明）"
+    case "offline": return "离线模式（进程环境声明）"
+    case "read-only": return "只读模式（进程环境声明）"
     case "mixed": return "多个模式"
     default: return "未知"
+    }
+}
+
+private func runModeEvidenceLabel(_ evidence: String?) -> String {
+    evidence == "explicit_environment" ? "LUNAR_CONSOLE_RUN_MODE" : "未提供"
+}
+
+enum WorkspaceExecutionPresentation {
+    static func label(executionState: String?, runtimeStatus: String?) -> String {
+        switch executionState {
+        case "not_running": return "未发现关联进程（Agent UID 可见范围）"
+        case "simulation_running": return "仿真运行（进程环境声明）"
+        case "hardware_declared_running": return "实体模式已声明 · 硬件状态未知"
+        default:
+            switch runtimeStatus {
+            case "not_running": return "未发现关联进程（旧版 Agent 扫描结果）"
+            case "running": return "进程已发现 · 执行模式未知"
+            default: return "状态未知"
+            }
+        }
     }
 }
 

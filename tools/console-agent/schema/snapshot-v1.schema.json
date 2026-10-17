@@ -122,7 +122,7 @@
   "$defs": {
     "workspace": {
       "type": "object",
-      "required": ["id", "label", "source_kind", "root", "source_status", "source_observed_at", "package_count", "packages", "launch_count", "launch_files", "config_count", "config_files", "runtime_status", "runtime_scope", "runtime_observed_at", "process_count", "processes", "domain_ids", "run_mode", "run_expectation", "graph_domain_id", "graph_observed_at", "graph_relationship", "graph_reason", "modules", "reason"],
+      "required": ["id", "label", "source_kind", "root", "source_status", "source_observed_at", "package_count", "packages", "launch_count", "launch_files", "config_count", "config_files", "runtime_status", "execution_state", "runtime_scope", "runtime_observed_at", "process_count", "processes", "domain_ids", "run_mode", "run_expectation", "graph_domain_id", "graph_observed_at", "graph_relationship", "graph_reason", "modules", "reason"],
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string"}, "label": {"type": "string"},
@@ -133,6 +133,7 @@
         "launch_count": {"type": "integer"}, "launch_files": {"type": "array", "items": {"type": "string"}},
         "config_count": {"type": "integer"}, "config_files": {"type": "array", "items": {"type": "string"}},
         "runtime_status": {"enum": ["running", "not_running", "unknown"]}, "runtime_scope": {"type": "string"},
+        "execution_state": {"enum": ["not_running", "simulation_running", "hardware_declared_running", "unknown"]},
         "runtime_observed_at": {"type": "string", "format": "date-time"}, "process_count": {"type": "integer"},
         "processes": {"type": "array", "items": {"$ref": "#/$defs/workspace_process"}},
         "domain_ids": {"type": "array", "items": {"type": "integer"}},
@@ -146,22 +147,24 @@
       }
     },
     "workspace_process": {
-      "type": "object", "required": ["pid", "process_name", "package", "domain_id", "domain_evidence", "localhost_only", "run_mode", "matched_by", "observed_at"], "additionalProperties": false,
+      "type": "object", "required": ["pid", "process_name", "package", "domain_id", "domain_evidence", "localhost_only", "run_mode", "run_mode_evidence", "matched_by", "observed_at"], "additionalProperties": false,
       "properties": {
         "pid": {"type": "integer"}, "process_name": {"type": "string"},
         "package": {"type": ["string", "null"]}, "domain_id": {"type": ["integer", "null"]},
         "domain_evidence": {"enum": ["observed", "unset", "invalid", "unavailable"]}, "localhost_only": {"enum": ["0", "1", null]},
         "run_mode": {"enum": ["hardware", "simulation", "offline", "read-only", "unknown"]},
+        "run_mode_evidence": {"enum": ["explicit_environment", "unknown"]},
         "matched_by": {"type": "array", "items": {"enum": ["working_directory", "executable_path", "command_path", "overlay_environment"]}},
         "observed_at": {"type": "string", "format": "date-time"}
       }
     },
     "workspace_module": {
-      "type": "object", "required": ["id", "label", "packages", "source_status", "runtime_status", "run_expectation", "interface_topics", "observed_interface_topics", "reason"], "additionalProperties": false,
+      "type": "object", "required": ["id", "label", "packages", "source_status", "runtime_status", "execution_state", "run_expectation", "interface_topics", "observed_interface_topics", "reason"], "additionalProperties": false,
       "properties": {
         "id": {"type": "string"}, "label": {"type": "string"},
         "packages": {"type": "array", "items": {"type": "string"}},
-        "source_status": {"enum": ["present", "unknown"]}, "runtime_status": {"enum": ["running", "unknown"]},
+        "source_status": {"enum": ["present", "unknown"]}, "runtime_status": {"enum": ["running", "not_running", "unknown"]},
+        "execution_state": {"enum": ["not_running", "simulation_running", "hardware_declared_running", "unknown"]},
         "run_expectation": {"const": "unconfigured"},
         "interface_topics": {"type": "array", "items": {"type": "string"}},
         "observed_interface_topics": {"type": "array", "items": {"type": "string"}},
