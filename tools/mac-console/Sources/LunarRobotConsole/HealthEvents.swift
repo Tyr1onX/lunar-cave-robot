@@ -594,6 +594,14 @@ enum HealthEvaluator {
                     check = "检查只读 Agent 工作区来源和进程扫描状态"
                     break
                 }
+                if module.runtimeStatus == "not_running", workspace.graphRelationship != "shared_domain" {
+                    state = .unknown
+                    observation = workspace.graphRelationship == "different_domain"
+                        ? "相机进程未发现，但工作区其他进程的 ROS Domain 与 Agent Graph 不一致；无法确认缺失发生在目标运行域。"
+                        : "相机进程未发现，但工作区与 Agent Graph 的 Domain 关系未知；无法确认缺失发生在目标运行域。"
+                    check = "核对工作区进程的 ROS_DOMAIN_ID 与 Agent Graph Domain，再评估模块缺失"
+                    break
+                }
                 let otherRunning = context.candidates.contains {
                     $0.workspace.id != workspace.id && $0.module.runtimeStatus == "running"
                 }

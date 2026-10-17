@@ -143,7 +143,7 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown"),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "shared_domain"),
             vision: noImage
         )
         XCTAssertEqual(event("module-camera", in: complete).state, .abnormal)
@@ -155,7 +155,7 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", processScanStatus: "partial"),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "shared_domain", processScanStatus: "partial"),
             vision: noImage
         )
         XCTAssertEqual(event("module-camera", in: partial).state, .unknown)
@@ -198,11 +198,31 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "different_domain", expectedDomainID: nil),
-            vision: vision
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "different_domain", expectedDomainID: nil),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "unavailable", publisherCount: 0),
+                depth: stream(.depth, status: "unavailable", publisherCount: 0),
+                yolo: stream(.yolo, status: "waiting")
+            )
         )
         XCTAssertEqual(event("module-camera", in: workspaceDomainMismatch).state, .unknown)
         XCTAssertFalse(workspaceDomainMismatch.contains { $0.id == "module-camera" && $0.state == .abnormal })
+
+        let workspaceDomainUnknown = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", expectedDomainID: nil),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "unavailable", publisherCount: 0),
+                depth: stream(.depth, status: "unavailable", publisherCount: 0),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+        XCTAssertEqual(event("module-camera", in: workspaceDomainUnknown).state, .unknown)
+        XCTAssertFalse(workspaceDomainUnknown.contains { $0.id == "module-camera" && $0.state == .abnormal })
     }
 
     func testInvalidModuleExpectationKeepsCameraStateUnknown() throws {
