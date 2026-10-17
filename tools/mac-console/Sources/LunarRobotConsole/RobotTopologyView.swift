@@ -280,7 +280,8 @@ private struct TopologyNodeButton: View {
                 }
                 Text(status.signal.label).font(.system(size: 8, weight: .medium)).foregroundStyle(signalColor(status.signal)).lineLimit(1)
             }
-            .frame(width: 152, minHeight: 55, alignment: .leading)
+            .frame(width: 152)
+            .frame(minHeight: 55, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
             .background(selected ? Palette.accent.opacity(0.13) : Palette.panelRaised, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Palette.accent.opacity(0.7) : Palette.line, lineWidth: 1))
