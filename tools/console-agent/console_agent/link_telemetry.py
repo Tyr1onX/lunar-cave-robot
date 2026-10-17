@@ -165,6 +165,11 @@ class LinkTelemetryObserver:
                 "topic_types": [],
                 "subscription_type": None,
                 "subscription_reason": "waiting for a matching ROS publisher",
+                "subscription_generation": 0,
+                "subscription_started_at": None,
+                "subscription_started_mono": None,
+                "previous_received_at": None,
+                "previous_subscription_generation": None,
                 "last_received_mono": None,
                 "received_at": None,
                 "source_stamp": None,
@@ -248,12 +253,60 @@ class LinkTelemetryObserver:
             stream["subscription_type"] = message_type
             stream["subscription_reason"] = None
 
+    def begin_subscription(
+        self,
+        stream_id: str,
+        message_type: str,
+        *,
+        started_mono: float | None = None,
+        started_at: str | None = None,
+    ) -> int | None:
+        """Start a fresh receive epoch and return its callback token."""
+        if stream_id not in TELEMETRY_STREAMS:
+            return None
+        now_mono = self._monotonic() if started_mono is None else started_mono
+        now_text = self._utc_now() if started_at is None else started_at
+        with self._lock:
+            stream = self._streams[stream_id]
+            self._archive_current_receive(stream)
+            stream["subscription_generation"] += 1
+            stream["subscription_started_at"] = now_text
+            stream["subscription_started_mono"] = now_mono
+            stream["subscription_type"] = message_type
+            stream["subscription_reason"] = None
+            self._clear_current_receive(stream)
+            return stream["subscription_generation"]
+
+    @staticmethod
+    def _archive_current_receive(stream: dict[str, Any]) -> None:
+        if stream["received_at"] is not None:
+            stream["previous_received_at"] = stream["received_at"]
+            stream["previous_subscription_generation"] = stream["subscription_generation"]
+
+    @staticmethod
+    def _clear_current_receive(stream: dict[str, Any]) -> None:
+        stream["last_received_mono"] = None
+        stream["received_at"] = None
+        stream["source_stamp"] = None
+        stream["header_to_agent_ms"] = None
+        stream["frame_id"] = None
+        stream["sample_count"] = None
+        stream["sample_unit"] = None
+        stream["received_mono"].clear()
+        stream["receive_count"] = 0
+        stream["gap_events"] = 0
+        stream["last_gap_ms"] = None
+
     def subscription_unavailable(self, stream_id: str, message_type: str | None, reason: str) -> None:
         if stream_id not in TELEMETRY_STREAMS:
             return
         with self._lock:
             stream = self._streams[stream_id]
+            self._archive_current_receive(stream)
+            self._clear_current_receive(stream)
             stream["subscription_type"] = None
+            stream["subscription_started_at"] = None
+            stream["subscription_started_mono"] = None
             stream["subscription_reason"] = reason
 
     def receive(
@@ -264,6 +317,7 @@ class LinkTelemetryObserver:
         *,
         received_mono: float | None = None,
         received_at: str | None = None,
+        subscription_generation: int | None = None,
     ) -> None:
         if stream_id not in TELEMETRY_STREAMS:
             return
@@ -278,6 +332,10 @@ class LinkTelemetryObserver:
         definition = TELEMETRY_STREAMS[stream_id]
         with self._lock:
             stream = self._streams[stream_id]
+            if stream["subscription_type"] != message_type:
+                return
+            if subscription_generation is not None and subscription_generation != stream["subscription_generation"]:
+                return
             previous = stream["last_received_mono"]
             if previous is not None:
                 gap_ms = max(0.0, (now_mono - previous) * 1000)
@@ -365,6 +423,10 @@ class LinkTelemetryObserver:
                     "publisher_count": publishers,
                     "publisher_endpoints": list(stream["publisher_endpoints"]),
                     "workspace_attribution": "unknown",
+                    "subscription_generation": stream["subscription_generation"],
+                    "subscription_started_at": stream["subscription_started_at"],
+                    "previous_received_at": stream["previous_received_at"],
+                    "previous_subscription_generation": stream["previous_subscription_generation"],
                     "received_at": stream["received_at"],
                     "source_stamp": stream["source_stamp"],
                     "age_ms": age_ms,

@@ -351,6 +351,10 @@ struct LinkTelemetryStreamReading: Decodable, Identifiable {
     let publisherCount: Int?
     let publisherEndpoints: [LinkTelemetryPublisherEndpoint]
     let workspaceAttribution: String
+    let subscriptionGeneration: Int?
+    let subscriptionStartedAt: String?
+    let previousReceivedAt: String?
+    let previousSubscriptionGeneration: Int?
     let receivedAt: String?
     let sourceStamp: String?
     let ageMs: Int?

@@ -365,7 +365,7 @@ class ROSGraphObserver:
                 reliability=QoSReliabilityPolicy.BEST_EFFORT,
                 durability=QoSDurabilityPolicy.VOLATILE,
             )
-            telemetry_subscriptions: dict[str, tuple[str, Any]] = {}
+            telemetry_subscriptions: dict[str, tuple[str, tuple[tuple[str, str, str, str], ...], Any]] = {}
             executor = SingleThreadedExecutor(context=context)
             executor.add_node(node)
             last_graph_read = 0.0
@@ -404,6 +404,7 @@ class ROSGraphObserver:
                             "name": str(getattr(publisher, "node_name", "")),
                             "namespace": str(getattr(publisher, "node_namespace", "")),
                             "topic_type": str(getattr(publisher, "topic_type", "")),
+                            "endpoint_gid": _endpoint_gid_signature(getattr(publisher, "endpoint_gid", None)),
                         }
                         for publisher in publishers
                     ]
@@ -449,7 +450,7 @@ class ROSGraphObserver:
                 except Exception:
                     pass
             if node is not None:
-                for _message_type, subscription in locals().get("telemetry_subscriptions", {}).values():
+                for _message_type, _fingerprint, subscription in locals().get("telemetry_subscriptions", {}).values():
                     try:
                         node.destroy_subscription(subscription)
                     except Exception:
@@ -474,6 +475,24 @@ def _disable_default_parameter_event_publisher(node: Any) -> None:
     if publisher is not None:
         node.destroy_publisher(publisher)
         node._parameter_event_publisher = None
+
+
+def _endpoint_gid_signature(value: Any) -> str:
+    """Normalize the ROS endpoint GID for internal publisher-restart detection."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        raw = bytes(value)
+        if raw:
+            return raw.hex()
+    except (TypeError, ValueError):
+        pass
+    try:
+        return ",".join(str(int(part)) for part in value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _load_link_telemetry_message_types() -> dict[str, Any]:
@@ -513,17 +532,23 @@ def _sync_link_telemetry_subscription(
     endpoints: list[dict[str, str]],
     message_types: dict[str, Any],
     qos_profile: Any,
-    subscriptions: dict[str, tuple[str, Any]],
+    subscriptions: dict[str, tuple[str, tuple[tuple[str, str, str, str], ...], Any]],
     telemetry: LinkTelemetryObserver,
 ) -> None:
     """Create subscriptions only for one allowlisted type on a fixed topic."""
     definition = TELEMETRY_STREAMS[stream_id]
     topic_types = sorted({endpoint["topic_type"] for endpoint in endpoints if endpoint.get("topic_type")})
     existing = subscriptions.get(stream_id)
+    fingerprint = tuple(sorted((
+        str(endpoint.get("name") or ""),
+        str(endpoint.get("namespace") or ""),
+        str(endpoint.get("topic_type") or ""),
+        str(endpoint.get("endpoint_gid") or ""),
+    ) for endpoint in endpoints))
     if len(topic_types) != 1 or topic_types[0] not in definition["message_types"]:
         if existing is not None:
             try:
-                node.destroy_subscription(existing[1])
+                node.destroy_subscription(existing[2])
             except Exception:
                 pass
             subscriptions.pop(stream_id, None)
@@ -539,32 +564,39 @@ def _sync_link_telemetry_subscription(
     if message_class is None:
         if existing is not None:
             try:
-                node.destroy_subscription(existing[1])
+                node.destroy_subscription(existing[2])
             except Exception:
                 pass
             subscriptions.pop(stream_id, None)
         telemetry.subscription_unavailable(stream_id, message_type, "ROS message type support is not loaded in the Agent environment")
         return
-    if existing is not None and existing[0] == message_type:
+    if existing is not None and existing[0] == message_type and existing[1] == fingerprint:
         telemetry.subscription_ready(stream_id, message_type)
         return
     if existing is not None:
         try:
-            node.destroy_subscription(existing[1])
+            node.destroy_subscription(existing[2])
         except Exception:
             pass
         subscriptions.pop(stream_id, None)
+        telemetry.subscription_unavailable(stream_id, message_type, "publisher endpoint set changed; replacing the read-only subscription")
+    generation = telemetry.begin_subscription(stream_id, message_type)
     try:
         subscription = node.create_subscription(
             message_class,
             definition["topic"],
-            lambda message, selected=stream_id, selected_type=message_type: telemetry.receive(selected, message, selected_type),
+            lambda message, selected=stream_id, selected_type=message_type, selected_generation=generation: telemetry.receive(
+                selected,
+                message,
+                selected_type,
+                subscription_generation=selected_generation,
+            ),
             qos_profile,
         )
     except Exception as exc:
         telemetry.subscription_unavailable(stream_id, message_type, f"fixed read-only subscription unavailable: {type(exc).__name__}")
         return
-    subscriptions[stream_id] = (message_type, subscription)
+    subscriptions[stream_id] = (message_type, fingerprint, subscription)
     telemetry.subscription_ready(stream_id, message_type)
 
 

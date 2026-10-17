@@ -57,7 +57,8 @@
       "additionalProperties": false,
       "required": [
         "id", "label", "topic", "topic_type", "topic_types", "status", "reason",
-        "publisher_count", "publisher_endpoints", "workspace_attribution", "received_at",
+        "publisher_count", "publisher_endpoints", "workspace_attribution", "subscription_generation",
+        "subscription_started_at", "previous_received_at", "previous_subscription_generation", "received_at",
         "source_stamp", "age_ms", "receive_rate_hz", "header_to_agent_ms", "frame_id",
         "sample_count", "sample_unit", "gap_events", "last_gap_ms", "stale_after_ms", "receive_count"
       ],
@@ -72,6 +73,10 @@
         "publisher_count": { "type": ["integer", "null"], "minimum": 0 },
         "publisher_endpoints": { "type": "array", "items": { "$ref": "#/$defs/publisherEndpoint" } },
         "workspace_attribution": { "const": "unknown" },
+        "subscription_generation": { "type": "integer", "minimum": 0 },
+        "subscription_started_at": { "type": ["string", "null"], "format": "date-time" },
+        "previous_received_at": { "type": ["string", "null"], "format": "date-time" },
+        "previous_subscription_generation": { "type": ["integer", "null"], "minimum": 0 },
         "received_at": { "type": ["string", "null"], "format": "date-time" },
         "source_stamp": { "type": ["string", "null"], "format": "date-time" },
         "age_ms": { "type": ["integer", "null"], "minimum": 0 },

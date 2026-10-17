@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -174,6 +175,7 @@ class AgentHTTPTests(unittest.TestCase):
         class NodeStub:
             def __init__(self) -> None:
                 self.subscriptions = []
+                self.destroyed = []
 
             def create_subscription(self, message_class, topic, callback, qos_profile):
                 value = (message_class, topic, callback, qos_profile)
@@ -181,20 +183,76 @@ class AgentHTTPTests(unittest.TestCase):
                 return value
 
             def destroy_subscription(self, _subscription):
-                return None
+                self.destroyed.append(_subscription)
 
         class PointCloud2:
             pass
 
         node = NodeStub()
         observer = LinkTelemetryObserver()
-        endpoints = [{"name": "synthetic_lidar", "namespace": "/sim", "topic_type": "sensor_msgs/msg/PointCloud2"}]
+        observer.set_available_message_types({"sensor_msgs/msg/PointCloud2"})
+        observer.graph_available(
+            domain_id=187,
+            observed_at="2026-10-17T00:00:00.000Z",
+            expected_domain_id=None,
+            expected_domain_error=None,
+        )
+        subscriptions = {}
+        endpoints = [{
+            "name": "synthetic_lidar", "namespace": "/sim",
+            "topic_type": "sensor_msgs/msg/PointCloud2", "endpoint_gid": "01",
+        }]
+        observer.update_publishers("livox_lidar", endpoints)
         _sync_link_telemetry_subscription(
-            node, "livox_lidar", endpoints, {"sensor_msgs/msg/PointCloud2": PointCloud2}, object(), {}, observer
+            node, "livox_lidar", endpoints, {"sensor_msgs/msg/PointCloud2": PointCloud2}, object(), subscriptions, observer
         )
         self.assertEqual(len(node.subscriptions), 1)
         self.assertIs(node.subscriptions[0][0], PointCloud2)
         self.assertEqual(node.subscriptions[0][1], "/livox/lidar")
+
+        message = SimpleNamespace(
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(sec=1_797_589_600, nanosec=0),
+                frame_id="synthetic_lidar",
+            ),
+            width=10,
+            height=1,
+        )
+        old_callback = node.subscriptions[0][2]
+        old_callback(message)
+        old_stream = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(old_stream["status"], "streaming")
+        self.assertEqual(old_stream["subscription_generation"], 1)
+
+        # A publisher restart may keep its name, namespace, and type while receiving a new ROS endpoint GID.
+        replacement = [{**endpoints[0], "endpoint_gid": "02"}]
+        observer.update_publishers("livox_lidar", replacement)
+        _sync_link_telemetry_subscription(
+            node,
+            "livox_lidar",
+            replacement,
+            {"sensor_msgs/msg/PointCloud2": PointCloud2},
+            object(),
+            subscriptions,
+            observer,
+        )
+        self.assertEqual(len(node.subscriptions), 2)
+        self.assertEqual(len(node.destroyed), 1)
+        waiting = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting["subscription_generation"], 2)
+        self.assertIsNone(waiting["received_at"])
+        self.assertIsNone(waiting["age_ms"])
+        self.assertEqual(waiting["previous_subscription_generation"], 1)
+        self.assertIsNotNone(waiting["previous_received_at"])
+
+        # A callback already queued for the destroyed publisher is rejected after the endpoint switch.
+        old_callback(message)
+        self.assertEqual(next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")["receive_count"], 0)
+        node.subscriptions[1][2](message)
+        recovered = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(recovered["status"], "streaming")
+        self.assertEqual(recovered["receive_count"], 1)
 
         _sync_link_telemetry_subscription(
             node,
@@ -202,10 +260,10 @@ class AgentHTTPTests(unittest.TestCase):
             [{"name": "unknown", "namespace": "/", "topic_type": "example_msgs/msg/Arbitrary"}],
             {"example_msgs/msg/Arbitrary": object},
             object(),
-            {},
+            subscriptions,
             observer,
         )
-        self.assertEqual(len(node.subscriptions), 1, "Unknown message types must not create dynamic subscriptions.")
+        self.assertEqual(len(node.subscriptions), 2, "Unknown message types must not create dynamic subscriptions.")
 
     def test_vision_frame_is_a_no_store_png(self) -> None:
         with patch("console_agent.server.collect_vision_frame", return_value=(b"\x89PNG\r\n\x1a\n", None, None)):

@@ -185,6 +185,8 @@ final class RobotTopologyTests: XCTestCase {
             ("pointlio_odometry", "/odometry", "streaming"),
             ("cloud_registered", "/cloud_registered", "streaming"),
         ])
+        XCTAssertEqual(telemetry.streams.first?.subscriptionGeneration, 1)
+        XCTAssertEqual(telemetry.streams.first?.subscriptionStartedAt, "2026-10-17T00:59:58.000Z")
         let context = try makeContext(linkTelemetry: telemetry)
         let evaluation = TopologyStatusResolver.evaluate(context)
 
@@ -500,7 +502,7 @@ final class RobotTopologyTests: XCTestCase {
             let timestamp = publisherCount == 0 ? "null" : #""2026-10-17T01:00:00.000Z""#
             let rate = status == "streaming" ? "10.0" : "null"
             let receiveCount = status == "unavailable" ? 0 : 20
-            return #"{"id":"\#(id)","label":"\#(id)","topic":"\#(topic)","topic_type":"\#(type)","topic_types":["\#(type)"],"status":"\#(status)","reason":\#(reason),"publisher_count":\#(publisherCount),"publisher_endpoints":\#(endpoints),"workspace_attribution":"unknown","received_at":\#(timestamp),"source_stamp":\#(timestamp),"age_ms":\#(age),"receive_rate_hz":\#(rate),"header_to_agent_ms":null,"frame_id":"synthetic","sample_count":100,"sample_unit":"points","gap_events":0,"last_gap_ms":null,"stale_after_ms":1500,"receive_count":\#(receiveCount)}"#
+            return #"{"id":"\#(id)","label":"\#(id)","topic":"\#(topic)","topic_type":"\#(type)","topic_types":["\#(type)"],"status":"\#(status)","reason":\#(reason),"publisher_count":\#(publisherCount),"publisher_endpoints":\#(endpoints),"workspace_attribution":"unknown","subscription_generation":1,"subscription_started_at":"2026-10-17T00:59:58.000Z","previous_received_at":null,"previous_subscription_generation":null,"received_at":\#(timestamp),"source_stamp":\#(timestamp),"age_ms":\#(age),"receive_rate_hz":\#(rate),"header_to_agent_ms":null,"frame_id":"synthetic","sample_count":100,"sample_unit":"points","gap_events":0,"last_gap_ms":null,"stale_after_ms":1500,"receive_count":\#(receiveCount)}"#
         }.joined(separator: ",")
         let domainMatch = domainID == expectedDomainID ? "true" : "false"
         let json = #"{"schema_version":1,"status":"ok","source":"nuc-ros2-fixed-topic-read-only-subscriber","collected_at":"2026-10-17T01:00:00.000Z","domain_id":\#(domainID),"expected_domain_id":\#(expectedDomainID),"expected_domain_error":null,"domain_matches_expectation":\#(domainMatch),"graph_status":"ok","graph_observed_at":"2026-10-17T01:00:00.000Z","graph_age_ms":\#(graphAgeMs),"graph_reason":null,"workspace_attribution":"unknown","clock_note":"clock synchronization not verified","streams":[\#(streams)]}"#

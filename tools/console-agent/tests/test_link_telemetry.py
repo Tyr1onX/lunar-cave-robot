@@ -66,14 +66,15 @@ class LinkTelemetryObserverTests(unittest.TestCase):
             expected_domain_error=None,
         )
 
-    def configure_stream(self, stream_id: str, message_type: str, endpoints: list[dict[str, str]] | None = None) -> None:
-        definition = TELEMETRY_STREAMS[stream_id]
+    def configure_stream(self, stream_id: str, message_type: str, endpoints: list[dict[str, str]] | None = None) -> int:
         self.observer.update_publishers(stream_id, endpoints or [{
             "name": "synthetic_publisher",
             "namespace": "/synthetic",
             "topic_type": message_type,
         }])
-        self.observer.subscription_ready(stream_id, message_type)
+        generation = self.observer.begin_subscription(stream_id, message_type, started_mono=10.0, started_at=BASE_TEXT)
+        assert generation is not None
+        return generation
 
     def test_normal_pointcloud_is_measured_without_reading_payload(self) -> None:
         message_type = "sensor_msgs/msg/PointCloud2"
@@ -205,6 +206,80 @@ class LinkTelemetryObserverTests(unittest.TestCase):
         stream = next(item for item in self.observer.snapshot(now_mono=10.1)["streams"] if item["id"] == "map")
         self.assertEqual(stream["sample_count"], 200_000)
         self.assertEqual(stream["sample_unit"], "cells")
+
+    def test_new_subscription_epoch_does_not_reuse_previous_receive_time(self) -> None:
+        message_type = "sensor_msgs/msg/PointCloud2"
+        first_generation = self.configure_stream("livox_lidar", message_type)
+        self.observer.receive(
+            "livox_lidar", FakeMessage(), message_type,
+            received_mono=10.0, received_at=BASE_TEXT,
+            subscription_generation=first_generation,
+        )
+        self.observer.receive(
+            "livox_lidar", FakeMessage(), message_type,
+            received_mono=10.1, received_at="2023-11-14T22:13:20.100Z",
+            subscription_generation=first_generation,
+        )
+
+        second_generation = self.observer.begin_subscription(
+            "livox_lidar", message_type,
+            started_mono=11.0,
+            started_at="2023-11-14T22:13:21.000Z",
+        )
+        self.assertEqual(second_generation, first_generation + 1)
+        waiting = next(item for item in self.observer.snapshot(now_mono=11.1)["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertIsNone(waiting["age_ms"])
+        self.assertIsNone(waiting["receive_rate_hz"])
+        self.assertEqual(waiting["receive_count"], 0)
+        self.assertEqual(waiting["gap_events"], 0)
+        self.assertIsNone(waiting["last_gap_ms"])
+        self.assertIsNone(waiting["received_at"])
+        self.assertEqual(waiting["previous_received_at"], "2023-11-14T22:13:20.100Z")
+        self.assertEqual(waiting["previous_subscription_generation"], first_generation)
+        self.assertEqual(waiting["subscription_started_at"], "2023-11-14T22:13:21.000Z")
+
+        # A delayed callback queued by the destroyed subscription cannot contaminate the new epoch.
+        self.observer.receive(
+            "livox_lidar", FakeMessage(), message_type,
+            received_mono=11.2, received_at="2023-11-14T22:13:21.200Z",
+            subscription_generation=first_generation,
+        )
+        still_waiting = next(item for item in self.observer.snapshot(now_mono=11.3)["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(still_waiting["status"], "waiting")
+        self.assertEqual(still_waiting["receive_count"], 0)
+        self.assertIsNone(still_waiting["received_at"])
+
+        self.observer.receive(
+            "livox_lidar", FakeMessage(), message_type,
+            received_mono=11.4, received_at="2023-11-14T22:13:21.400Z",
+            subscription_generation=second_generation,
+        )
+        recovered = next(item for item in self.observer.snapshot(now_mono=11.5)["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(recovered["status"], "streaming")
+        self.assertEqual(recovered["received_at"], "2023-11-14T22:13:21.400Z")
+        self.assertEqual(recovered["previous_received_at"], "2023-11-14T22:13:20.100Z")
+        self.assertEqual(recovered["receive_count"], 1)
+
+    def test_cancelled_subscription_keeps_only_explicit_history(self) -> None:
+        message_type = "sensor_msgs/msg/Imu"
+        generation = self.configure_stream("livox_imu", message_type)
+        self.observer.receive(
+            "livox_imu", FakeMessage(), message_type,
+            received_mono=10.0, received_at=BASE_TEXT,
+            subscription_generation=generation,
+        )
+        self.observer.update_publishers("livox_imu", [])
+        self.observer.subscription_unavailable("livox_imu", None, "no publisher is currently visible")
+
+        stream = next(item for item in self.observer.snapshot(now_mono=20.0)["streams"] if item["id"] == "livox_imu")
+        self.assertEqual(stream["status"], "unavailable")
+        self.assertIsNone(stream["received_at"])
+        self.assertIsNone(stream["age_ms"])
+        self.assertIsNone(stream["receive_rate_hz"])
+        self.assertIsNone(stream["subscription_started_at"])
+        self.assertEqual(stream["previous_received_at"], BASE_TEXT)
+        self.assertEqual(stream["receive_count"], 0)
 
 
 if __name__ == "__main__":
