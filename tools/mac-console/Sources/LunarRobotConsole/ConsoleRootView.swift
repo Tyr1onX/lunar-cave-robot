@@ -94,6 +94,7 @@ struct ConsoleRootView: View {
                 ScrollView {
                     Group {
                         switch model.section {
+                        case .topology: RobotTopologyView(model: model)
                         case .cockpit: TestCockpitView(model: model)
                         case .moduleTests: ModuleTestsView(model: moduleTests)
                         case .simulation: SimulationDriveView(model: simulator)
@@ -102,7 +103,7 @@ struct ConsoleRootView: View {
                         case .history: HistoryView(model: model)
                         }
                     }
-                    .frame(maxWidth: 1320, alignment: .topLeading)
+                    .frame(maxWidth: model.section == .topology ? 1560 : 1320, alignment: .topLeading)
                     .padding(.horizontal, 28)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity, alignment: .top)

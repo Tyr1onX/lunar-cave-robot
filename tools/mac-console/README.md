@@ -1,6 +1,6 @@
 # Lunar Robot Console for macOS
 
-Native SwiftUI console for Apple Silicon. The default screen is the read-only Test Cockpit; there is also a **separate SIMULATION-only** driving page, System Diagnostics, and History. Mac does not need ROS 2. Physical robot motion, arbitrary ROS Topic/service writes, device control, deployment and shell-command controls remain absent.
+Native SwiftUI console for Apple Silicon. The default screen is the interactive, read-only robot system topology; it expands from an overall subsystem graph into component links and evidence. The read-only Test Cockpit, System Diagnostics, History, and a **separate SIMULATION-only** driving page remain available. Mac does not need ROS 2. Physical robot motion, arbitrary ROS Topic/service writes, device control, deployment and shell-command controls remain absent.
 
 ## Connection contract
 

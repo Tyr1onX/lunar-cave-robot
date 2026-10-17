@@ -35,6 +35,7 @@ private final class SSHDiagnosticBuffer: @unchecked Sendable {
 @MainActor
 final class ConsoleModel: ObservableObject {
     enum Section: String, CaseIterable, Identifiable {
+        case topology = "机器人拓扑"
         case cockpit = "测试驾驶舱"
         case moduleTests = "模块测试"
         case simulation = "模拟驾驶"
@@ -46,6 +47,7 @@ final class ConsoleModel: ObservableObject {
 
         var symbol: String {
             switch self {
+            case .topology: return "point.3.connected.trianglepath.dotted"
             case .cockpit: return "viewfinder"
             case .moduleTests: return "checklist"
             case .simulation: return "gamecontroller.fill"
@@ -56,7 +58,7 @@ final class ConsoleModel: ObservableObject {
         }
     }
 
-    @Published var section: Section = .cockpit
+    @Published var section: Section = .topology
     @Published private(set) var snapshot: ConsoleSnapshot?
     @Published private(set) var workspaceInventorySnapshot: WorkspaceInventoryReading?
     @Published private(set) var workspaceSnapshotFreshness: WorkspaceSnapshotFreshness = .unavailable
