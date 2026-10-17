@@ -231,6 +231,8 @@ def _is_known_session_helper(comm: str, cmdline: str) -> bool:
     """Exclude only audited systemd/SSH session wrappers from ROS probing."""
     if Path(comm).name == "sshd":
         return cmdline.startswith("sshd:") and (len(cmdline) == 5 or cmdline[5].isspace())
+    if comm.strip() == "(sd-pam)" and cmdline.strip() == "(sd-pam)":
+        return True
     try:
         tokens = shlex.split(cmdline)
     except ValueError:
