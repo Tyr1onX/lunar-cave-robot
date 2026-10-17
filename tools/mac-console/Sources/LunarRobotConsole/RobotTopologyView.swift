@@ -274,6 +274,7 @@ struct RobotTopologyView: View {
             node: node,
             status: evaluation.nodeStatus(node.id),
             context: context,
+            linkTelemetryMessage: model.linkTelemetryMessage,
             onClose: { interaction.clearSelection() }
         )
         .accessibilityIdentifier("topology.node-evidence")
@@ -582,6 +583,7 @@ private struct TopologyNodeEvidencePanel: View {
     let node: TopologyNodeDefinition
     let status: TopologyElementStatus
     let context: TopologyRuntimeContext
+    let linkTelemetryMessage: String?
     let onClose: () -> Void
 
     private var workspaceEvidence: [(WorkspaceReading, WorkspaceModuleReading)] {
@@ -685,7 +687,7 @@ private struct TopologyNodeEvidencePanel: View {
                 }
             } else {
                 Text(context.agentOnline
-                     ? (model.linkTelemetryMessage ?? "当前 Agent 尚未返回实时链路遥测。")
+                     ? (linkTelemetryMessage ?? "当前 Agent 尚未返回实时链路遥测。")
                      : "Agent 当前断连；不使用历史链路数据进行实时判定。")
                     .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
             }
