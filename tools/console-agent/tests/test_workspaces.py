@@ -75,9 +75,73 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertEqual(workspace["launch_count"], 1)
         self.assertEqual(workspace["config_count"], 1)
         self.assertEqual(workspace["runtime_status"], "not_running")
+        self.assertEqual(workspace["execution_state"], "not_running")
         self.assertEqual(workspace["run_expectation"], "unconfigured")
-        self.assertEqual(workspace["modules"][0]["runtime_status"], "unknown")
+        self.assertEqual(workspace["modules"][0]["runtime_status"], "not_running")
+        self.assertEqual(workspace["modules"][0]["execution_state"], "not_running")
         self.assertEqual(workspace["modules"][0]["run_expectation"], "unconfigured")
+        self.assertNotIn("abnormal", json.dumps(reading, ensure_ascii=False))
+
+    def test_explicit_simulation_mode_is_reported_as_process_declaration(self) -> None:
+        proc = self._fake_process(
+            b"/opt/ros/humble/bin/ros2\0run\0yolo_node\0yolo_detector\0",
+            f"AMENT_PREFIX_PATH={self.root / 'install'}\0ROS_DOMAIN_ID=187\0LUNAR_CONSOLE_RUN_MODE=simulation\0".encode(),
+        )
+
+        reading = collect_workspaces(
+            {"status": "ok", "domain_id": 187, "graph_age_ms": 100},
+            specs=(self.spec,), proc_root=proc,
+        )
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(workspace["execution_state"], "simulation_running")
+        self.assertEqual(workspace["modules"][0]["execution_state"], "simulation_running")
+        self.assertEqual(workspace["processes"][0]["run_mode_evidence"], "explicit_environment")
+        self.assertEqual(workspace["modules"][0]["run_expectation"], "unconfigured")
+        self.assertNotIn("abnormal", json.dumps(reading, ensure_ascii=False))
+
+    def test_explicit_hardware_mode_does_not_claim_hardware_health(self) -> None:
+        proc = self._fake_process(
+            b"/opt/ros/humble/bin/ros2\0run\0yolo_node\0yolo_detector\0",
+            f"AMENT_PREFIX_PATH={self.root / 'install'}\0ROS_DOMAIN_ID=187\0LUNAR_CONSOLE_RUN_MODE=hardware\0".encode(),
+        )
+
+        reading = collect_workspaces(
+            {"status": "ok", "domain_id": 187, "graph_age_ms": 100},
+            specs=(self.spec,), proc_root=proc,
+        )
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(workspace["execution_state"], "hardware_declared_running")
+        self.assertEqual(workspace["run_mode"], "hardware")
+        self.assertEqual(workspace["processes"][0]["run_mode_evidence"], "explicit_environment")
+        self.assertEqual(workspace["modules"][0]["run_expectation"], "unconfigured")
+        self.assertNotIn("hardware_health", json.dumps(reading))
+
+    def test_conflicting_process_mode_declarations_remain_unknown(self) -> None:
+        proc = Path(self.temporary.name) / "mixed-mode-proc"
+        for pid, mode in (("801", "simulation"), ("802", "hardware")):
+            process = proc / pid
+            process.mkdir(parents=True)
+            (process / "comm").write_text("yolo_detector\n", encoding="utf-8")
+            command = f"{self.root}/install/yolo_node/lib/yolo_node/yolo_detector\0".encode()
+            (process / "cmdline").write_bytes(command)
+            (process / "environ").write_bytes(
+                f"AMENT_PREFIX_PATH={self.root / 'install'}\0LUNAR_CONSOLE_RUN_MODE={mode}\0".encode()
+            )
+            (process / "cwd").symlink_to(self.root, target_is_directory=True)
+
+        reading = collect_workspaces(
+            {"status": "ok", "domain_id": 187, "graph_age_ms": 100},
+            specs=(self.spec,), proc_root=proc,
+        )
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(workspace["runtime_status"], "running")
+        self.assertEqual(workspace["run_mode"], "mixed")
+        self.assertEqual(workspace["execution_state"], "unknown")
+        self.assertEqual(workspace["modules"][0]["runtime_status"], "running")
+        self.assertEqual(workspace["modules"][0]["execution_state"], "unknown")
 
     def test_symlinked_source_is_not_followed(self) -> None:
         outside = Path(self.temporary.name) / "outside"
@@ -105,6 +169,7 @@ class WorkspaceInventoryTests(unittest.TestCase):
         workspace = reading["workspaces"][0]
 
         self.assertEqual(workspace["runtime_status"], "running")
+        self.assertEqual(workspace["execution_state"], "unknown")
         self.assertEqual(workspace["processes"][0]["domain_id"], 218)
         self.assertEqual(workspace["graph_relationship"], "different_domain")
         self.assertEqual(workspace["modules"][0]["runtime_status"], "running")
@@ -281,6 +346,7 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIn("无法安全归属", reading["process_scan"]["reason"])
         self.assertEqual([workspace["process_count"] for workspace in reading["workspaces"]], [0, 0])
         self.assertEqual([workspace["runtime_status"] for workspace in reading["workspaces"]], ["unknown", "unknown"])
+        self.assertEqual([workspace["execution_state"] for workspace in reading["workspaces"]], ["unknown", "unknown"])
 
     def test_missing_source_remains_unknown(self) -> None:
         missing = WorkspaceSpec("missing", "不存在", "original", self.root / "missing", (self.root / "missing",), ())

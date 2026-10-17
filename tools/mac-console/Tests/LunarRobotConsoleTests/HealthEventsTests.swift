@@ -263,6 +263,14 @@ final class HealthEventsTests: XCTestCase {
             "Observed processes are insufficient while runtime expectations remain unconfigured."
         )
 
+        let notStarted = try decodeWorkspaceInventory(runExpectation: "unconfigured", runtimeStatus: "not_running")
+        XCTAssertTrue(notStarted.hasUnconfirmedHealth)
+        XCTAssertEqual(
+            HealthSummaryState.resolve([normal], workspaceInventory: notStarted, requireWorkspaceTelemetry: true),
+            .unknown,
+            "A not-started workspace with no confirmed run expectation must not be shown as healthy or faulty."
+        )
+
         let confirmed = try decodeWorkspaceInventory(runExpectation: "confirmed")
         XCTAssertFalse(confirmed.hasUnconfirmedHealth)
         XCTAssertEqual(
@@ -271,8 +279,8 @@ final class HealthEventsTests: XCTestCase {
         )
     }
 
-    private func decodeWorkspaceInventory(runExpectation: String) throws -> WorkspaceInventoryReading {
-        let json = #"{"status":"ok","workspaces":[{"id":"original-navigation","label":"原始导航与雷达工程","source_kind":"original","source_status":"present","runtime_status":"running","run_expectation":"\#(runExpectation)","graph_relationship":"shared_domain","modules":[{"id":"navigation","label":"导航","source_status":"present","runtime_status":"running","run_expectation":"\#(runExpectation)"}]}]}"#
+    private func decodeWorkspaceInventory(runExpectation: String, runtimeStatus: String = "running") throws -> WorkspaceInventoryReading {
+        let json = #"{"status":"ok","workspaces":[{"id":"original-navigation","label":"原始导航与雷达工程","source_kind":"original","source_status":"present","runtime_status":"\#(runtimeStatus)","run_expectation":"\#(runExpectation)","graph_relationship":"shared_domain","modules":[{"id":"navigation","label":"导航","source_status":"present","runtime_status":"\#(runtimeStatus)","run_expectation":"\#(runExpectation)"}]}]}"#
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(WorkspaceInventoryReading.self, from: Data(json.utf8))

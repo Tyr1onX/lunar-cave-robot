@@ -153,6 +153,7 @@ struct WorkspaceReading: Decodable, Identifiable {
     let configCount: Int?
     let configFiles: [String]?
     let runtimeStatus: String?
+    let executionState: String?
     let runtimeScope: String?
     let runtimeObservedAt: String?
     let processCount: Int?
@@ -183,6 +184,7 @@ struct WorkspaceProcessReading: Decodable, Identifiable {
     let domainEvidence: String?
     let localhostOnly: String?
     let runMode: String?
+    let runModeEvidence: String?
     let matchedBy: [String]?
     let observedAt: String?
 }
@@ -193,6 +195,7 @@ struct WorkspaceModuleReading: Decodable, Identifiable {
     let packages: [String]?
     let sourceStatus: String?
     let runtimeStatus: String?
+    let executionState: String?
     let runExpectation: String?
     let interfaceTopics: [String]?
     let observedInterfaceTopics: [String]?
