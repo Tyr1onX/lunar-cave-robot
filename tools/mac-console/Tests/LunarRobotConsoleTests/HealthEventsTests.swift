@@ -147,7 +147,8 @@ final class HealthEventsTests: XCTestCase {
             vision: noImage
         )
         XCTAssertEqual(event("module-camera", in: complete).state, .abnormal)
-        XCTAssertTrue(event("module-camera", in: complete).observation.contains("匹配的显式预期 Domain"))
+        XCTAssertTrue(event("module-camera", in: complete).observation.contains("Agent Graph Domain 42"))
+        XCTAssertTrue(event("module-camera", in: complete).observation.contains("显式预期 Domain 42"))
 
         let noConfiguredDomain = HealthEvaluator.evaluate(
             agentOnline: true,
