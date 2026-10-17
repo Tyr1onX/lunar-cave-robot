@@ -409,7 +409,7 @@ class ROSGraphObserver:
                         for publisher in publishers
                     ]
                     self._link_telemetry.update_publishers(stream_id, endpoints)
-                    self._sync_link_telemetry_subscription(
+                    _sync_link_telemetry_subscription(
                         node,
                         stream_id,
                         endpoints,
