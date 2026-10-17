@@ -551,7 +551,7 @@ enum HealthEvaluator {
         let resource = "进程包 · orbbec_camera · Topic · /camera/color/image_raw、/camera/depth/image_rect_raw"
         let domain = domainLabel(actual: context.workspace?.graphDomainId ?? domainID, expected: expectedDomainID)
         let workspaceDomains = context.workspace?.domainIds?.map(String.init).joined(separator: ", ") ?? "未知"
-        let graphDomainEvidence = "Agent Graph Domain \(snapshot?.ros?.domainId.map(String.init) ?? "未知")，显式预期 Domain \(snapshot?.ros?.expectedDomainId.map(String.init) ?? "未配置")"
+        let graphDomainEvidence = "Agent Graph Domain \(snapshot?.ros.domainId.map(String.init) ?? "未知")，显式预期 Domain \(snapshot?.ros.expectedDomainId.map(String.init) ?? "未配置")"
         let observation: String
         let state: HealthState
         let check: String
@@ -610,17 +610,17 @@ enum HealthEvaluator {
                 }
                 let workspaceFullyStopped = workspace.runtimeStatus == "not_running" &&
                     workspace.processCount == 0 && workspace.domainIds?.isEmpty == true
-                let graphDomain = snapshot?.ros?.domainId
-                let configuredDomain = snapshot?.ros?.expectedDomainId
+                let graphDomain = snapshot?.ros.domainId
+                let configuredDomain = snapshot?.ros.expectedDomainId
                 let configuredDomainMatchesGraph = graphDomain != nil &&
                     configuredDomain != nil && graphDomain == configuredDomain &&
-                    snapshot?.ros?.expectedDomainError == nil
+                    snapshot?.ros.expectedDomainError == nil
                 let workspaceDomainConfirmed = workspace.graphRelationship == "shared_domain" ||
                     (workspace.graphRelationship == "unknown" && workspaceFullyStopped && configuredDomainMatchesGraph)
                 if module.runtimeStatus == "not_running", !workspaceDomainConfirmed {
                     state = .unknown
                     observation = workspace.graphRelationship == "different_domain"
-                        ? "相机进程未发现；工作区进程 Domain [\(workspaceDomains)] 与 Agent Graph Domain \(snapshot?.ros?.domainId.map(String.init) ?? "未知") 不一致，无法确认缺失发生在目标运行域。"
+                        ? "相机进程未发现；工作区进程 Domain [\(workspaceDomains)] 与 Agent Graph Domain \(snapshot?.ros.domainId.map(String.init) ?? "未知") 不一致，无法确认缺失发生在目标运行域。"
                         : "相机进程未发现，且没有共享 Domain 关系或“工作区全停 + 显式预期 Domain 匹配”证据；无法确认缺失发生在目标运行域。"
                     check = "核对有效的预期 ROS Domain、Agent Graph Domain 与工作区进程证据，再评估模块缺失"
                     break
