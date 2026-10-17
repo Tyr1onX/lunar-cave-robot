@@ -759,7 +759,7 @@ final class HealthEventsTests: XCTestCase {
     ) throws -> ConsoleSnapshot {
         var ros: [String: Any] = [
             "status": "ok",
-            "nodes": nodes.map(nodeValue),
+            "nodes": nodes?.map(nodeValue) ?? [],
             "topics": graphTopics.map { name in
                 ["name": name, "types": [topicType(name)]]
             },
