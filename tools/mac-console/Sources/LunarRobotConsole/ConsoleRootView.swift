@@ -103,7 +103,7 @@ struct ConsoleRootView: View {
                         case .history: HistoryView(model: model)
                         }
                     }
-                    .frame(maxWidth: 1320, alignment: .topLeading)
+                    .frame(maxWidth: model.section == .topology ? 1560 : 1320, alignment: .topLeading)
                     .padding(.horizontal, 28)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity, alignment: .top)

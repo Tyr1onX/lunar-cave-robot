@@ -2,7 +2,7 @@
 
 ## 范围与证据分类
 
-拓扑描述来自 `b379b198` 中的源码、Launch、配置和 STM32 协议。它是静态结构模型，与 Agent 的实时状态分开保存。
+拓扑描述来自 `b379b198` 中的源码、Launch、配置和 STM32 协议；P6 协调器依据当前 main 中的源码和离线运行验收单独补充。它是静态结构模型，与 Agent 的实时状态分开保存。
 
 | 标记 | 含义 |
 | --- | --- |
@@ -21,7 +21,7 @@
 | 视觉感知 | `tzb_ws/src/pose_estimator/launch/perception_bringup.launch.py`、camera switch、YOLO、pose estimator、Arm2Nav 源码 | Vision 接口提供的 RGB / 深度帧时间与流状态；现有模块健康事件 | RGB / 深度同名 Topic 不能确认具体工作区相机来源；YOLO 检测受置信度门控，无输出不等于故障；Arm2Nav 到任务协调器未接通 |
 | 雷达定位 | `mapping_navigation_single_lidar.launch.py` 启动 MID-360、Point-LIO、地形分析和扫描转换；Point-LIO 发布 `cloud_registered`、`odometry` 和 TF；地形分析订阅点云 / 里程计并发布 `terrain_map` | `livox/lidar`、`imu/data`、`cloud_registered`、`odometry`、`terrain_map`、`scan` 等 Topic 名称；Agent 的聚合雷达 / 定位工作区进程状态 | Agent 的 `lidar` 模块合并多个包，不能确认 MID-360 实体状态或 Point-LIO 独立节点健康；TF frame pair 未被读取 |
 | 地图与导航 | 同一单雷达 Launch 中 `slam_toolbox` 发布 `/map`，设置 `map → odom_init`；Point-LIO 发布 `odom_init → base_frame`；Nav2 velocity smoother 将 `cmd_vel_smoothed` remap 到 `/cmd_vel` | `/map`、`/scan`、`/tf`、`/cmd_vel` 名称；工作区导航进程扫描 | Agent 不提供 Nav2 Action 服务器、生命周期状态、TF frame tree、地图内容或消费端关联 |
-| 任务协调 | `docs/p6` 与 `tools/p6_offline` 中存在离线接口 / 验收记录 | 当前只能显示来源和接口说明 | main 中没有已接入的 ROS 任务协调器；NavigateToPose 和机械臂任务边标记为待核实，不参与下游影响传播 |
+| 任务协调 | `Nav2_rea_ws/src/p6_autonomous_mission/` 中的协调器源码与 Launch 已在 main；P6 隔离启动通过离线 ROS 2/Nav2 运行验收 | 当前 Agent 不采集 ROS Action endpoint，也没有与 P6 任务模块绑定的独立工作区进程记录 | 离线启动包含 cave simulator；实体主启动流程是否集成、Arm2Nav / PoseEstimator 是否接入、是否连接真实执行器均待确认 |
 | 机械臂 | `tzb_ws` 中 `lite_motion_planner`、`rm_serial_driver`、串口协议与 `/serial/arm_joint_state`、`/serial/arm_safety/status` 源码 | Graph Topic 名称、合并的 Agent `arm` 工作区进程证据 | Agent 模块把规划器和串口驱动合并，不能按进程拆分；当前 Graph 不读取反馈消息值、所有关节状态、硬件急停或实体执行结果 |
 | 底盘 | `Nav2_rea_ws` 中 `chassis_serial_bridge` 订阅 `/cmd_vel`，发布 `/chassis/serial_link_status`；USART1 使用 115200、14 字节 `A5 + 3×float32 LE + 4A` 帧 | 底盘桥进程和 Topic 名称；主机侧串口状态 Topic 名称 | 源码明确没有 STM32 ACK；`HOST_WRITE_OK` 只说明主机写入状态，不能证明 MCU 接收、驱动器状态或底盘运动 |
 | 安全反馈 | 机械臂安全状态文本 Topic 与 Agent 安全快照 | Topic 名称及 Agent 当前暴露的只读安全字段 | Agent 不读取 arm safety Topic 内容；实体急停和硬件健康没有接入证据，保持未知 |
@@ -40,7 +40,13 @@
 
 ## GUI 交互
 
-“机器人拓扑”成为 Console 默认首页。系统入口、视觉、雷达与导航、任务协调、机械臂、底盘及安全反馈按流程分组；展开流程后可点选模块查看源码位置、Topic / 接口、工作区来源、进程状态、Domain、Graph 时间与健康事件证据。拓扑结构来源标签与实时状态分开呈现。
+“机器人拓扑”成为 Console 默认首页。整机图用一次出现的子系统节点展示视觉、雷达定位、任务协调、Nav2、机械臂、底盘和安全反馈；箭头表示源码中的数据方向，分支与汇合按实际接口连接。NUC Agent、ROS Domain、ROS Graph 和运行预期放在单独的只读观测栏，不与机器人数据流混画。
+
+第一层为整机总览，第二层点击子系统进入组件链路图，第三层点击组件查看状态、异常原因、Topic、工作区 / 进程证据及源码位置。可用横向滚动查看宽链路，页面纵向滚动查看组件和证据；整机图按当前窗口可用宽度布局。
+
+连接线区分源码 / Launch、离线验证和待核实接口。Topic 多接口边显示名称全部可见、部分可见或均未观察；这些状态只统计当前 Graph 中的名称，不代表发布 / 订阅端归属或消息传输成功。Agent 断连、Domain 不匹配或 Graph 过期时连接运行状态保持未知。直接异常突出显示在来源节点；下游只显示“可能受影响”，不继承异常状态。
+
+P6 任务协调器源码与隔离离线 Nav2 / ROS 2 验收均在 main 中；对应主机软件边标注离线验证。实体主启动流程集成未确认，故与视觉模块的输入边保持开放标记，实时 Action endpoint 也显示未知。
 
 直接异常只来自已有健康规则事件。来源节点异常后，源码连接图中可能受影响的节点 / 边只显示“可能受影响”；其状态不会被批量改成异常。开放接口不参与影响传播。硬件节点在缺少反馈接口时保持未知。原“系统诊断”“测试驾驶舱”“历史记录”等页面继续保留。
 

@@ -13,8 +13,9 @@ enum TopologySignal: String, Equatable {
     case notRunning
     case processNotFound
     case processObserved
-    case topicObserved
-    case topicNotObserved
+    case topicsAllVisible
+    case topicsPartiallyVisible
+    case topicsNoneVisible
 
     var label: String {
         switch self {
@@ -24,8 +25,9 @@ enum TopologySignal: String, Equatable {
         case .notRunning: return "未运行"
         case .processNotFound: return "未发现关联进程"
         case .processObserved: return "已发现进程 · 健康未确认"
-        case .topicObserved: return "Topic 名称已观察"
-        case .topicNotObserved: return "当前未观察到"
+        case .topicsAllVisible: return "Topic 名称全部可见"
+        case .topicsPartiallyVisible: return "Topic 名称部分可见"
+        case .topicsNoneVisible: return "Topic 名称均未见"
         }
     }
 }
@@ -108,6 +110,85 @@ struct TopologyFlowDefinition: Identifiable, Equatable {
     let edgeIDs: [String]
 }
 
+struct TopologySubsystemDefinition: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let summary: String
+    let symbol: String
+    let flowID: String
+    let statusNodeIDs: [String]
+}
+
+struct TopologyOverviewEdgeDefinition: Identifiable, Equatable {
+    let id: String
+    let sourceSubsystemID: String
+    let destinationSubsystemID: String
+    let label: String
+    let supportingEdgeIDs: [String]
+    let evidence: TopologyEvidenceGrade
+}
+
+struct TopologyCanvasLayout: Equatable {
+    let size: CGSize
+    let nodeCenters: [String: CGPoint]
+}
+
+enum RobotTopologyLayout {
+    static func overview(availableWidth: CGFloat) -> TopologyCanvasLayout {
+        let width = max(1_260, availableWidth)
+        let height: CGFloat = 810
+        return TopologyCanvasLayout(
+            size: CGSize(width: width, height: height),
+            nodeCenters: [
+                "perception": CGPoint(x: width * 0.11, y: height * 0.29),
+                "localization": CGPoint(x: width * 0.11, y: height * 0.73),
+                "coordination": CGPoint(x: width * 0.36, y: height * 0.51),
+                "navigation": CGPoint(x: width * 0.59, y: height * 0.73),
+                "arm": CGPoint(x: width * 0.79, y: height * 0.28),
+                "chassis": CGPoint(x: width * 0.79, y: height * 0.76),
+                "safety": CGPoint(x: width * 0.90, y: height * 0.51),
+            ]
+        )
+    }
+
+    static func detail(_ flow: TopologyFlowDefinition) -> TopologyCanvasLayout {
+        let nodeIDs = flow.nodeIDs
+        let nodeSet = Set(nodeIDs)
+        let edges = flow.edgeIDs.compactMap(RobotTopologyCatalog.edge).filter {
+            nodeSet.contains($0.sourceNodeID) && nodeSet.contains($0.destinationNodeID)
+        }
+        var ranks = Dictionary(uniqueKeysWithValues: nodeIDs.map { ($0, 0) })
+        for _ in nodeIDs.indices {
+            var changed = false
+            for edge in edges {
+                let candidate = (ranks[edge.sourceNodeID] ?? 0) + 1
+                if candidate > (ranks[edge.destinationNodeID] ?? 0) {
+                    ranks[edge.destinationNodeID] = candidate
+                    changed = true
+                }
+            }
+            if !changed { break }
+        }
+
+        let maxRank = ranks.values.max() ?? 0
+        let columns = (0...maxRank).map { rank in nodeIDs.filter { ranks[$0] == rank } }
+        let maxRows = columns.map(\.count).max() ?? 1
+        let columnSpacing: CGFloat = 320
+        let width = max(1_080, CGFloat(maxRank + 1) * columnSpacing + 130)
+        let height = max(440, CGFloat(maxRows) * 145 + 150)
+        var centers: [String: CGPoint] = [:]
+        for (columnIndex, column) in columns.enumerated() {
+            for (rowIndex, nodeID) in column.enumerated() {
+                centers[nodeID] = CGPoint(
+                    x: 120 + CGFloat(columnIndex) * columnSpacing,
+                    y: 105 + CGFloat(rowIndex) * 145
+                )
+            }
+        }
+        return TopologyCanvasLayout(size: CGSize(width: width, height: height), nodeCenters: centers)
+    }
+}
+
 enum RobotTopologyCatalog {
     private static func modules(_ pairs: [(String, String)]) -> [TopologyModuleBinding] {
         pairs.map { TopologyModuleBinding(workspaceID: $0.0, moduleID: $0.1) }
@@ -118,7 +199,7 @@ enum RobotTopologyCatalog {
         .init(id: "perception", title: "视觉感知", summary: "彩色 / 深度图像、检测与目标位姿", nodeIDs: ["camera", "yolo", "arm2nav", "pose-estimator"]),
         .init(id: "localization", title: "雷达定位", summary: "MID-360、Point-LIO、地形过滤、扫描转换与地图", nodeIDs: ["lidar-stack", "mid360", "point-lio", "terrain", "scan-conversion", "localization-map"]),
         .init(id: "navigation", title: "Nav2 导航", summary: "地图、扫描、TF 与速度输出", nodeIDs: ["nav2"]),
-        .init(id: "coordination", title: "任务协调", summary: "当前 main 尚无已接入的任务协调器", nodeIDs: ["mission-coordinator"]),
+        .init(id: "coordination", title: "任务协调", summary: "main 含 P6 协调器源码并通过离线 ROS 2 验证；实体主启动流程集成待确认", nodeIDs: ["mission-coordinator"]),
         .init(id: "arm", title: "机械臂", summary: "运动规划、旧版 arm 串口驱动与状态反馈", nodeIDs: ["arm-stack", "arm-planner", "arm-serial", "arm-controller", "arm-safety-status"]),
         .init(id: "chassis", title: "底盘", summary: "新版 Nav2 串口桥、STM32 与主机侧链路状态", nodeIDs: ["chassis-bridge", "chassis-controller", "chassis-link-status"]),
         .init(id: "safety", title: "安全反馈", summary: "可见的主机 / ROS 证据与未接入的实体反馈", nodeIDs: ["physical-estop"]),
@@ -143,7 +224,7 @@ enum RobotTopologyCatalog {
         .init(id: "localization-map", title: "SLAM Toolbox 地图", groupID: "localization", summary: "选定的单雷达 Launch 中由 slam_toolbox 发布 /map。", resourceHints: ["/map", "map → odom_init"], sourcePaths: ["Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py"], sourceNote: "该 Launch 定义 slam_toolbox 在线地图和静态 map → odom_init；Agent 不读取地图内容或 TF frame pair。"),
 
         .init(id: "nav2", title: "Nav2 导航", groupID: "navigation", summary: "消费地图、扫描和 TF；速度经 smoother 输出 /cmd_vel。", workspaceModules: modules([("new-engineering", "navigation"), ("original-navigation", "navigation")]), resourceHints: ["/map", "/scan", "/tf", "/cmd_vel_nav", "/cmd_vel"], sourcePaths: ["Nav2_rea_ws/src/navigation/rm_navigation/launch/navigation_launch.py", "Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py"], sourceNote: "Graph Topic 名称不显示 Nav2 Action 状态或 publisher/subscriber 关系。"),
-        .init(id: "mission-coordinator", title: "任务协调接口（未接入）", groupID: "coordination", summary: "main 有离线验收文档与脚本，但没有已纳入 main 的 ROS 任务协调节点。", sourcePaths: ["docs/p6/README.md", "tools/p6_offline/"], sourceNote: "P6 文档将协调器描述为离线闭环；不能把它展示为当前部署的新旧工作区运行模块。"),
+        .init(id: "mission-coordinator", title: "P6 任务协调器", groupID: "coordination", summary: "源码已在 main；离线 ROS 2/Nav2 闭环已验证，实体主启动流程集成状态待确认。", sourcePaths: ["Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py", "Nav2_rea_ws/src/p6_autonomous_mission/launch/p6_autonomous_mission.launch.py", "docs/p6/ros2-runtime-acceptance.md", "docs/p7/ros2-runtime-acceptance.md"], sourceNote: "P6 协调器、启动文件和离线 ROS 2 运行验收记录均在 main。验收启动包含隔离的 Nav2 与 cave simulator；它不证明实体主启动流程、真实传感器或执行器已接入。"),
 
         .init(id: "arm-stack", title: "机械臂软件模块（规划 / 串口）", groupID: "arm", summary: "Agent 的 arm 模块合并 lite_motion_planner 与 rm_serial_driver 两类包。", workspaceModules: modules([("new-engineering", "arm"), ("original-arm-vision", "arm")]), sourcePaths: ["tools/console-agent/console_agent/workspaces.py", "tzb_ws/src/lite_motion_planner/", "tzb_ws/src/serial/driver/package.xml"], sourceNote: "进程扫描只能报告合并模块是否发现进程，不能据此单独确认规划器或 rm_serial_driver。"),
         .init(id: "arm-planner", title: "机械臂运动规划", groupID: "arm", summary: "lite_motion_planner、MoveIt 与 tzb_catch 源码。", resourceHints: ["/tzb_catch/arm_joint_command", "/serial/arm_joint_state", "/p6/arm_task/request"], sourcePaths: ["tzb_ws/src/lite_motion_planner/", "tzb_ws/src/serial/driver/include/rm_serial_driver/node.hpp", "docs/P8_VALIDATION_REPORT.md"], sourceNote: "离线流程与 ROS 主机串口桥有源码证据；Agent 的合并 arm 模块不能区分本节点运行状态。"),
@@ -163,8 +244,8 @@ enum RobotTopologyCatalog {
         .init(id: "camera-pose", sourceNodeID: "camera", destinationNodeID: "pose-estimator", label: "深度点云 / CameraInfo", topics: ["/camera/depth/color/points", "/camera/color/camera_info"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/pose_estimator/config/params.yaml", "tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py"], sourceNote: "pose_estimator 默认订阅点云与相机内参。"),
         .init(id: "yolo-arm2nav", sourceNodeID: "yolo", destinationNodeID: "arm2nav", label: "目标检测", topics: ["/yolo/detections"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/arm2nav/arm2nav/node.py", "tzb_ws/src/yolo_node/launch/yolo_node.launch.py"], sourceNote: "输入接口在源码中匹配；未确认与任务协调器的运行时链路。"),
         .init(id: "yolo-pose", sourceNodeID: "yolo", destinationNodeID: "pose-estimator", label: "检测结果", topics: ["/yolo/detections"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py"], sourceNote: "检测订阅由 pose_estimator 参数定义。"),
-        .init(id: "arm2nav-coordinator", sourceNodeID: "arm2nav", destinationNodeID: "mission-coordinator", label: "建议 → 任务协调", topics: ["/arm2nav"], probe: .none, evidence: .openInterface, sourcePaths: ["tzb_ws/src/arm2nav/arm2nav/node.py", "docs/p6/README.md"], sourceNote: "仓库源码展示 Arm2Nav 状态和离线协调器；main 中没有两者连接的 ROS 消费节点。"),
-        .init(id: "pose-coordinator", sourceNodeID: "pose-estimator", destinationNodeID: "mission-coordinator", label: "目标位姿 → 任务", topics: ["/pose_estimator/object_pose"], probe: .none, evidence: .openInterface, sourcePaths: ["tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py", "docs/p6/README.md"], sourceNote: "位姿输出存在源码，但 main 中没有已接入的任务协调器消费该输出。"),
+        .init(id: "arm2nav-coordinator", sourceNodeID: "arm2nav", destinationNodeID: "mission-coordinator", label: "建议 → 任务协调", topics: ["/arm2nav"], probe: .topicName, evidence: .openInterface, sourcePaths: ["tzb_ws/src/arm2nav/arm2nav/node.py", "Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py"], sourceNote: "两端源码均存在，但未确认实体主启动流程把 Arm2Nav 输出接入 P6 协调器；当前 Agent 不提供 Topic 两端归属。"),
+        .init(id: "pose-coordinator", sourceNodeID: "pose-estimator", destinationNodeID: "mission-coordinator", label: "目标位姿 → 任务", topics: ["/pose_estimator/object_pose"], probe: .topicName, evidence: .openInterface, sourcePaths: ["tzb_ws/src/pose_estimator/pose_estimator/pose_estimation_node.py", "Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py"], sourceNote: "位姿发布端与 P6 任务输入源码均存在；未确认实体主启动流程接线及运行时端点归属。"),
 
         .init(id: "mid360-pointlio", sourceNodeID: "mid360", destinationNodeID: "point-lio", label: "点云 / IMU", topics: ["/livox/lidar", "/imu/data"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["Nav2_rea_ws/src/localization/point_lio/config/mid360.yaml", "Nav2_rea_ws/src/localization/point_lio/src/laserMapping.cpp"], sourceNote: "Point-LIO 配置声明 livox/lidar 和 imu/data 输入。"),
         .init(id: "pointlio-terrain", sourceNodeID: "point-lio", destinationNodeID: "terrain", label: "注册点云 / 里程计", topics: ["/cloud_registered", "/odometry"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["Nav2_rea_ws/src/localization/point_lio/src/laserMapping.cpp", "Nav2_rea_ws/src/navigation/terrain_analysis/src/terrain_analysis_plus.cpp"], sourceNote: "Point-LIO 发布 cloud_registered / odometry；terrain_analysis_plus 订阅同名相对接口。Agent 不提供端点归属。"),
@@ -175,8 +256,8 @@ enum RobotTopologyCatalog {
         .init(id: "nav2-chassis", sourceNodeID: "nav2", destinationNodeID: "chassis-bridge", label: "平滑速度", topics: ["/cmd_vel"], probe: .topicName, evidence: .offlineExercise, sourcePaths: ["Nav2_rea_ws/src/navigation/rm_navigation/launch/navigation_launch.py", "docs/p5b/chassis-ros2-integration.md"], sourceNote: "Velocity smoother remaps cmd_vel_smoothed to /cmd_vel; prior PTY validation covered the host software path, not robot hardware."),
         .init(id: "chassis-bridge-mcu", sourceNodeID: "chassis-bridge", destinationNodeID: "chassis-controller", label: "USART1 · 115200 · 14 B", topics: [], probe: .serialProtocol, evidence: .sourceWiring, sourcePaths: ["Nav2_rea_ws/src/drivers/serial/driver/src/chassis_serial_bridge_node.cpp", "firmware/chassis/底盘串口通信协议.md"], sourceNote: "主机发送 A5 + 3 个 little-endian float32 + 4A；没有 STM32 ACK。"),
 
-        .init(id: "mission-nav2", sourceNodeID: "mission-coordinator", destinationNodeID: "nav2", label: "NavigateToPose Action", topics: ["/navigate_to_pose"], probe: .actionEndpoint, evidence: .openInterface, sourcePaths: ["docs/p6/README.md", "docs/p6/ros2-runtime-acceptance.md"], sourceNote: "P6 离线验收记录过 Action 交互，但主线没有纳入任务协调器；Agent Graph 也不采集 ROS Action endpoint。"),
-        .init(id: "mission-arm", sourceNodeID: "mission-coordinator", destinationNodeID: "arm-planner", label: "取样 / 卸载任务", topics: ["/p6/arm_task/request", "/p6/arm_task/result"], probe: .openInterface, evidence: .openInterface, sourcePaths: ["docs/p6/README.md", "docs/p6/ros2-runtime-acceptance.md"], sourceNote: "任务接口存在于离线验收记录，不代表 main 中集成或实体运行。"),
+        .init(id: "mission-nav2", sourceNodeID: "mission-coordinator", destinationNodeID: "nav2", label: "NavigateToPose Action", topics: ["/navigate_to_pose"], probe: .actionEndpoint, evidence: .offlineExercise, sourcePaths: ["Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py", "Nav2_rea_ws/src/p6_autonomous_mission/launch/p6_autonomous_mission.launch.py", "docs/p6/ros2-runtime-acceptance.md"], sourceNote: "main 有 ActionClient 源码并在 P6 隔离离线 ROS 2 验收中运行；Agent 不读取 Action endpoint，实体主启动流程集成仍待确认。"),
+        .init(id: "mission-arm", sourceNodeID: "mission-coordinator", destinationNodeID: "arm-planner", label: "P6 机械臂任务接口", topics: ["/p6/arm_task/request", "/p6/arm_task/result"], probe: .topicName, evidence: .offlineExercise, sourcePaths: ["Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py", "docs/p6/ros2-runtime-acceptance.md", "docs/p7/ros2-runtime-acceptance.md"], sourceNote: "任务请求 / 结果接口在 main 的 P6 源码和离线 ROS 2 验收中存在；这不证明实体主启动流程已连接到机械臂执行器。"),
         .init(id: "arm-planner-driver", sourceNodeID: "arm-planner", destinationNodeID: "arm-serial", label: "机械臂命令 / 状态", topics: ["/tzb_catch/arm_joint_command", "/serial/arm_joint_state"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/serial/driver/src/node.cpp", "tzb_ws/src/lite_motion_planner/"], sourceNote: "主机驱动订阅命令并发布 JointState；具体运动规划集成需以当前 launch / 配置为准。"),
         .init(id: "arm-driver-mcu", sourceNodeID: "arm-serial", destinationNodeID: "arm-controller", label: "机械臂串口协议", topics: [], probe: .serialProtocol, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/serial/driver/src/packet.cpp", "firmware/arm/others/src/app/Host.cpp", "docs/P9E_PR8_INTEGRATION_REVIEW.md"], sourceNote: "主机与 STM32 的串口协议和安全源码可审查；当前设备连接和 STM32 下游停止确认未由 Agent 验证。"),
         .init(id: "arm-driver-safety", sourceNodeID: "arm-serial", destinationNodeID: "arm-safety-status", label: "安全状态文本 Topic", topics: ["/serial/arm_safety/status"], probe: .topicName, evidence: .sourceWiring, sourcePaths: ["tzb_ws/src/serial/driver/src/node.cpp"], sourceNote: "当前 Agent 只观察 Topic 名称，不订阅或读取消息内容。"),
@@ -184,12 +265,36 @@ enum RobotTopologyCatalog {
         .init(id: "estop-unconnected", sourceNodeID: "physical-estop", destinationNodeID: "agent", label: "实体急停输入", topics: [], probe: .none, evidence: .openInterface, sourcePaths: ["tools/console-agent/console_agent/collectors.py"], sourceNote: "没有接入可验证的物理急停输入。"),
     ]
 
+    static let subsystems: [TopologySubsystemDefinition] = [
+        .init(id: "system", title: "只读监测入口", summary: "Agent、ROS Domain、Graph 与运行预期", symbol: "waveform.path.ecg", flowID: "system-flow", statusNodeIDs: ["agent", "ros-domain", "ros-graph", "expected-nodes"]),
+        .init(id: "perception", title: "视觉感知", summary: "RGB-D 输入分支至检测与位姿估计", symbol: "camera.viewfinder", flowID: "visual-flow", statusNodeIDs: ["camera", "yolo", "arm2nav", "pose-estimator"]),
+        .init(id: "localization", title: "雷达定位", summary: "MID-360 点云 / IMU → Point-LIO → 地图与扫描", symbol: "dot.radiowaves.left.and.right", flowID: "localization-flow", statusNodeIDs: ["lidar-stack", "mid360", "point-lio", "terrain", "scan-conversion", "localization-map"]),
+        .init(id: "coordination", title: "任务协调", summary: "P6 源码和离线验证存在，实体主启动集成待确认", symbol: "point.3.connected.trianglepath.dotted", flowID: "coordination-flow", statusNodeIDs: ["mission-coordinator"]),
+        .init(id: "navigation", title: "Nav2 导航", summary: "地图、LaserScan、TF 与速度输出", symbol: "location.north.line", flowID: "navigation-flow", statusNodeIDs: ["nav2"]),
+        .init(id: "arm", title: "机械臂", summary: "规划、旧版串口驱动与反馈接口", symbol: "move.3d", flowID: "arm-flow", statusNodeIDs: ["arm-stack", "arm-planner", "arm-serial", "arm-controller", "arm-safety-status"]),
+        .init(id: "chassis", title: "底盘", summary: "Nav2 速度、chassis_serial_bridge 与主机状态", symbol: "steeringwheel", flowID: "chassis-flow", statusNodeIDs: ["chassis-bridge", "chassis-controller", "chassis-link-status"]),
+        .init(id: "safety", title: "安全反馈", summary: "显示主机状态与未接入的实体安全输入", symbol: "checkmark.shield", flowID: "safety-flow", statusNodeIDs: ["arm-safety-status", "chassis-link-status", "physical-estop"]),
+    ]
+
+    static let overviewEdges: [TopologyOverviewEdgeDefinition] = [
+        .init(id: "perception-coordination", sourceSubsystemID: "perception", destinationSubsystemID: "coordination", label: "目标建议 / 位姿 · 主启动接线待确认", supportingEdgeIDs: ["arm2nav-coordinator", "pose-coordinator"], evidence: .openInterface),
+        .init(id: "localization-navigation", sourceSubsystemID: "localization", destinationSubsystemID: "navigation", label: "扫描 / 地图 / TF", supportingEdgeIDs: ["scan-nav2", "map-nav2", "tf-navigation"], evidence: .sourceWiring),
+        .init(id: "coordination-navigation", sourceSubsystemID: "coordination", destinationSubsystemID: "navigation", label: "NavigateToPose · P6 离线验证", supportingEdgeIDs: ["mission-nav2"], evidence: .offlineExercise),
+        .init(id: "coordination-arm", sourceSubsystemID: "coordination", destinationSubsystemID: "arm", label: "机械臂任务 · P6 离线接口", supportingEdgeIDs: ["mission-arm"], evidence: .offlineExercise),
+        .init(id: "navigation-chassis", sourceSubsystemID: "navigation", destinationSubsystemID: "chassis", label: "/cmd_vel · PTY 软件验证", supportingEdgeIDs: ["nav2-chassis"], evidence: .offlineExercise),
+        .init(id: "arm-safety", sourceSubsystemID: "arm", destinationSubsystemID: "safety", label: "主机安全状态 Topic", supportingEdgeIDs: ["arm-driver-safety"], evidence: .sourceWiring),
+        .init(id: "chassis-safety", sourceSubsystemID: "chassis", destinationSubsystemID: "safety", label: "主机串口状态 Topic", supportingEdgeIDs: ["chassis-status"], evidence: .sourceWiring),
+    ]
+
     static let flows: [TopologyFlowDefinition] = [
-        .init(id: "system-flow", title: "监测入口与 ROS 运行图", summary: "NUC 只读 Agent → Domain → Graph；节点预期只在显式配置时比较", nodeIDs: ["agent", "ros-domain", "ros-graph", "expected-nodes"], edgeIDs: []),
-        .init(id: "visual-flow", title: "视觉感知与目标理解", summary: "图像 → 检测 / 位姿；任务入口在 main 中尚未接通", nodeIDs: ["camera", "yolo", "arm2nav", "pose-estimator", "mission-coordinator"], edgeIDs: ["camera-yolo", "camera-pose", "yolo-arm2nav", "yolo-pose", "arm2nav-coordinator", "pose-coordinator"]),
-        .init(id: "navigation-flow", title: "雷达定位与底盘导航", summary: "MID-360 → Point-LIO → 地图 / 扫描 → Nav2 → 主机串口桥 → STM32", nodeIDs: ["lidar-stack", "mid360", "point-lio", "terrain", "scan-conversion", "localization-map", "nav2", "chassis-bridge", "chassis-controller"], edgeIDs: ["mid360-pointlio", "pointlio-terrain", "terrain-scan", "scan-nav2", "map-nav2", "tf-navigation", "nav2-chassis", "chassis-bridge-mcu"]),
-        .init(id: "arm-flow", title: "任务与机械臂", summary: "任务协调器当前未纳入 main；驱动、协议与设备状态分开展示", nodeIDs: ["mission-coordinator", "arm-stack", "arm-planner", "arm-serial", "arm-controller", "arm-safety-status"], edgeIDs: ["mission-arm", "mission-nav2", "arm-planner-driver", "arm-driver-mcu", "arm-driver-safety"]),
-        .init(id: "safety-flow", title: "安全反馈与限制", summary: "主机链路状态不等于 MCU / 电机健康；实体急停输入未接入", nodeIDs: ["arm-safety-status", "chassis-link-status", "physical-estop", "agent"], edgeIDs: ["chassis-status", "estop-unconnected"]),
+        .init(id: "system-flow", title: "只读监测入口", summary: "NUC Agent 快照、ROS Domain、ROS Graph 与显式预期配置", nodeIDs: ["agent", "ros-domain", "ros-graph", "expected-nodes"], edgeIDs: []),
+        .init(id: "visual-flow", title: "视觉感知内部链路", summary: "相机分支到检测、Arm2Nav 与位姿估计；外发任务边在整机总览标明为待确认", nodeIDs: ["camera", "yolo", "arm2nav", "pose-estimator"], edgeIDs: ["camera-yolo", "camera-pose", "yolo-arm2nav", "yolo-pose"]),
+        .init(id: "localization-flow", title: "雷达定位内部链路", summary: "MID-360 → Point-LIO → 地形过滤、扫描转换与地图", nodeIDs: ["lidar-stack", "mid360", "point-lio", "terrain", "scan-conversion", "localization-map"], edgeIDs: ["mid360-pointlio", "pointlio-terrain", "terrain-scan"]),
+        .init(id: "coordination-flow", title: "任务协调链路", summary: "main 已包含 P6 源码并通过隔离离线 ROS 2 验证；实体主启动流程集成待确认", nodeIDs: ["mission-coordinator", "nav2", "arm-planner"], edgeIDs: ["mission-nav2", "mission-arm"]),
+        .init(id: "navigation-flow", title: "Nav2 输入与输出", summary: "地图 / 扫描 / TF 汇入 Nav2，速度输出到主机底盘桥", nodeIDs: ["localization-map", "scan-conversion", "point-lio", "nav2", "chassis-bridge"], edgeIDs: ["map-nav2", "scan-nav2", "tf-navigation", "nav2-chassis"]),
+        .init(id: "arm-flow", title: "机械臂软件与反馈", summary: "规划和串口主机桥；控制器响应与实体反馈保持未知", nodeIDs: ["mission-coordinator", "arm-stack", "arm-planner", "arm-serial", "arm-controller", "arm-safety-status"], edgeIDs: ["mission-arm", "arm-planner-driver", "arm-driver-mcu", "arm-driver-safety"]),
+        .init(id: "chassis-flow", title: "底盘速度与状态链路", summary: "Nav2 → chassis_serial_bridge → STM32；主机状态不等于控制器确认", nodeIDs: ["nav2", "chassis-bridge", "chassis-controller", "chassis-link-status"], edgeIDs: ["nav2-chassis", "chassis-bridge-mcu", "chassis-status"]),
+        .init(id: "safety-flow", title: "安全反馈与未接入输入", summary: "主机状态 Topic、STM32 确认边界与未接入的实体急停", nodeIDs: ["arm-serial", "arm-safety-status", "chassis-bridge", "chassis-link-status", "physical-estop"], edgeIDs: ["arm-driver-safety", "chassis-status", "estop-unconnected"]),
     ]
 
     private static let nodeByID = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
@@ -197,6 +302,8 @@ enum RobotTopologyCatalog {
 
     static func node(_ id: String) -> TopologyNodeDefinition? { nodeByID[id] }
     static func edge(_ id: String) -> TopologyEdgeDefinition? { edgeByID[id] }
+    static func subsystem(_ id: String) -> TopologySubsystemDefinition? { subsystems.first { $0.id == id } }
+    static func flow(_ id: String) -> TopologyFlowDefinition? { flows.first { $0.id == id } }
 
     static func downstreamNodeIDs(from startID: String) -> Set<String> {
         var visited = Set<String>()
@@ -214,17 +321,22 @@ enum RobotTopologyCatalog {
 }
 
 struct TopologyInteractionState: Equatable {
-    private(set) var expandedFlowID: String?
+    private(set) var selectedSubsystemID: String?
     private(set) var selectedNodeID: String?
 
-    mutating func toggleFlow(_ id: String) {
-        expandedFlowID = expandedFlowID == id ? nil : id
+    mutating func selectSubsystem(_ id: String) {
+        selectedSubsystemID = id
         selectedNodeID = nil
     }
 
-    mutating func selectNode(_ nodeID: String, in flowID: String) {
-        expandedFlowID = flowID
+    mutating func selectNode(_ nodeID: String, in subsystemID: String) {
+        selectedSubsystemID = subsystemID
         selectedNodeID = nodeID
+    }
+
+    mutating func showOverview() {
+        selectedSubsystemID = nil
+        selectedNodeID = nil
     }
 
     mutating func clearSelection() {
@@ -428,12 +540,75 @@ enum TopologyStatusResolver {
         if edge.probe == .actionEndpoint || edge.probe == .serialProtocol {
             return TopologyElementStatus(signal: .unknown, note: "当前 Agent 不采集 ROS Action endpoint 或底层串口确认。\(edge.sourceNote)", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
         }
+        guard !edge.topics.isEmpty else {
+            return TopologyElementStatus(signal: .unknown, note: "连接没有可观察的 Topic 名称；仅保留源码 / 协议证据。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
         let topicNames = Set(snapshot.ros.topics.map(\.name))
         let observed = edge.topics.filter { topicNames.contains($0) }
-        if !observed.isEmpty {
-            return TopologyElementStatus(signal: .topicObserved, note: "当前 ROS Graph 发现 Topic 名称 \(observed.joined(separator: "、"))；Graph 不提供该 Topic 的发布 / 订阅两端归属或消息流状态。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        let signal: TopologySignal
+        if observed.count == edge.topics.count {
+            signal = .topicsAllVisible
+        } else if observed.isEmpty {
+            signal = .topicsNoneVisible
+        } else {
+            signal = .topicsPartiallyVisible
         }
-        return TopologyElementStatus(signal: .topicNotObserved, note: "当前新鲜 ROS Graph 未列出 \(edge.topics.joined(separator: "、"))；除非现有健康规则确认运行预期，否则不作为故障。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        let missing = edge.topics.filter { !topicNames.contains($0) }
+        let note = "ROS Graph 可见 \(observed.count)/\(edge.topics.count) 个 Topic 名称" +
+            (observed.isEmpty ? "。" : "：\(observed.joined(separator: "、"))。") +
+            (missing.isEmpty ? "" : "未见：\(missing.joined(separator: "、"))。") +
+            "名称可见不证明发布 / 订阅两端归属或消息实际流动。"
+        return TopologyElementStatus(signal: signal, note: note, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+    }
+
+    static func overviewEdgeStatus(
+        _ overviewEdge: TopologyOverviewEdgeDefinition,
+        context: TopologyRuntimeContext,
+        evaluation: TopologyEvaluation
+    ) -> TopologyElementStatus {
+        let supporting = overviewEdge.supportingEdgeIDs.compactMap(RobotTopologyCatalog.edge)
+        let possiblyAffected = supporting.contains { evaluation.edgeStatus($0.id).possiblyAffectedDownstream }
+        guard !supporting.isEmpty else {
+            return TopologyElementStatus(signal: .unknown, note: "尚无具体连接证据。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+        if let blocked = context.graphBlockReason {
+            return TopologyElementStatus(signal: .unknown, note: blocked, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+        if supporting.contains(where: { $0.evidence == .openInterface || $0.probe == .openInterface }) {
+            let notes = supporting.filter { $0.evidence == .openInterface || $0.probe == .openInterface }
+                .map(\.sourceNote).joined(separator: " ")
+            return TopologyElementStatus(signal: .unknown, note: notes, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+
+        let topicEdges = supporting.filter { $0.probe == .topicName }
+        guard !topicEdges.isEmpty, let snapshot = context.snapshot else {
+            let notes = supporting.map(\.sourceNote).joined(separator: " ")
+            return TopologyElementStatus(signal: .unknown, note: notes, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+        let expectedTopics = Array(Set(topicEdges.flatMap(\.topics))).sorted()
+        guard !expectedTopics.isEmpty else {
+            return TopologyElementStatus(signal: .unknown, note: "该连接没有可观测的 Topic 名称。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+        let observedNames = Set(snapshot.ros.topics.map(\.name))
+        let visible = expectedTopics.filter { observedNames.contains($0) }
+        let signal: TopologySignal
+        if visible.count == expectedTopics.count {
+            signal = .topicsAllVisible
+        } else if visible.isEmpty {
+            signal = .topicsNoneVisible
+        } else {
+            signal = .topicsPartiallyVisible
+        }
+        let invisible = expectedTopics.filter { !observedNames.contains($0) }
+        var note = "ROS Graph 可见 \(visible.count)/\(expectedTopics.count) 个 Topic 名称" +
+            (visible.isEmpty ? "。" : "：\(visible.joined(separator: "、"))。") +
+            (invisible.isEmpty ? "" : "未见：\(invisible.joined(separator: "、"))。") +
+            "名称可见不证明连接两端或消息流正常。"
+        if supporting.contains(where: { [.transformTree, .actionEndpoint, .serialProtocol].contains($0.probe) }) {
+            note += "该汇总连接还包含 Agent 未采集的 TF / Action / 串口反馈证据，因此整体保持未知。"
+            return TopologyElementStatus(signal: .unknown, note: note, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+        }
+        return TopologyElementStatus(signal: signal, note: note, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
     }
 
     private static func signal(for state: HealthState) -> TopologySignal {

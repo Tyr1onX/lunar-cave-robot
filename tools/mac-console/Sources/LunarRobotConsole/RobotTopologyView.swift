@@ -16,73 +16,300 @@ struct RobotTopologyView: View {
     }
 
     private var evaluation: TopologyEvaluation { TopologyStatusResolver.evaluate(context) }
-
+    private var selectedSubsystem: TopologySubsystemDefinition? {
+        interaction.selectedSubsystemID.flatMap(RobotTopologyCatalog.subsystem)
+    }
+    private var selectedFlow: TopologyFlowDefinition? {
+        selectedSubsystem.flatMap { RobotTopologyCatalog.flow($0.flowID) }
+    }
     private var selectedNode: TopologyNodeDefinition? {
-        interaction.selectedNodeID.flatMap { RobotTopologyCatalog.node($0) }
+        interaction.selectedNodeID.flatMap(RobotTopologyCatalog.node)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            topologyIntroduction
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(RobotTopologyCatalog.flows) { flow in
-                    TopologyFlowCard(
-                        flow: flow,
-                        evaluation: evaluation,
-                        expanded: interaction.expandedFlowID == flow.id,
-                        selectedNodeID: interaction.selectedNodeID,
-                        onToggle: { interaction.toggleFlow(flow.id) },
-                        onSelectNode: { nodeID in interaction.selectNode(nodeID, in: flow.id) }
-                    )
-                }
-            }
-
-            if let selectedNode {
-                TopologyNodeEvidencePanel(
-                    node: selectedNode,
-                    status: evaluation.nodeStatus(selectedNode.id),
-                    context: context,
-                    onClose: { interaction.clearSelection() }
-                )
-                .accessibilityIdentifier("topology.node-evidence")
-            } else {
-                Panel(title: "节点诊断证据", subtitle: "选择拓扑节点查看来源、实时观测和状态规则") {
-                    UnknownBlock(text: "拓扑结构来自仓库源码；运行状态只使用当前 Agent 与 ROS 证据。")
+        VStack(alignment: .leading, spacing: 16) {
+            topologyHeader
+            if interaction.selectedSubsystemID == nil {
+                monitoringRail
+                overview
+            } else if let selectedSubsystem, let selectedFlow {
+                breadcrumb
+                subsystemHeading(selectedSubsystem)
+                flowDiagram(selectedFlow, subsystemID: selectedSubsystem.id)
+                if let selectedNode {
+                    nodeEvidence(selectedNode)
                 }
             }
         }
         .accessibilityIdentifier("robot-topology.view")
     }
 
-    private var topologyIntroduction: some View {
-        let statuses = evaluation.nodeStatuses.values.map(\.signal) + evaluation.edgeStatuses.values.map(\.signal)
-        let abnormalCount = evaluation.nodeStatuses.values.filter { $0.signal == .abnormal }.count +
-            evaluation.edgeStatuses.values.filter { $0.signal == .abnormal }.count
-        let unknownCount = statuses.filter { $0 == .unknown }.count
-        let missingProcessCount = statuses.filter { $0 == .processNotFound }.count
-        let observedProcessCount = statuses.filter { $0 == .processObserved }.count
+    private var topologyHeader: some View {
+        let signals = evaluation.nodeStatuses.values.map(\.signal) + evaluation.edgeStatuses.values.map(\.signal)
+        let abnormalCount = signals.filter { $0 == .abnormal }.count
+        let unknownCount = signals.filter { $0 == .unknown }.count
         let overall = TopologyOverallStatus.signal(for: evaluation)
 
-        return Panel(title: "机器人系统拓扑", subtitle: "源码说明模块如何连接；状态只反映可验证的实时观测") {
-            VStack(alignment: .leading, spacing: 13) {
-                HStack(alignment: .center, spacing: 13) {
+        return Panel(title: "机器人整机链路图", subtitle: "按源码与离线证据展示系统结构；实时状态只采用只读 Agent 观测") {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .center, spacing: 12) {
                     TopologyStatusBadge(signal: overall, compact: false)
-                    Text(summaryText(abnormal: abnormalCount, unknown: unknownCount, missing: missingProcessCount, observed: observedProcessCount))
-                        .font(.system(size: 11)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
+                    Text(summaryText(abnormal: abnormalCount, unknown: unknownCount))
+                        .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
                     Text("\(rosFreshnessLabel) · 工作区 \(workspaceFreshnessLabel) · Domain \(context.snapshot?.ros.domainId.map(String.init) ?? "未知")")
-                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted).multilineTextAlignment(.trailing)
+                        .font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.muted)
+                        .multilineTextAlignment(.trailing)
                 }
-                HStack(spacing: 7) {
-                    legendDot(Palette.accent, text: "已确认正常")
-                    legendDot(Palette.danger, text: "直接异常")
-                    legendDot(Palette.warning, text: "未知 / 未发现关联进程")
-                    Spacer(minLength: 0)
-                    Text("连接线证据：源码 / Launch · Graph Topic 名称 · 开放接口")
+                HStack(spacing: 12) {
+                    legend("实线", color: Palette.blue, text: "源码 / Launch")
+                    legend("虚线", color: Palette.warning, text: "离线验证或待核实")
+                    legend("颜色", color: Palette.accent, text: "当前状态证据")
+                    Spacer(minLength: 6)
+                    Text("Topic 名称可见不代表消息已传输")
                         .font(.system(size: 9)).foregroundStyle(Palette.muted)
                 }
             }
         }
+    }
+
+    private var monitoringRail: some View {
+        Panel(title: "只读观测通道", subtitle: "监测数据与机器人内部链路分开展示") {
+            HStack(spacing: 8) {
+                ForEach(["agent", "ros-domain", "ros-graph", "expected-nodes"], id: \.self) { id in
+                    if let node = RobotTopologyCatalog.node(id) {
+                        Button {
+                            interaction.selectSubsystem("system")
+                        } label: {
+                            HStack(spacing: 7) {
+                                Circle().fill(signalColor(evaluation.nodeStatus(id).signal)).frame(width: 7, height: 7)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(node.title).font(.system(size: 9, weight: .semibold))
+                                    Text(evaluation.nodeStatus(id).signal.label).font(.system(size: 8)).foregroundStyle(Palette.muted)
+                                }
+                                Spacer(minLength: 2)
+                                Image(systemName: "arrow.up.right").font(.system(size: 8)).foregroundStyle(Palette.muted)
+                            }
+                            .padding(.horizontal, 9).padding(.vertical, 7)
+                            .background(Palette.panelRaised, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("topology.monitor.\(id)")
+                        .help(evaluation.nodeStatus(id).note)
+                    }
+                }
+            }
+        }
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("整机总览").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text("选择子系统查看内部链路").font(.system(size: 9)).foregroundStyle(Palette.muted)
+            }
+            GeometryReader { geometry in
+                let layout = RobotTopologyLayout.overview(availableWidth: geometry.size.width)
+                TopologyDiagramCanvas(
+                    layout: layout,
+                    nodes: overviewNodes,
+                    links: overviewLinks,
+                    accessibilityID: "topology.overview.canvas"
+                )
+                .frame(height: layout.size.height)
+            }
+            .frame(height: 810)
+            Text("主启动流程与当前设备状态仍需对应证据确认；开放接口以无方向虚线端点表示。")
+                .font(.system(size: 9)).foregroundStyle(Palette.muted)
+        }
+    }
+
+    private var overviewNodes: [TopologyDiagramNode] {
+        RobotTopologyCatalog.subsystems.filter { $0.id != "system" }.map { subsystem in
+            TopologyDiagramNode(
+                id: subsystem.id,
+                title: subsystem.title,
+                summary: subsystemSummary(subsystem),
+                symbol: subsystem.symbol,
+                status: subsystemStatus(subsystem),
+                selected: false,
+                isSubsystem: true,
+                onSelect: { interaction.selectSubsystem(subsystem.id) }
+            )
+        }
+    }
+
+    private var overviewLinks: [TopologyDiagramLink] {
+        RobotTopologyCatalog.overviewEdges.compactMap { edge in
+            guard RobotTopologyCatalog.subsystem(edge.sourceSubsystemID) != nil,
+                  RobotTopologyCatalog.subsystem(edge.destinationSubsystemID) != nil else { return nil }
+            let status = TopologyStatusResolver.overviewEdgeStatus(edge, context: context, evaluation: evaluation)
+            let offset: CGFloat
+            switch edge.id {
+            case "coordination-navigation": offset = -25
+            case "navigation-chassis": offset = 22
+            case "arm-safety": offset = -20
+            case "chassis-safety": offset = 20
+            default: offset = -8
+            }
+            return TopologyDiagramLink(
+                id: edge.id,
+                sourceID: edge.sourceSubsystemID,
+                destinationID: edge.destinationSubsystemID,
+                label: edge.label,
+                evidence: edge.evidence,
+                status: status,
+                labelOffset: offset
+            )
+        }
+    }
+
+    private var breadcrumb: some View {
+        HStack(spacing: 7) {
+            Button {
+                interaction.showOverview()
+            } label: {
+                Label("整机总览", systemImage: "chevron.left")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Palette.accent)
+            .accessibilityIdentifier("topology.breadcrumb.overview")
+
+            if let selectedSubsystem {
+                Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(Palette.muted)
+                Text(selectedSubsystem.title).font(.system(size: 10, weight: .semibold))
+                if let selectedNode {
+                    Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(Palette.muted)
+                    Text(selectedNode.title).font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func subsystemHeading(_ subsystem: TopologySubsystemDefinition) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: subsystem.symbol)
+                .font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.accent)
+                .frame(width: 36, height: 36)
+                .background(Palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(subsystem.title).font(.system(size: 17, weight: .semibold, design: .rounded))
+                Text(subsystem.summary).font(.system(size: 10)).foregroundStyle(Palette.muted)
+            }
+            Spacer()
+            TopologyStatusBadge(signal: subsystemStatus(subsystem).signal, compact: false)
+        }
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("topology.detail.\(subsystem.id)")
+    }
+
+    private func flowDiagram(_ flow: TopologyFlowDefinition, subsystemID: String) -> some View {
+        let layout = RobotTopologyLayout.detail(flow)
+        let flowNodes = Set(flow.nodeIDs)
+        let nodes = flow.nodeIDs.compactMap { id -> TopologyDiagramNode? in
+            guard let node = RobotTopologyCatalog.node(id) else { return nil }
+            return TopologyDiagramNode(
+                id: node.id,
+                title: node.title,
+                summary: node.resourceHints.first.map { $0 + (node.resourceHints.count > 1 ? " · …" : "") } ?? node.summary,
+                symbol: node.isExternalHardware ? "cpu" : "square.stack.3d.up",
+                status: evaluation.nodeStatus(id),
+                selected: interaction.selectedNodeID == id,
+                isSubsystem: false,
+                onSelect: { interaction.selectNode(id, in: subsystemID) }
+            )
+        }
+        let links = flow.edgeIDs.compactMap { id -> TopologyDiagramLink? in
+            guard let edge = RobotTopologyCatalog.edge(id),
+                  flowNodes.contains(edge.sourceNodeID),
+                  flowNodes.contains(edge.destinationNodeID) else { return nil }
+            return TopologyDiagramLink(
+                id: edge.id,
+                sourceID: edge.sourceNodeID,
+                destinationID: edge.destinationNodeID,
+                label: edge.label + (edge.topics.isEmpty ? "" : " · " + edge.topics.joined(separator: " / ")),
+                evidence: edge.evidence,
+                status: evaluation.edgeStatus(id),
+                labelOffset: linksLabelOffset(for: id)
+            )
+        }
+
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.right").font(.system(size: 9, weight: .semibold))
+                Text(flow.summary).font(.system(size: 9)).lineLimit(2)
+                Spacer()
+                Text("\(flowNodes.count) 个节点 · \(links.count) 条连接")
+                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+            }
+            .foregroundStyle(Palette.muted)
+
+            TopologyDiagramCanvas(
+                layout: layout,
+                nodes: nodes,
+                links: links,
+                accessibilityID: "topology.detail.canvas.\(flow.id)"
+            )
+            .frame(height: layout.size.height)
+            .accessibilityIdentifier("topology.diagram.\(flow.id)")
+
+            HStack(spacing: 10) {
+                legend("箭头", color: Palette.blue, text: "源码方向")
+                legend("虚线", color: Palette.warning, text: "待核实 / 离线接口")
+                Text("连接状态仅反映当前可取得的证据，不代表端到端数据已送达。")
+                    .font(.system(size: 8)).foregroundStyle(Palette.muted)
+            }
+        }
+    }
+
+    private func nodeEvidence(_ node: TopologyNodeDefinition) -> some View {
+        TopologyNodeEvidencePanel(
+            node: node,
+            status: evaluation.nodeStatus(node.id),
+            context: context,
+            onClose: { interaction.clearSelection() }
+        )
+        .accessibilityIdentifier("topology.node-evidence")
+    }
+
+    private func subsystemStatus(_ subsystem: TopologySubsystemDefinition) -> TopologyElementStatus {
+        let statuses = subsystem.statusNodeIDs.map { evaluation.nodeStatus($0) }
+        let events = statuses.flatMap(\.directEvents)
+        let affected = statuses.contains(where: \.possiblyAffectedDownstream)
+        if let abnormal = statuses.first(where: { $0.signal == .abnormal }) {
+            return TopologyElementStatus(signal: .abnormal, note: abnormal.note, directEvents: events, possiblyAffectedDownstream: false)
+        }
+        if statuses.contains(where: { $0.signal == .unknown }) {
+            return TopologyElementStatus(signal: .unknown, note: "子系统存在未知或未确认来源的组件状态。", directEvents: events, possiblyAffectedDownstream: affected)
+        }
+        if statuses.allSatisfy({ $0.signal == .normal }) {
+            return TopologyElementStatus(signal: .normal, note: "现有监测项均返回正常；不据此推断实体硬件健康。", directEvents: events, possiblyAffectedDownstream: affected)
+        }
+        if statuses.contains(where: { $0.signal == .processNotFound }) {
+            return TopologyElementStatus(signal: .processNotFound, note: "未发现部分关联进程；没有明确运行预期时不视为故障。", directEvents: events, possiblyAffectedDownstream: affected)
+        }
+        if statuses.contains(where: { $0.signal == .processObserved }) {
+            return TopologyElementStatus(signal: .processObserved, note: "发现部分关联进程，模块接口与硬件健康尚未确认。", directEvents: events, possiblyAffectedDownstream: affected)
+        }
+        return TopologyElementStatus(signal: .unknown, note: "子系统证据不足。", directEvents: events, possiblyAffectedDownstream: affected)
+    }
+
+    private func subsystemSummary(_ subsystem: TopologySubsystemDefinition) -> String {
+        let state = subsystemStatus(subsystem)
+        if state.signal == .abnormal { return "直接异常 · " + state.note }
+        if state.possiblyAffectedDownstream { return "可能受影响 · 状态未推断为异常" }
+        return subsystem.summary
+    }
+
+    private func summaryText(abnormal: Int, unknown: Int) -> String {
+        if abnormal > 0 { return "直接异常 \(abnormal) 项 · 下游只标记可能受影响，不推断根因" }
+        if unknown > 0 { return "未知 \(unknown) 项 · 证据不足保持未知，不合并为正常" }
+        return "未发现当前规则确认的异常；Topic 可见性和进程存在不代表端到端或实体健康"
     }
 
     private var rosFreshnessLabel: String {
@@ -99,197 +326,212 @@ struct RobotTopologyView: View {
         }
     }
 
-    private func summaryText(abnormal: Int, unknown: Int, missing: Int, observed: Int) -> String {
-        if abnormal > 0 {
-            return "现有健康规则确认 \(abnormal) 项异常。下游标记只表示可能受影响，不代表根因。"
+    private func linksLabelOffset(for id: String) -> CGFloat {
+        switch id {
+        case "map-nav2", "mission-arm", "arm-driver-safety", "chassis-status": return -18
+        case "tf-navigation", "arm-driver-mcu", "chassis-bridge-mcu": return 20
+        default: return -10
         }
-        var pieces: [String] = []
-        if unknown > 0 { pieces.append("\(unknown) 项未知") }
-        if missing > 0 { pieces.append("\(missing) 项未发现关联进程") }
-        if statusesContainNotRunning { pieces.append("有模块未运行") }
-        if observed > 0 { pieces.append("\(observed) 项已发现进程，健康未确认") }
-        return pieces.isEmpty ? "当前可见检查项正常。" : pieces.joined(separator: " · ") + "。未知状态不会合并为绿色正常。"
     }
 
-    private var statusesContainNotRunning: Bool {
-        evaluation.nodeStatuses.values.contains { $0.signal == .notRunning }
-    }
-
-    private func legendDot(_ color: Color, text: String) -> some View {
+    private func legend(_ symbol: String, color: Color, text: String) -> some View {
         HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text).font(.system(size: 9)).foregroundStyle(Palette.muted)
+            Text(symbol).font(.system(size: 8, weight: .semibold)).foregroundStyle(color)
+            Text(text).font(.system(size: 8)).foregroundStyle(Palette.muted)
         }
     }
 }
 
-private struct TopologyFlowCard: View {
-    let flow: TopologyFlowDefinition
-    let evaluation: TopologyEvaluation
-    let expanded: Bool
-    let selectedNodeID: String?
-    let onToggle: () -> Void
-    let onSelectNode: (String) -> Void
-
-    private var flowNodes: [TopologyNodeDefinition] {
-        flow.nodeIDs.compactMap { RobotTopologyCatalog.node($0) }
-    }
-
-    private var abnormalCount: Int {
-        flowNodes.filter { evaluation.nodeStatus($0.id).signal == .abnormal }.count
-    }
-
-    private var unknownCount: Int {
-        flowNodes.filter { evaluation.nodeStatus($0.id).signal == .unknown }.count
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button(action: onToggle) {
-                HStack(spacing: 12) {
-                    Image(systemName: expanded ? "chevron.down.circle.fill" : "chevron.right.circle")
-                        .font(.system(size: 17)).foregroundStyle(Palette.accent)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(flow.title).font(.system(size: 13, weight: .semibold))
-                        Text(flow.summary).font(.system(size: 10)).foregroundStyle(Palette.muted).lineLimit(2)
-                    }
-                    Spacer(minLength: 8)
-                    if abnormalCount > 0 {
-                        TopologyStatusBadge(signal: .abnormal, title: "\(abnormalCount) 项异常")
-                    } else if unknownCount > 0 {
-                        TopologyStatusBadge(signal: .unknown, title: "\(unknownCount) 项未知")
-                    }
-                    Text("\(flow.edgeIDs.count) 条连接").font(.system(size: 9)).foregroundStyle(Palette.muted)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("topology.flow.\(flow.id)")
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("模块").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.muted)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(flowNodes) { node in
-                                TopologyNodeButton(
-                                    node: node,
-                                    status: evaluation.nodeStatus(node.id),
-                                    selected: selectedNodeID == node.id,
-                                    onSelect: { onSelectNode(node.id) }
-                                )
-                            }
-                        }
-                    }
-
-                    if flow.edgeIDs.isEmpty {
-                        UnknownBlock(text: "当前模块尚无已建模的连接。")
-                    } else {
-                        Text("已建模连接").font(.system(size: 9, weight: .semibold)).foregroundStyle(Palette.muted)
-                        VStack(spacing: 8) {
-                            ForEach(flow.edgeIDs, id: \.self) { edgeID in
-                                if let edge = RobotTopologyCatalog.edge(edgeID),
-                                   let source = RobotTopologyCatalog.node(edge.sourceNodeID),
-                                   let destination = RobotTopologyCatalog.node(edge.destinationNodeID) {
-                                    TopologyEdgeRow(
-                                        edge: edge,
-                                        source: source,
-                                        destination: destination,
-                                        evaluation: evaluation,
-                                        selectedNodeID: selectedNodeID,
-                                        onSelectNode: onSelectNode
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                .transition(.opacity)
-            }
-        }
-        .padding(15)
-        .background(Palette.panel, in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Palette.line, lineWidth: 1))
-    }
-}
-
-private struct TopologyEdgeRow: View {
-    let edge: TopologyEdgeDefinition
-    let source: TopologyNodeDefinition
-    let destination: TopologyNodeDefinition
-    let evaluation: TopologyEvaluation
-    let selectedNodeID: String?
-    let onSelectNode: (String) -> Void
-
-    private var edgeStatus: TopologyElementStatus { evaluation.edgeStatus(edge.id) }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            TopologyNodeButton(
-                node: source,
-                status: evaluation.nodeStatus(source.id),
-                selected: selectedNodeID == source.id,
-                onSelect: { onSelectNode(source.id) }
-            )
-            connection
-            TopologyNodeButton(
-                node: destination,
-                status: evaluation.nodeStatus(destination.id),
-                selected: selectedNodeID == destination.id,
-                onSelect: { onSelectNode(destination.id) }
-            )
-        }
-    }
-
-    private var connection: some View {
-        VStack(spacing: 5) {
-            HStack(spacing: 4) {
-                Rectangle().fill(signalColor(edgeStatus.signal).opacity(0.75)).frame(height: 1.5)
-                Image(systemName: "arrowtriangle.right.fill").font(.system(size: 7)).foregroundStyle(signalColor(edgeStatus.signal))
-            }
-            Text(edge.label).font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.muted).lineLimit(1)
-            Text(edge.evidence.rawValue).font(.system(size: 7)).foregroundStyle(Palette.muted).lineLimit(1)
-            TopologyStatusBadge(signal: edgeStatus.signal, compact: true)
-            if edgeStatus.possiblyAffectedDownstream {
-                Text("可能受影响").font(.system(size: 8, weight: .medium)).foregroundStyle(Palette.warning)
-            }
-        }
-        .frame(minWidth: 110, maxWidth: .infinity)
-        .accessibilityIdentifier("topology.edge.\(edge.id)")
-        .help(edgeStatus.note)
-    }
-}
-
-private struct TopologyNodeButton: View {
-    let node: TopologyNodeDefinition
+private struct TopologyDiagramNode {
+    let id: String
+    let title: String
+    let summary: String
+    let symbol: String
     let status: TopologyElementStatus
     let selected: Bool
+    let isSubsystem: Bool
     let onSelect: () -> Void
+}
+
+private struct TopologyDiagramLink: Identifiable {
+    let id: String
+    let sourceID: String
+    let destinationID: String
+    let label: String
+    let evidence: TopologyEvidenceGrade
+    let status: TopologyElementStatus
+    let labelOffset: CGFloat
+}
+
+private struct TopologyDiagramCanvas: View {
+    let layout: TopologyCanvasLayout
+    let nodes: [TopologyDiagramNode]
+    let links: [TopologyDiagramLink]
+    let accessibilityID: String
+
+    private let subsystemSize = CGSize(width: 208, height: 106)
+    private let componentSize = CGSize(width: 190, height: 86)
 
     var body: some View {
-        Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .top, spacing: 6) {
-                    Circle().fill(signalColor(status.signal)).frame(width: 7, height: 7).padding(.top, 4)
-                    Text(node.title).font(.system(size: 10, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
-                    Spacer(minLength: 0)
-                    if status.possiblyAffectedDownstream {
-                        Image(systemName: "arrow.down.right.circle.fill").font(.system(size: 10)).foregroundStyle(Palette.warning)
-                            .help("存在上游异常；此节点仅标记可能受影响，状态没有被推断为异常。")
+        ScrollView(.horizontal, showsIndicators: true) {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Palette.panel.opacity(0.76))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.line, lineWidth: 1))
+
+                Canvas { context, _ in
+                    for link in links {
+                        guard let sourceCenter = layout.nodeCenters[link.sourceID],
+                              let destinationCenter = layout.nodeCenters[link.destinationID] else { continue }
+                        let sourceSize = nodes.first(where: { $0.id == link.sourceID }).map { $0.isSubsystem ? subsystemSize : componentSize } ?? componentSize
+                        let destinationSize = nodes.first(where: { $0.id == link.destinationID }).map { $0.isSubsystem ? subsystemSize : componentSize } ?? componentSize
+                        draw(link, from: sourceCenter, to: destinationCenter, sourceSize: sourceSize, destinationSize: destinationSize, in: &context)
                     }
                 }
-                Text(status.signal.label).font(.system(size: 8, weight: .medium)).foregroundStyle(signalColor(status.signal)).lineLimit(1)
+
+                ForEach(links) { link in
+                    if let source = layout.nodeCenters[link.sourceID],
+                       let destination = layout.nodeCenters[link.destinationID] {
+                        let sourceWidth = nodes.first(where: { $0.id == link.sourceID }).map { $0.isSubsystem ? subsystemSize.width : componentSize.width } ?? componentSize.width
+                        let destinationWidth = nodes.first(where: { $0.id == link.destinationID }).map { $0.isSubsystem ? subsystemSize.width : componentSize.width } ?? componentSize.width
+                        let openSpace = abs(destination.x - source.x) - (sourceWidth + destinationWidth) / 2 - 12
+                        VStack(spacing: 3) {
+                            Text(link.label)
+                                .font(.system(size: 8, weight: .medium))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                            Text(link.status.signal.label)
+                                .font(.system(size: 7, weight: .semibold))
+                                .foregroundStyle(signalColor(link.status.signal))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 5).padding(.vertical, 3)
+                        .background(Palette.background.opacity(0.92), in: RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Palette.line, lineWidth: 1))
+                        .frame(width: min(148, max(76, openSpace)))
+                        .position(
+                            x: (source.x + destination.x) / 2,
+                            y: (source.y + destination.y) / 2 + link.labelOffset
+                        )
+                        .help(link.status.note)
+                        .accessibilityIdentifier("topology.link.\(link.id)")
+                    }
+                }
+
+                ForEach(nodes, id: \.id) { node in
+                    if let center = layout.nodeCenters[node.id] {
+                        TopologyDiagramNodeCard(node: node)
+                            .position(center)
+                    }
+                }
             }
-            .frame(width: 152)
-            .frame(minHeight: 55, alignment: .leading)
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(selected ? Palette.accent.opacity(0.13) : Palette.panelRaised, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Palette.accent.opacity(0.7) : Palette.line, lineWidth: 1))
+            .frame(width: layout.size.width, height: layout.size.height)
+            .accessibilityIdentifier(accessibilityID)
+        }
+        .frame(height: layout.size.height)
+    }
+
+    private func draw(
+        _ link: TopologyDiagramLink,
+        from source: CGPoint,
+        to destination: CGPoint,
+        sourceSize: CGSize,
+        destinationSize: CGSize,
+        in context: inout GraphicsContext
+    ) {
+        let direction: CGFloat = destination.x >= source.x ? 1 : -1
+        let start = CGPoint(x: source.x + direction * (sourceSize.width / 2), y: source.y)
+        let end = CGPoint(x: destination.x - direction * (destinationSize.width / 2), y: destination.y)
+        let horizontal = end.x - start.x
+        let vertical = end.y - start.y
+        let control1 = CGPoint(x: start.x + horizontal * 0.42, y: start.y + vertical * 0.16)
+        let control2 = CGPoint(x: end.x - horizontal * 0.42, y: end.y - vertical * 0.16)
+        var path = Path()
+        path.move(to: start)
+        path.addCurve(to: end, control1: control1, control2: control2)
+
+        let color = signalColor(link.status.signal)
+        let dash: [CGFloat]
+        switch link.evidence {
+        case .sourceWiring: dash = []
+        case .offlineExercise: dash = [7, 4]
+        case .openInterface: dash = [2, 5]
+        }
+        context.stroke(path, with: .color(color.opacity(0.9)), style: StrokeStyle(lineWidth: link.status.signal == .abnormal ? 3 : 1.8, lineCap: .round, dash: dash))
+
+        if link.evidence == .openInterface {
+            let marker = CGRect(x: end.x - 4, y: end.y - 4, width: 8, height: 8)
+            context.stroke(Path(ellipseIn: marker), with: .color(color), lineWidth: 1.5)
+        } else {
+            drawArrow(at: end, direction: CGPoint(x: end.x - control2.x, y: end.y - control2.y), color: color, in: &context)
+        }
+    }
+
+    private func drawArrow(at point: CGPoint, direction: CGPoint, color: Color, in context: inout GraphicsContext) {
+        let angle = atan2(direction.y, direction.x)
+        let length: CGFloat = 9
+        let halfWidth: CGFloat = 4.5
+        let base = CGPoint(x: point.x - cos(angle) * length, y: point.y - sin(angle) * length)
+        let left = CGPoint(x: base.x + sin(angle) * halfWidth, y: base.y - cos(angle) * halfWidth)
+        let right = CGPoint(x: base.x - sin(angle) * halfWidth, y: base.y + cos(angle) * halfWidth)
+        var arrow = Path()
+        arrow.move(to: point)
+        arrow.addLine(to: left)
+        arrow.addLine(to: right)
+        arrow.closeSubpath()
+        context.fill(arrow, with: .color(color))
+    }
+}
+
+private struct TopologyDiagramNodeCard: View {
+    let node: TopologyDiagramNode
+
+    private var width: CGFloat { node.isSubsystem ? 208 : 190 }
+
+    var body: some View {
+        Button(action: node.onSelect) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: node.symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(node.isSubsystem ? Palette.accent : Palette.blue)
+                        .frame(width: 19)
+                    Text(node.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 0)
+                    if node.isSubsystem {
+                        Image(systemName: "arrow.up.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.muted)
+                    }
+                }
+                Text(node.summary)
+                    .font(.system(size: 8))
+                    .foregroundStyle(Palette.muted)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 5) {
+                    TopologyStatusBadge(signal: node.status.signal, compact: true)
+                    if node.status.possiblyAffectedDownstream {
+                        Text("可能受影响")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundStyle(Palette.warning)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(9)
+            .frame(width: width, height: node.isSubsystem ? 106 : 86, alignment: .leading)
+            .background(node.selected ? Palette.accent.opacity(0.15) : Palette.panelRaised, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(
+                node.status.signal == .abnormal ? Palette.danger.opacity(0.8) : (node.selected ? Palette.accent.opacity(0.75) : Palette.line),
+                lineWidth: node.status.signal == .abnormal ? 1.7 : 1
+            ))
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("topology.node.\(node.id)")
-        .help(status.note)
+        .help(node.status.note)
+        .accessibilityIdentifier(node.isSubsystem ? "topology.subsystem.\(node.id)" : "topology.node.\(node.id)")
     }
 }
 
@@ -308,6 +550,16 @@ private struct TopologyStatusBadge: View {
         .padding(.vertical, compact ? 4 : 6)
         .background(signalColor(signal).opacity(0.10), in: Capsule())
         .overlay(Capsule().stroke(signalColor(signal).opacity(0.22), lineWidth: 1))
+    }
+}
+
+private func signalColor(_ signal: TopologySignal) -> Color {
+    switch signal {
+    case .normal: return Palette.accent
+    case .abnormal: return Palette.danger
+    case .unknown, .notRunning, .processNotFound: return Palette.warning
+    case .processObserved, .topicsAllVisible, .topicsPartiallyVisible: return Palette.blue
+    case .topicsNoneVisible: return Palette.muted
     }
 }
 
@@ -474,16 +726,5 @@ private struct HealthEventEvidenceRow: View {
         case .notRunning: return .notRunning
         case .unknown: return .unknown
         }
-    }
-}
-
-private func signalColor(_ signal: TopologySignal) -> Color {
-    switch signal {
-    case .normal: return Palette.accent
-    case .abnormal: return Palette.danger
-    case .unknown, .notRunning, .processNotFound: return Palette.warning
-    case .processObserved: return Palette.blue
-    case .topicObserved: return Palette.blue
-    case .topicNotObserved: return Palette.muted
     }
 }
