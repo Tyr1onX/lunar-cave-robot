@@ -177,6 +177,131 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertEqual(evaluation.nodeStatus("point-lio").signal, .unknown, "A workspace-level process scan cannot identify a specific Point-LIO node.")
     }
 
+    func testRecentAgentReceivedDataIsNotModuleOrHardwareHealth() throws {
+        let telemetry = try makeTelemetry([
+            ("livox_lidar", "/livox/lidar", "streaming"),
+            ("livox_imu", "/livox/imu", "streaming"),
+            ("imu_data", "/imu/data", "streaming"),
+            ("pointlio_odometry", "/odometry", "streaming"),
+            ("cloud_registered", "/cloud_registered", "streaming"),
+        ])
+        let context = try makeContext(linkTelemetry: telemetry)
+        let evaluation = TopologyStatusResolver.evaluate(context)
+
+        XCTAssertEqual(evaluation.edgeStatus("mid360-pointlio").signal, .dataObserved)
+        XCTAssertEqual(evaluation.nodeStatus("mid360").signal, .unknown, "Receiving the same-named Topic does not establish physical sensor health or workspace ownership.")
+        XCTAssertEqual(evaluation.nodeStatus("point-lio").signal, .unknown, "Agent receive evidence is not Point-LIO processing health.")
+        XCTAssertFalse(evaluation.nodeStatuses.values.contains { $0.signal == .abnormal })
+        XCTAssertTrue(evaluation.edgeStatus("mid360-pointlio").note.contains("工作区归属未确认"))
+    }
+
+    func testTelemetryMapsAcrossLivoxIMUPointLIOAndSLAMEdges() throws {
+        let telemetry = try makeTelemetry([
+            ("livox_lidar", "/livox/lidar", "streaming"),
+            ("livox_imu", "/livox/imu", "streaming"),
+            ("imu_transformed", "/livox/imu_aft_tf", "streaming"),
+            ("imu_data", "/imu/data", "streaming"),
+            ("pointlio_odometry", "/odometry", "streaming"),
+            ("cloud_registered", "/cloud_registered", "streaming"),
+            ("terrain_map", "/terrain_map", "streaming"),
+            ("scan", "/scan", "streaming"),
+            ("map", "/map", "streaming"),
+        ])
+        let evaluation = TopologyStatusResolver.evaluate(try makeContext(linkTelemetry: telemetry))
+
+        for edgeID in [
+            "mid360-pointlio", "mid360-imu-transform", "imu-transform-filter", "imu-filter-pointlio",
+            "pointlio-terrain", "terrain-scan", "scan-slam-toolbox", "slam-map",
+        ] {
+            XCTAssertEqual(evaluation.edgeStatus(edgeID).signal, .dataObserved, edgeID)
+        }
+        XCTAssertEqual(evaluation.nodeStatus("mid360").signal, .unknown)
+        XCTAssertEqual(evaluation.nodeStatus("point-lio").signal, .unknown)
+        XCTAssertEqual(evaluation.nodeStatus("slam-toolbox").signal, .unknown)
+        XCTAssertFalse(evaluation.nodeStatuses.values.contains { $0.signal == .abnormal })
+    }
+
+    func testStaleStreamMarksOnlyDataSymptomAndPossibleDownstreamImpact() throws {
+        let telemetry = try makeTelemetry([
+            ("livox_lidar", "/livox/lidar", "stale"),
+            ("livox_imu", "/livox/imu", "streaming"),
+        ])
+        let context = try makeContext(linkTelemetry: telemetry)
+        let evaluation = TopologyStatusResolver.evaluate(context)
+
+        XCTAssertEqual(evaluation.edgeStatus("mid360-pointlio").signal, .dataStale)
+        XCTAssertTrue(evaluation.edgeStatus("mid360-pointlio").possiblyAffectedDownstream)
+        XCTAssertTrue(evaluation.nodeStatus("point-lio").possiblyAffectedDownstream)
+        XCTAssertEqual(evaluation.nodeStatus("point-lio").signal, .unknown)
+        XCTAssertFalse(evaluation.nodeStatuses.values.contains { $0.signal == .abnormal }, "An unconfigured stream must not create a module fault event.")
+    }
+
+    func testPointLIOAndSLAMPipelineCluesDoNotClaimRootCause() throws {
+        let pointLIO = try makeTelemetry([
+            ("livox_lidar", "/livox/lidar", "streaming"),
+            ("imu_data", "/imu/data", "streaming"),
+            ("pointlio_odometry", "/odometry", "unavailable"),
+            ("cloud_registered", "/cloud_registered", "unavailable"),
+            ("scan", "/scan", "unavailable"),
+            ("map", "/map", "unavailable"),
+        ])
+        let pointSummary = try XCTUnwrap(LinkTelemetryDiagnostics.pipelineSummary(nodeID: "point-lio", telemetry: pointLIO, blockedReason: nil))
+        XCTAssertTrue(pointSummary.contains("可能存在处理链路间断"))
+        XCTAssertTrue(pointSummary.contains("不判定模块故障"))
+
+        let slam = try makeTelemetry([
+            ("scan", "/scan", "streaming"),
+            ("map", "/map", "unavailable"),
+        ])
+        let slamSummary = try XCTUnwrap(LinkTelemetryDiagnostics.pipelineSummary(nodeID: "slam-toolbox", telemetry: slam, blockedReason: nil))
+        XCTAssertTrue(slamSummary.contains("可能存在处理链路间断"))
+        XCTAssertTrue(slamSummary.contains("工作区来源与运行预期未确认"))
+    }
+
+    func testDomainMismatchAndStaleTelemetryGraphKeepEdgesUnknown() throws {
+        let mismatch = try makeTelemetry(
+            [("livox_lidar", "/livox/lidar", "streaming")],
+            domainID: 7,
+            expectedDomainID: 42
+        )
+        let mismatchEvaluation = TopologyStatusResolver.evaluate(try makeContext(linkTelemetry: mismatch))
+        XCTAssertEqual(mismatchEvaluation.edgeStatus("mid360-pointlio").signal, .unknown)
+        XCTAssertTrue(mismatchEvaluation.edgeStatus("mid360-pointlio").note.contains("Domain"))
+
+        let stale = try makeTelemetry(
+            [("livox_lidar", "/livox/lidar", "streaming")],
+            graphAgeMs: HealthEvaluator.rosGraphTimeoutMs + 1
+        )
+        let staleEvaluation = TopologyStatusResolver.evaluate(try makeContext(linkTelemetry: stale))
+        XCTAssertEqual(staleEvaluation.edgeStatus("mid360-pointlio").signal, .unknown)
+        XCTAssertTrue(staleEvaluation.edgeStatus("mid360-pointlio").note.contains("过期"))
+    }
+
+    func testMultiTopicRuntimeStateShowsPartialReceiptWithoutFault() throws {
+        let telemetry = try makeTelemetry([
+            ("cloud_registered", "/cloud_registered", "streaming"),
+            ("pointlio_odometry", "/odometry", "unavailable"),
+        ])
+        let evaluation = TopologyStatusResolver.evaluate(try makeContext(linkTelemetry: telemetry))
+        XCTAssertEqual(evaluation.edgeStatus("pointlio-terrain").signal, .dataPartiallyObserved)
+        XCTAssertTrue(evaluation.edgeStatus("pointlio-terrain").note.contains("/odometry"))
+        XCTAssertFalse(evaluation.nodeStatuses.values.contains { $0.signal == .abnormal })
+    }
+
+    func testUnconfiguredStoppedWorkspaceDoesNotBecomeAbnormalWhenTelemetryIsAbsent() throws {
+        let telemetry = try makeTelemetry([
+            ("livox_lidar", "/livox/lidar", "unavailable"),
+            ("livox_imu", "/livox/imu", "unavailable"),
+        ])
+        let evaluation = TopologyStatusResolver.evaluate(try makeContext(
+            includeUnconfiguredStoppedLidar: true,
+            linkTelemetry: telemetry
+        ))
+        XCTAssertEqual(evaluation.nodeStatus("lidar-stack").signal, .processNotFound)
+        XCTAssertNotEqual(evaluation.nodeStatus("lidar-stack").signal, .abnormal)
+        XCTAssertEqual(evaluation.edgeStatus("mid360-pointlio").signal, .dataNotObserved)
+    }
+
     func testOverviewAndSubsystemDetailLayoutsContainEachNodeOnceAndConnectReferencedNodes() {
         let overview = RobotTopologyLayout.overview(availableWidth: 1_400)
         let displayedSubsystemIDs = RobotTopologyCatalog.subsystems.filter { $0.id != "system" }.map(\.id)
@@ -331,6 +456,7 @@ final class RobotTopologyTests: XCTestCase {
         topics: [String] = [],
         workspaceFreshness: WorkspaceSnapshotFreshness = .live,
         includeUnconfiguredStoppedLidar: Bool = false,
+        linkTelemetry: LinkTelemetryReading? = nil,
         events: [HealthEvent] = []
     ) throws -> TopologyRuntimeContext {
         let snapshot = try makeSnapshot(
@@ -346,8 +472,41 @@ final class RobotTopologyTests: XCTestCase {
             displayedWorkspaceInventory: snapshot.workspaces,
             workspaceFreshness: workspaceFreshness,
             vision: nil,
+            linkTelemetry: linkTelemetry,
             healthEvents: events
         )
+    }
+
+    private func makeTelemetry(
+        _ rows: [(String, String, String)],
+        domainID: Int = 42,
+        expectedDomainID: Int = 42,
+        graphAgeMs: Int = 100
+    ) throws -> LinkTelemetryReading {
+        let streams = rows.map { id, topic, status in
+            let type: String
+            switch topic {
+            case "/livox/lidar": type = "livox_ros_driver2/msg/CustomMsg"
+            case "/livox/imu", "/livox/imu_aft_tf", "/imu/data": type = "sensor_msgs/msg/Imu"
+            case "/odometry": type = "nav_msgs/msg/Odometry"
+            case "/cloud_registered", "/terrain_map": type = "sensor_msgs/msg/PointCloud2"
+            case "/scan": type = "sensor_msgs/msg/LaserScan"
+            default: type = "nav_msgs/msg/OccupancyGrid"
+            }
+            let age = status == "streaming" ? "20" : (status == "stale" ? "3000" : "null")
+            let reason = status == "streaming" ? "null" : #""no recent sample""#
+            let publisherCount = status == "unavailable" ? 0 : 1
+            let endpoints = publisherCount == 0 ? "[]" : #"[{"name":"test_publisher","namespace":"/synthetic","topic_type":"\#(type)"}]"#
+            let timestamp = publisherCount == 0 ? "null" : #""2026-10-17T01:00:00.000Z""#
+            let rate = status == "streaming" ? "10.0" : "null"
+            let receiveCount = status == "unavailable" ? 0 : 20
+            return #"{"id":"\#(id)","label":"\#(id)","topic":"\#(topic)","topic_type":"\#(type)","topic_types":["\#(type)"],"status":"\#(status)","reason":\#(reason),"publisher_count":\#(publisherCount),"publisher_endpoints":\#(endpoints),"workspace_attribution":"unknown","received_at":\#(timestamp),"source_stamp":\#(timestamp),"age_ms":\#(age),"receive_rate_hz":\#(rate),"header_to_agent_ms":null,"frame_id":"synthetic","sample_count":100,"sample_unit":"points","gap_events":0,"last_gap_ms":null,"stale_after_ms":1500,"receive_count":\#(receiveCount)}"#
+        }.joined(separator: ",")
+        let domainMatch = domainID == expectedDomainID ? "true" : "false"
+        let json = #"{"schema_version":1,"status":"ok","source":"nuc-ros2-fixed-topic-read-only-subscriber","collected_at":"2026-10-17T01:00:00.000Z","domain_id":\#(domainID),"expected_domain_id":\#(expectedDomainID),"expected_domain_error":null,"domain_matches_expectation":\#(domainMatch),"graph_status":"ok","graph_observed_at":"2026-10-17T01:00:00.000Z","graph_age_ms":\#(graphAgeMs),"graph_reason":null,"workspace_attribution":"unknown","clock_note":"clock synchronization not verified","streams":[\#(streams)]}"#
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(LinkTelemetryReading.self, from: Data(json.utf8))
     }
 
     private func makeSnapshot(

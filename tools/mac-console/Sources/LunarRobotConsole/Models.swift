@@ -333,6 +333,64 @@ struct VisionReading: Decodable {
     }
 }
 
+struct LinkTelemetryPublisherEndpoint: Decodable, Identifiable {
+    var id: String { "\(namespace):\(name):\(topicType)" }
+    let name: String
+    let namespace: String
+    let topicType: String
+}
+
+struct LinkTelemetryStreamReading: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let topic: String
+    let topicType: String?
+    let topicTypes: [String]
+    let status: String
+    let reason: String?
+    let publisherCount: Int?
+    let publisherEndpoints: [LinkTelemetryPublisherEndpoint]
+    let workspaceAttribution: String
+    let receivedAt: String?
+    let sourceStamp: String?
+    let ageMs: Int?
+    let receiveRateHz: Double?
+    let headerToAgentMs: Double?
+    let frameId: String?
+    let sampleCount: Int?
+    let sampleUnit: String?
+    let gapEvents: Int
+    let lastGapMs: Int?
+    let staleAfterMs: Int
+    let receiveCount: Int
+}
+
+struct LinkTelemetryReading: Decodable {
+    let schemaVersion: Int
+    let status: String
+    let source: String
+    let collectedAt: String
+    let domainId: Int?
+    let expectedDomainId: Int?
+    let expectedDomainError: String?
+    let domainMatchesExpectation: Bool?
+    let graphStatus: String
+    let graphObservedAt: String?
+    let graphAgeMs: Int?
+    let graphReason: String?
+    let workspaceAttribution: String
+    let clockNote: String
+    let streams: [LinkTelemetryStreamReading]
+
+    func stream(topic: String) -> LinkTelemetryStreamReading? {
+        streams.first { $0.topic == topic }
+    }
+
+    func stream(id: String) -> LinkTelemetryStreamReading? {
+        streams.first { $0.id == id }
+    }
+}
+
 extension Int64 {
     var formattedBytes: String {
         ByteCountFormatter.string(fromByteCount: self, countStyle: .file)

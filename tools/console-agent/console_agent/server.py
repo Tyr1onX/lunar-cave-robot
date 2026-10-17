@@ -5,7 +5,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from .collectors import collect_logs, collect_snapshot, collect_vision, collect_vision_frame, start_ros_graph_observer, utc_now
+from .collectors import collect_link_telemetry, collect_logs, collect_snapshot, collect_vision, collect_vision_frame, start_ros_graph_observer, utc_now
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -59,6 +59,9 @@ class ReadOnlyHandler(BaseHTTPRequestHandler):
             return
         if request.path == "/v1/vision":
             self._respond(200, collect_vision())
+            return
+        if request.path == "/v1/telemetry":
+            self._respond(200, collect_link_telemetry())
             return
         parts = request.path.split("/")
         if len(parts) == 5 and parts[:3] == ["", "v1", "vision"] and parts[4] == "frame.png":
