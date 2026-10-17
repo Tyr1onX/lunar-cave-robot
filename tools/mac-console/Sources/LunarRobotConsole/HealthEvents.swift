@@ -545,6 +545,10 @@ enum HealthEvaluator {
         let rgb = vision?.stream(.rgb)
         let depth = vision?.stream(.depth)
         let hasImagePublisher = (rgb?.publisherCount ?? 0) > 0 || (depth?.publisherCount ?? 0) > 0
+        let hasCompleteImageSnapshot = vision?.status == "ok" && rgb != nil && depth != nil
+        let noImagePublishersConfirmed = [rgb, depth].allSatisfy { stream in
+            stream?.status == "unavailable" && stream?.publisherCount == 0
+        }
         let evidenceTime = [rgb?.sourceStamp, depth?.sourceStamp, rgb?.receivedAt, depth?.receivedAt]
             .compactMap { $0 }.joined(separator: " · ")
         let eventTime = vision?.collectedAt ?? context.workspace?.runtimeObservedAt ?? snapshot?.collectedAt ?? evaluationTime
@@ -567,13 +571,15 @@ enum HealthEvaluator {
         } else {
             switch context.resolution {
             case .unconfiguredNotRunning:
-                if vision?.status != "ok" || rgb == nil || depth == nil {
+                if !hasCompleteImageSnapshot {
                     state = .unknown
                     observation = "进程扫描未发现相机进程，但 Agent 视觉接口没有提供完整 RGB/深度发布者观测；状态未知。"
                     check = "确认旧版 Agent 的 /v1/vision 兼容性和相机模块证据"
-                } else if hasImagePublisher {
+                } else if !noImagePublishersConfirmed {
                     state = .unknown
-                    observation = "进程扫描未发现已归属的相机进程，但 Agent Graph 中存在图像发布者；来源证据不一致，状态未知。"
+                    observation = hasImagePublisher
+                        ? "进程扫描未发现已归属的相机进程，但 Agent Graph 中存在图像发布者；来源证据不一致，状态未知。"
+                        : "进程扫描未发现相机进程，但 RGB/深度观测没有同时明确报告无发布者；状态未知。"
                     check = "核对进程归属与同名 Topic 的发布者来源"
                 } else {
                     state = .notRunning
@@ -626,9 +632,15 @@ enum HealthEvaluator {
                     break
                 }
                 if module.runtimeStatus == "not_running" {
-                    if hasImagePublisher {
+                    if !hasCompleteImageSnapshot {
                         state = .unknown
-                        observation = "预期工作区进程扫描未发现相机进程，但 ROS Graph 中存在图像发布者；发布者归属未确认。"
+                        observation = "相机运行预期已确认且进程扫描未发现相机进程，但 /v1/vision 不可用或 RGB/深度记录不完整；不能据此声称无发布者或判定模块故障。"
+                        check = "恢复 Agent 视觉只读接口并取得完整 RGB/深度观测后再评估"
+                    } else if !noImagePublishersConfirmed {
+                        state = .unknown
+                        observation = hasImagePublisher
+                            ? "预期工作区进程扫描未发现相机进程，但 ROS Graph 中存在图像发布者；发布者归属未确认。"
+                            : "预期工作区进程扫描未发现相机进程，但 RGB/深度状态没有同时明确报告无发布者；状态未知。"
                         check = "核对相机进程归属、工作区路径及 ROS Domain"
                     } else {
                         state = .abnormal
@@ -646,9 +658,9 @@ enum HealthEvaluator {
                     state = .unknown
                     observation = workspace.graphReason ?? "相机工作区与 Agent ROS graph 的 Domain 关系未确认。"
                     check = "核对工作区进程 ROS_DOMAIN_ID 与 Agent Graph Domain"
-                } else if vision?.status != "ok" || rgb == nil || depth == nil {
+                } else if !hasCompleteImageSnapshot {
                     state = .unknown
-                    observation = "相机进程与 Domain 关系已观测，但 RGB/深度帧接口未提供完整数据。"
+                    observation = "相机进程与 Domain 关系已观测，但 /v1/vision 不可用或 RGB/深度记录不完整；模块来源和数据状态未知。"
                     check = "检查 Agent 视觉只读观测接口与 RGB/深度 Topic"
                 } else {
                     let streams = [("RGB", rgb!), ("深度", depth!)]
@@ -659,29 +671,12 @@ enum HealthEvaluator {
                         check = "检查 ROS Graph 中的图像发布者节点，并确认其工作区来源"
                         break
                     }
-                    let abnormal = streams.filter { label, stream in
-                        stream.status == "unavailable" || stream.status == "stale" || stream.status == "waiting" ||
-                        stream.status == "unsupported" || (stream.status == "streaming" && stream.frameAgeMs.map { $0 > imageTimeoutMs } == true)
-                    }
-                    let allFresh = streams.allSatisfy { _, stream in
-                        stream.status == "streaming" && stream.frameAgeMs.map { $0 <= imageTimeoutMs } == true
-                    }
-                    if !abnormal.isEmpty {
-                        state = .abnormal
-                        let labels = abnormal.map { label, stream in
-                            "\(label) \(stream.topic)=\(stream.status), 帧龄 \(stream.frameAgeMs.map { "\($0) ms" } ?? "未知")"
-                        }.joined(separator: "；")
-                        observation = "已确认相机进程运行且 Agent Graph Domain 可见；\(labels)。"
-                        check = "检查 Gemini 336L 驱动日志、RGB/深度发布者与 USB 设备状态"
-                    } else if allFresh {
-                        state = .normal
-                        observation = "运行预期来源、相机关联进程和工作区 Domain [\(workspaceDomains)] 与 Agent Graph Domain 可见；RGB \(streamEvidence(rgb!))；深度 \(streamEvidence(depth!))。数据流与进程共同支持该模块运行，仍不代表传感器精度或实体硬件已验收。"
-                        check = "持续观察 RGB/深度帧龄；30 FPS 是源码 launch 请求值，不是本规则的性能阈值"
-                    } else {
-                        state = .unknown
-                        observation = "相机进程和 Domain 已确认，但至少一条图像流缺少可比较帧龄；\(streamEvidence(rgb!))；\(streamEvidence(depth!))。"
-                        check = "检查 Agent 视觉观测时间、ROS Header 时间与接收时钟差异"
-                    }
+                    let linkStatus = streams.map { label, stream in
+                        "\(label) \(streamEvidence(stream))，状态 \(stream.status)"
+                    }.joined(separator: "；")
+                    state = .unknown
+                    observation = "运行预期、相机关联进程及工作区 Domain [\(workspaceDomains)] 已观测；\(linkStatus)。当前接口只提供 Topic 数据链路信息，未提供发布者节点到指定工作区或实体相机的身份映射，因此相机模块来源未确认。"
+                    check = "查看 ROS Graph 发布者节点及其工作区归属；30 FPS 是源码 launch 请求值，不是本规则的性能阈值"
                 }
             }
         }
@@ -785,7 +780,7 @@ enum HealthEvaluator {
                 observation = "Agent 报告帧龄 \(age) ms，超过 \(imageTimeoutMs) ms 图像新鲜度阈值；模块级故障需有已确认运行预期和可归属的工作区证据。\(publisherText)"
             } else if let age = reading?.frameAgeMs {
                 eventState = .normal
-                observation = "最近帧龄 \(age) ms；\(publisherText)；ROS Header 时间 \(reading?.sourceStamp ?? "未知")。"
+                observation = "最近帧龄 \(age) ms；\(publisherText)；ROS Header 时间 \(reading?.sourceStamp ?? "未知")。此状态只确认 \(topic) 数据链路，不确认发布者属于指定工作区或实体相机。"
                 if isYOLO { observation.append("输出流存活不代表识别精度已验收。") }
             } else {
                 eventState = .unknown
