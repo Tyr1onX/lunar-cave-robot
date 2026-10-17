@@ -17,6 +17,8 @@ _CONFIG_DIRS = {"config", "cfg", "params", "param"}
 _INVENTORY_CACHE_SECONDS = 30.0
 _GRAPH_MAX_AGE_MS = 5000
 _PACKAGE_PATH_PATTERN = re.compile(r"(?:install|lib|share)/([^/]+)/")
+_MODULE_EXPECTATIONS_ENV = "LUNAR_CONSOLE_EXPECTED_MODULES"
+_MODULE_EXPECTATION_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*")
 _CACHE_LOCK = threading.Lock()
 _INVENTORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -474,6 +476,34 @@ def _execution_state(processes: list[dict[str, Any]], scan_status: str, runtime_
     return "unknown"
 
 
+def _expected_modules(
+    specs: tuple[WorkspaceSpec, ...],
+) -> tuple[set[tuple[str, str]], str | None]:
+    """Parse explicit module run expectations without inferring them from source or processes."""
+    raw = os.environ.get(_MODULE_EXPECTATIONS_ENV, "").strip()
+    if not raw:
+        return set(), None
+
+    available = {
+        (workspace.id, module.id)
+        for workspace in specs
+        for module in workspace.modules
+    }
+    selected: set[tuple[str, str]] = set()
+    for item in raw.split(","):
+        value = item.strip()
+        if not value or not _MODULE_EXPECTATION_PATTERN.fullmatch(value):
+            return set(), f"{_MODULE_EXPECTATIONS_ENV} must contain comma-separated workspace_id:module_id values"
+        workspace_id, module_id = value.split(":", 1)
+        entry = (workspace_id, module_id)
+        if entry not in available:
+            return set(), f"{_MODULE_EXPECTATIONS_ENV} contains an unknown workspace/module: {value}"
+        selected.add(entry)
+    if not selected:
+        return set(), f"{_MODULE_EXPECTATIONS_ENV} did not contain a valid module expectation"
+    return selected, None
+
+
 def collect_workspaces(
     graph: dict[str, Any] | None = None,
     *,
@@ -485,6 +515,8 @@ def collect_workspaces(
     observed_at = _utc_now()
     active_graph = graph or {"status": "unknown"}
     processes_by_workspace, scan_status, scan_reason = _process_scan(selected_specs, proc_root)
+    expected_modules, expectation_error = _expected_modules(selected_specs)
+    expectation_status = "invalid" if expectation_error else ("configured" if expected_modules else "unconfigured")
     readings: list[dict[str, Any]] = []
 
     for spec in selected_specs:
@@ -519,6 +551,15 @@ def collect_workspaces(
                     if isinstance(topic, dict) and isinstance(topic.get("name"), str)
                 }
                 graph_topics = [topic for topic in module.interface_topics if topic in observed_names]
+            if expectation_error:
+                run_expectation = "unknown"
+                expectation_reason = expectation_error
+            elif (spec.id, module.id) in expected_modules:
+                run_expectation = "confirmed"
+                expectation_reason = "由显式 Agent 配置声明为当前运行模式的预期模块。"
+            else:
+                run_expectation = "unconfigured"
+                expectation_reason = "未配置此模块的运行预期；源码或进程存在本身不构成启动要求。"
             modules.append({
                 "id": module.id,
                 "label": module.label,
@@ -526,10 +567,13 @@ def collect_workspaces(
                 "source_status": module_source,
                 "runtime_status": module_runtime,
                 "execution_state": module_execution_state,
-                "run_expectation": "unconfigured",
+                "run_expectation": run_expectation,
+                "run_expectation_source": _MODULE_EXPECTATIONS_ENV if run_expectation == "confirmed" else None,
+                "run_expectation_observed_at": observed_at,
+                "run_expectation_reason": expectation_reason,
                 "interface_topics": list(module.interface_topics),
                 "observed_interface_topics": graph_topics,
-                "reason": "源码接口候选不代表运行时存在；未配置运行预期，不据此产生故障事件。",
+                "reason": "源码接口候选不代表运行时存在；运行预期仅来自显式配置。",
             })
 
         domain_ids = sorted({process["domain_id"] for process in processes if process["domain_id"] is not None})
@@ -569,6 +613,10 @@ def collect_workspaces(
         "status": "ok" if scan_status != "unknown" else "unknown",
         "source": "nuc-read-only-workspace-and-process-observer",
         "collected_at": observed_at,
+        "expectation_status": expectation_status,
+        "expectation_source": _MODULE_EXPECTATIONS_ENV if expectation_status == "configured" else None,
+        "expectation_observed_at": observed_at,
+        "expectation_error": expectation_error,
         "process_scan": {
             "status": scan_status,
             "scope": "Agent UID; process identity and workspace references; audited systemd session helper excluded",
