@@ -228,7 +228,9 @@ def _package_from_text(text: str, known_packages: set[str]) -> str | None:
 
 
 def _is_known_session_helper(comm: str, cmdline: str) -> bool:
-    """Exclude only the audited systemd user-session helper from ROS probing."""
+    """Exclude only audited systemd/SSH session wrappers from ROS probing."""
+    if Path(comm).name == "sshd":
+        return cmdline.startswith("sshd:") and (len(cmdline) == 5 or cmdline[5].isspace())
     try:
         tokens = shlex.split(cmdline)
     except ValueError:

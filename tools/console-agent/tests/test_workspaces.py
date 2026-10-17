@@ -247,6 +247,39 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIsNone(reading["process_scan"]["reason"])
         self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
 
+    def test_unreadable_ssh_session_wrapper_does_not_make_scan_partial(self) -> None:
+        proc = self._fake_process(
+            b"sshd: operator@notty\0",
+            b"",
+            comm="sshd",
+            cwd=Path(self.temporary.name),
+        )
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "ok")
+        self.assertIsNone(reading["process_scan"]["reason"])
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
+
+    def test_non_session_process_named_sshd_is_still_scanned(self) -> None:
+        unrelated_cwd = Path(self.temporary.name) / "custom-runner"
+        unrelated_cwd.mkdir()
+        command = f"{self.root}/install/yolo_node/lib/yolo_node/yolo_detector\0".encode()
+        proc = self._fake_process(
+            command,
+            f"AMENT_PREFIX_PATH={self.root / 'install'}\0".encode(),
+            comm="sshd",
+            cwd=unrelated_cwd,
+        )
+
+        reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(workspace["runtime_status"], "running")
+        self.assertEqual(workspace["process_count"], 1)
+        self.assertEqual(workspace["processes"][0]["process_name"], "sshd")
+
     def test_unreadable_ros_candidate_keeps_command_evidence_and_marks_scope_partial(self) -> None:
         command = f"{self.root}/install/yolo_node/lib/yolo_node/yolo_detector\0".encode()
         proc = self._fake_process(command, b"", comm="yolo_detector")
