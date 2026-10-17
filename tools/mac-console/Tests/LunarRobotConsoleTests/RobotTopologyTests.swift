@@ -3,42 +3,35 @@ import XCTest
 @testable import LunarRobotConsole
 
 final class RobotTopologyTests: XCTestCase {
-    func testCatalogHasUniqueResolvableGroupsEdgesAndFlows() {
+    func testCatalogHasUniqueResolvableSubsystemsEdgesAndStatusNodes() {
         let nodeIDs = RobotTopologyCatalog.nodes.map(\.id)
         let edgeIDs = RobotTopologyCatalog.edges.map(\.id)
+        let subsystemIDs = RobotTopologyCatalog.subsystems.map(\.id)
         XCTAssertEqual(Set(nodeIDs).count, nodeIDs.count)
         XCTAssertEqual(Set(edgeIDs).count, edgeIDs.count)
+        XCTAssertEqual(Set(subsystemIDs).count, subsystemIDs.count)
 
-        for group in RobotTopologyCatalog.groups {
-            for id in group.nodeIDs {
-                XCTAssertNotNil(RobotTopologyCatalog.node(id), "Unknown node \(id) in group \(group.id)")
-            }
-        }
         for edge in RobotTopologyCatalog.edges {
             XCTAssertNotNil(RobotTopologyCatalog.node(edge.sourceNodeID))
             XCTAssertNotNil(RobotTopologyCatalog.node(edge.destinationNodeID))
-        }
-        for flow in RobotTopologyCatalog.flows {
-            for id in flow.nodeIDs { XCTAssertNotNil(RobotTopologyCatalog.node(id)) }
-            for id in flow.edgeIDs { XCTAssertNotNil(RobotTopologyCatalog.edge(id)) }
-            XCTAssertEqual(Set(flow.nodeIDs).count, flow.nodeIDs.count, "A node must appear once in detail graph \(flow.id)")
+            XCTAssertFalse(edge.sourcePaths.isEmpty, "Missing source evidence for \(edge.id)")
+            XCTAssertFalse(edge.sourceNote.isEmpty, "Missing relationship qualification for \(edge.id)")
         }
         for subsystem in RobotTopologyCatalog.subsystems {
-            XCTAssertNotNil(RobotTopologyCatalog.flow(subsystem.flowID))
-            for id in subsystem.statusNodeIDs { XCTAssertNotNil(RobotTopologyCatalog.node(id)) }
-        }
-        for edge in RobotTopologyCatalog.overviewEdges {
-            XCTAssertNotNil(RobotTopologyCatalog.subsystem(edge.sourceSubsystemID))
-            XCTAssertNotNil(RobotTopologyCatalog.subsystem(edge.destinationSubsystemID))
-            XCTAssertTrue(edge.supportingEdgeIDs.allSatisfy { RobotTopologyCatalog.edge($0) != nil })
+            for id in subsystem.statusNodeIDs {
+                XCTAssertNotNil(RobotTopologyCatalog.node(id), "Unknown status node \(id) in subsystem \(subsystem.id)")
+            }
+            let members = RobotTopologyCatalog.nodes.filter { $0.groupID == subsystem.id }.map(\.id)
+            XCTAssertEqual(Set(members), Set(subsystem.statusNodeIDs), "Subsystem membership and status coverage should agree for \(subsystem.id)")
         }
 
         let chassis = try! XCTUnwrap(RobotTopologyCatalog.node("chassis-bridge"))
         XCTAssertTrue(chassis.sourceNote.contains("没有 STM32 acknowledgement"))
-        XCTAssertTrue(RobotTopologyCatalog.edge("arm-driver-mcu")?.sourceNote.contains("未由 Agent 验证") == true)
+        XCTAssertTrue(RobotTopologyCatalog.edge("arm-serial-mcu-command")?.sourceNote.contains("串口设备连接与控制器接收未知") == true)
         XCTAssertEqual(RobotTopologyCatalog.edge("mission-nav2")?.evidence, .offlineExercise)
         XCTAssertTrue(RobotTopologyCatalog.node("mission-coordinator")?.sourcePaths.contains("Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py") == true)
         XCTAssertTrue(RobotTopologyCatalog.node("mission-coordinator")?.summary.contains("实体主启动流程集成状态待确认") == true)
+        XCTAssertNil(RobotTopologyCatalog.edge("estop-unconnected"), "An unverified safety interface must not be drawn as a connection")
     }
 
     func testGraphTopicNameIsObservationNotProofOfEndpointConnection() throws {
@@ -125,8 +118,10 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertEqual(evaluation.nodeStatus("yolo").signal, .unknown)
         XCTAssertTrue(evaluation.nodeStatus("yolo").possiblyAffectedDownstream)
         XCTAssertTrue(evaluation.edgeStatus("camera-yolo").possiblyAffectedDownstream)
-        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("mission-coordinator"), "Unconnected open interfaces must not propagate impact.")
-        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("arm-planner"))
+        XCTAssertTrue(evaluation.possiblyAffectedNodeIDs.contains("arm-planner"), "The confirmed pose topic makes the planner a possible downstream impact.")
+        XCTAssertNotEqual(evaluation.nodeStatus("arm-planner").signal, .abnormal, "A downstream impact must not be promoted to a direct fault.")
+        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("mission-coordinator"), "Return feedback does not extend forward impact propagation.")
+        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("physical-estop"), "Unconnected safety inputs must remain isolated.")
     }
 
     func testRgbStreamDoesNotConfirmCameraModuleSource() throws {
@@ -304,63 +299,92 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertEqual(evaluation.edgeStatus("mid360-pointlio").signal, .dataNotObserved)
     }
 
-    func testOverviewAndSubsystemDetailLayoutsContainEachNodeOnceAndConnectReferencedNodes() {
-        let overview = RobotTopologyLayout.overview(availableWidth: 1_400)
-        let displayedSubsystemIDs = RobotTopologyCatalog.subsystems.filter { $0.id != "system" }.map(\.id)
-        XCTAssertEqual(Set(displayedSubsystemIDs).count, displayedSubsystemIDs.count)
-        XCTAssertEqual(Set(overview.nodeCenters.keys), Set(displayedSubsystemIDs))
+    func testUnifiedProjectionPreservesSubsystemAndModuleLevelsWithoutDuplicateNodes() {
+        let collapsed = RobotTopologyCatalog.project(expandedSubsystemIDs: [])
+        XCTAssertEqual(Set(collapsed.nodes.map(\.id)), Set(RobotTopologyCatalog.subsystemIDs))
+        XCTAssertEqual(collapsed.nodes.count, RobotTopologyCatalog.subsystems.count)
+        XCTAssertTrue(collapsed.nodes.allSatisfy(\.isSubsystem))
 
-        for flow in RobotTopologyCatalog.flows {
-            let layout = RobotTopologyLayout.detail(flow)
-            XCTAssertEqual(Set(layout.nodeCenters.keys), Set(flow.nodeIDs), flow.id)
-            for edgeID in flow.edgeIDs {
-                guard let edge = RobotTopologyCatalog.edge(edgeID),
-                      flow.nodeIDs.contains(edge.sourceNodeID),
-                      flow.nodeIDs.contains(edge.destinationNodeID) else { continue }
-                XCTAssertNotNil(layout.nodeCenters[edge.sourceNodeID])
-                XCTAssertNotNil(layout.nodeCenters[edge.destinationNodeID])
-            }
-        }
+        let expectedEdges = Set(RobotTopologyCatalog.edges.compactMap { edge -> String? in
+            guard let source = RobotTopologyCatalog.node(edge.sourceNodeID),
+                  let destination = RobotTopologyCatalog.node(edge.destinationNodeID),
+                  RobotTopologyCatalog.subsystem(source.groupID) != nil,
+                  RobotTopologyCatalog.subsystem(destination.groupID) != nil,
+                  source.groupID != destination.groupID else { return nil }
+            return edge.id
+        })
+        XCTAssertEqual(Set(collapsed.edges.map(\.id)), expectedEdges)
+        XCTAssertFalse(collapsed.nodes.contains { $0.id == "agent" || $0.id == "ros-graph" })
+
+        let expandedPerception = RobotTopologyCatalog.project(expandedSubsystemIDs: ["perception"])
+        let perceptionMembers = Set(RobotTopologyCatalog.nodes.filter { $0.groupID == "perception" }.map(\.id))
+        XCTAssertEqual(Set(expandedPerception.nodes.filter { $0.subsystemID == "perception" }.map(\.id)), perceptionMembers)
+        XCTAssertEqual(expandedPerception.nodes.filter { $0.subsystemID == "perception" }.count, perceptionMembers.count)
+        XCTAssertTrue(expandedPerception.nodes.contains { $0.id == "localization" && $0.isSubsystem })
+        XCTAssertTrue(expandedPerception.nodes.contains { $0.id == "arm" && $0.isSubsystem })
+        XCTAssertTrue(expandedPerception.edges.contains { $0.id == "pose-arm-planner" && $0.sourceID == "pose-estimator" && $0.destinationID == "arm" })
+        XCTAssertTrue(expandedPerception.edges.contains { $0.id == "camera-yolo" && $0.sourceID == "camera" && $0.destinationID == "yolo" })
+        XCTAssertTrue(expandedPerception.edges.allSatisfy { edge in
+            expandedPerception.nodes.contains { $0.id == edge.sourceID } && expandedPerception.nodes.contains { $0.id == edge.destinationID }
+        })
+
+        let expandedAll = RobotTopologyCatalog.project(expandedSubsystemIDs: Set(RobotTopologyCatalog.subsystemIDs))
+        let expectedModuleIDs = Set(RobotTopologyCatalog.nodes.filter { RobotTopologyCatalog.subsystem($0.groupID) != nil }.map(\.id))
+        XCTAssertEqual(Set(expandedAll.nodes.map(\.id)), expectedModuleIDs)
+        XCTAssertEqual(expandedAll.nodes.count, expectedModuleIDs.count)
+        XCTAssertEqual(Set(expandedAll.edges.map(\.id)), Set(RobotTopologyCatalog.edges.map(\.id)))
+        XCTAssertEqual(Set(expandedAll.edges.map(\.id)).count, expandedAll.edges.count)
+        XCTAssertFalse(expandedAll.nodes.contains { $0.id == "agent" || $0.id == "ros-graph" })
     }
 
-    func testVerticalHomeLayoutContainsEverySubsystemOnceAndFitsAvailableWidth() {
-        let expected = Set(RobotTopologyCatalog.subsystems.filter { $0.id != "system" }.map(\.id))
-        for width in [CGFloat(640), 1_180, 1_520] {
-            let layout = RobotTopologyPresentationLayout.overview(width: width)
-            XCTAssertEqual(Set(layout.nodeFrames.keys), expected)
-            XCTAssertLessThanOrEqual(layout.size.width, width)
-            for frame in layout.nodeFrames.values {
-                XCTAssertGreaterThanOrEqual(frame.minX, 0)
-                XCTAssertLessThanOrEqual(frame.maxX, width)
-                XCTAssertGreaterThanOrEqual(frame.minY, 0)
-                XCTAssertLessThanOrEqual(frame.maxY, layout.size.height)
+    func testRecursiveVerticalLayoutsFitWidthsAndPlaceDependenciesTopDown() {
+        XCTAssertEqual(RobotTopologyPresentationLayout.orderedSubsystemIDs().last, "safety")
+        let states: [Set<String>] = [[], ["perception"], ["localization", "navigation"], Set(RobotTopologyCatalog.subsystemIDs)]
+        for expanded in states {
+            for width in [CGFloat(320), 640, 1_180, 1_520] {
+                let projection = RobotTopologyCatalog.project(expandedSubsystemIDs: expanded)
+                let layout = RobotTopologyPresentationLayout.graph(width: width, expandedSubsystemIDs: expanded)
+                XCTAssertEqual(Set(layout.nodeFrames.keys), Set(projection.nodes.map(\.id)))
+                XCTAssertLessThanOrEqual(layout.size.width, width)
+                for frame in layout.nodeFrames.values {
+                    XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                    XCTAssertLessThanOrEqual(frame.maxX, width)
+                    XCTAssertGreaterThanOrEqual(frame.minY, 0)
+                    XCTAssertLessThanOrEqual(frame.maxY, layout.size.height)
+                }
+                for header in layout.expandedHeaderFrames.values {
+                    XCTAssertGreaterThanOrEqual(header.minX, 0)
+                    XCTAssertLessThanOrEqual(header.maxX, width)
+                    XCTAssertLessThanOrEqual(header.maxY, layout.size.height)
+                }
+                XCTAssertEqual(layout.size.height, RobotTopologyPresentationLayout.graphHeight(expandedSubsystemIDs: expanded))
             }
         }
 
-        XCTAssertEqual(RobotTopologyPresentationLayout.overviewRows.flatMap { $0 }.count, expected.count)
-        XCTAssertEqual(Set(RobotTopologyPresentationLayout.overviewRows.flatMap { $0 }).count, expected.count)
-    }
+        let localization = RobotTopologyPresentationLayout.graph(width: 620, expandedSubsystemIDs: ["localization"])
+        XCTAssertLessThan(localization.nodeFrames["mid360"]!.midY, localization.nodeFrames["point-lio"]!.midY)
+        XCTAssertLessThan(localization.nodeFrames["point-lio"]!.midY, localization.nodeFrames["terrain"]!.midY)
+        XCTAssertLessThan(localization.nodeFrames["terrain"]!.midY, localization.nodeFrames["slam-toolbox"]!.midY)
+        XCTAssertLessThan(localization.nodeFrames["slam-toolbox"]!.midY, localization.nodeFrames["localization-map"]!.midY)
 
-    func testVerticalSubsystemLayoutsAreTopDownAndContainEachFlowNodeOnce() throws {
-        for flow in RobotTopologyCatalog.flows where flow.id != "system-flow" {
-            let layout = RobotTopologyPresentationLayout.detail(flow, width: 760)
-            XCTAssertEqual(Set(layout.nodeFrames.keys), Set(flow.nodeIDs), flow.id)
-            XCTAssertLessThanOrEqual(layout.size.width, 760)
-
-            for edgeID in flow.edgeIDs {
-                guard let edge = RobotTopologyCatalog.edge(edgeID),
-                      let source = layout.nodeFrames[edge.sourceNodeID],
-                      let destination = layout.nodeFrames[edge.destinationNodeID] else { continue }
-                XCTAssertLessThan(source.midY, destination.midY, "Expected top-to-bottom direction for \(edgeID)")
+        let expandedAll = RobotTopologyCatalog.project(expandedSubsystemIDs: Set(RobotTopologyCatalog.subsystemIDs))
+        let allLayout = RobotTopologyPresentationLayout.graph(width: 900, expandedSubsystemIDs: Set(RobotTopologyCatalog.subsystemIDs))
+        for edge in expandedAll.edges where !edge.isFeedback {
+            guard let source = allLayout.nodeFrames[edge.sourceID],
+                  let destination = allLayout.nodeFrames[edge.destinationID] else {
+                XCTFail("Projection edge \(edge.id) is missing a layout endpoint")
+                continue
             }
+            XCTAssertLessThan(source.midY, destination.midY, "Expected top-to-bottom flow for \(edge.id)")
         }
-
-        let localization = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
-        let layout = RobotTopologyPresentationLayout.detail(localization, width: 620)
-        XCTAssertLessThan(layout.nodeFrames["mid360"]!.midY, layout.nodeFrames["point-lio"]!.midY)
-        XCTAssertLessThan(layout.nodeFrames["point-lio"]!.midY, layout.nodeFrames["terrain"]!.midY)
-        XCTAssertLessThan(layout.nodeFrames["terrain"]!.midY, layout.nodeFrames["slam-toolbox"]!.midY)
-        XCTAssertLessThan(layout.nodeFrames["slam-toolbox"]!.midY, layout.nodeFrames["localization-map"]!.midY)
+        for edge in expandedAll.edges where edge.isFeedback {
+            guard let source = allLayout.nodeFrames[edge.sourceID],
+                  let destination = allLayout.nodeFrames[edge.destinationID] else {
+                XCTFail("Feedback edge \(edge.id) is missing a layout endpoint")
+                continue
+            }
+            XCTAssertGreaterThan(source.midY, destination.midY, "Feedback should return upward for \(edge.id)")
+        }
     }
 
     func testTopologyDisplayUsesFunctionalChineseNamesAndKeepsTechnicalNameInCatalog() {
@@ -381,13 +405,8 @@ final class RobotTopologyTests: XCTestCase {
     }
 
     func testSingleLidarFlowMatchesLaunchLaserScanSlamMapAndNav2Branches() throws {
-        let localization = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
-        let navigation = try XCTUnwrap(RobotTopologyCatalog.flow("navigation-flow"))
-        XCTAssertTrue(localization.nodeIDs.contains("scan-conversion"))
-        XCTAssertTrue(localization.nodeIDs.contains("slam-toolbox"))
-        XCTAssertTrue(localization.nodeIDs.contains("localization-map"))
-        XCTAssertTrue(localization.edgeIDs.contains("scan-slam-toolbox"))
-        XCTAssertTrue(localization.edgeIDs.contains("slam-map"))
+        let localizationNodeIDs = Set(RobotTopologyCatalog.nodes.filter { $0.groupID == "localization" }.map(\.id))
+        XCTAssertTrue(localizationNodeIDs.isSuperset(of: ["scan-conversion", "slam-toolbox", "localization-map", "map-odom-tf"]))
 
         let scanToSlam = try XCTUnwrap(RobotTopologyCatalog.edge("scan-slam-toolbox"))
         XCTAssertEqual(scanToSlam.sourceNodeID, "scan-conversion")
@@ -404,10 +423,12 @@ final class RobotTopologyTests: XCTestCase {
         let mapToNav = try XCTUnwrap(RobotTopologyCatalog.edge("map-nav2"))
         XCTAssertEqual(mapToNav.sourceNodeID, "localization-map")
         XCTAssertEqual(mapToNav.destinationNodeID, "nav2")
-        XCTAssertTrue(navigation.edgeIDs.contains("map-nav2"))
-        XCTAssertTrue(navigation.edgeIDs.contains("terrain-nav2"))
-        XCTAssertFalse(navigation.edgeIDs.contains("scan-nav2"), "The selected single-lidar launch config gives Nav2 /terrain_map; /scan feeds SLAM Toolbox.")
+        XCTAssertEqual(mapToNav.topics, ["/map"])
+        XCTAssertEqual(RobotTopologyCatalog.edge("terrain-nav2")?.topics, ["/terrain_map"])
+        XCTAssertFalse(RobotTopologyCatalog.edges.contains { $0.id == "scan-nav2" }, "The selected single-lidar launch config gives Nav2 /terrain_map; /scan feeds SLAM Toolbox.")
         XCTAssertNil(RobotTopologyCatalog.edge("scan-nav2"))
+        XCTAssertEqual(RobotTopologyCatalog.edge("map-tf-navigation")?.sourceNodeID, "map-odom-tf")
+        XCTAssertEqual(RobotTopologyCatalog.edge("map-tf-navigation")?.topics, ["/tf_static"])
 
         let root = try XCTUnwrap(repositoryRoot())
         let launch = try sourceText("Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py", root: root)
@@ -429,9 +450,9 @@ final class RobotTopologyTests: XCTestCase {
     }
 
     func testSingleLidarImuPreprocessingChainMatchesLaunchAndPointLioConfig() throws {
-        let flow = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
+        let localizationNodeIDs = Set(RobotTopologyCatalog.nodes.filter { $0.groupID == "localization" }.map(\.id))
         for nodeID in ["mid360", "imu-transform", "imu-filter", "point-lio"] {
-            XCTAssertTrue(flow.nodeIDs.contains(nodeID), "Missing IMU path node \(nodeID)")
+            XCTAssertTrue(localizationNodeIDs.contains(nodeID), "Missing IMU path node \(nodeID)")
         }
         let expectedEdges: [(String, String, String, String)] = [
             ("mid360-imu-transform", "mid360", "imu-transform", "/livox/imu"),
@@ -443,7 +464,6 @@ final class RobotTopologyTests: XCTestCase {
             XCTAssertEqual(edge.sourceNodeID, source, edgeID)
             XCTAssertEqual(edge.destinationNodeID, destination, edgeID)
             XCTAssertEqual(edge.topics, [topic], edgeID)
-            XCTAssertTrue(flow.edgeIDs.contains(edgeID), edgeID)
         }
 
         let root = try XCTUnwrap(repositoryRoot())
@@ -463,47 +483,59 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertTrue(pointLioConfig.contains("imu_topic: \"imu/data\""))
     }
 
-    func testNonSystemFlowsHaveNoUnexplainedOrphanNodes() throws {
-        let intentionalMonitorOnlyNodes = [
-            "localization-flow": Set(["lidar-stack"]),
-            "arm-flow": Set(["arm-stack"]),
-        ]
-        for flow in RobotTopologyCatalog.flows where flow.id != "system-flow" {
-            let incidentNodeIDs = Set(flow.edgeIDs.compactMap(RobotTopologyCatalog.edge).flatMap { [$0.sourceNodeID, $0.destinationNodeID] })
-            let orphanNodeIDs = Set(flow.nodeIDs).subtracting(incidentNodeIDs)
-            XCTAssertEqual(orphanNodeIDs, intentionalMonitorOnlyNodes[flow.id] ?? [], "Unexpected isolated topology node in \(flow.id)")
-        }
+    func testUnifiedRobotGraphHasOnlyDocumentedIsolatedObservationNodes() throws {
+        let robotNodes = RobotTopologyCatalog.nodes.filter { RobotTopologyCatalog.subsystem($0.groupID) != nil }
+        let incident = Set(RobotTopologyCatalog.edges.flatMap { [$0.sourceNodeID, $0.destinationNodeID] })
+        let isolated = Set(robotNodes.map(\.id).filter { !incident.contains($0) })
+        XCTAssertEqual(isolated, ["lidar-stack", "arm-stack", "physical-estop"])
+        XCTAssertTrue(RobotTopologyCatalog.node("lidar-stack")?.sourceNote.contains("模块聚合") == true)
+        XCTAssertTrue(RobotTopologyCatalog.node("arm-stack")?.sourceNote.contains("合并模块") == true)
+        XCTAssertTrue(RobotTopologyCatalog.node("physical-estop")?.sourceNote.contains("不绘制连接线") == true)
+        XCTAssertFalse(RobotTopologyCatalog.edges.contains { $0.sourceNodeID == "physical-estop" || $0.destinationNodeID == "physical-estop" })
 
-        let safetyFlow = try XCTUnwrap(RobotTopologyCatalog.flow("safety-flow"))
-        XCTAssertTrue(safetyFlow.nodeIDs.contains("agent"))
-        XCTAssertTrue(safetyFlow.nodeIDs.contains("physical-estop"))
-        XCTAssertTrue(safetyFlow.edgeIDs.contains("estop-unconnected"))
-        XCTAssertEqual(RobotTopologyCatalog.edge("estop-unconnected")?.evidence, .openInterface)
+        XCTAssertNil(RobotTopologyCatalog.edge("pose-coordinator"), "The coordinator default target differs from the perception topic")
+        XCTAssertNil(RobotTopologyCatalog.edge("arm2nav-coordinator"), "No coordinator integration has been confirmed for this optional path")
+        XCTAssertEqual(RobotTopologyCatalog.edge("arm2nav-arm-planner")?.evidence, .conditionalSourceWiring)
+        XCTAssertEqual(RobotTopologyCatalog.edge("nav2-mission-feedback")?.isFeedback, true)
+        XCTAssertEqual(RobotTopologyCatalog.edge("arm-mission-feedback")?.isFeedback, true)
+
+        let coordinator = try XCTUnwrap(RobotTopologyCatalog.node("mission-coordinator"))
+        XCTAssertTrue(coordinator.sourcePaths.contains("Nav2_rea_ws/src/p6_autonomous_mission/p6_autonomous_mission/mission_coordinator.py"))
+        XCTAssertTrue(coordinator.sourceNote.contains("不证明实体主启动流程"))
     }
 
-    func testTopologySelectionSupportsThreeInteractionLevels() {
+    func testTopologyInteractionExpandsInPlaceAndKeepsOtherSubsystemsVisible() {
         var interaction = TopologyInteractionState()
 
-        XCTAssertNil(interaction.selectedSubsystemID)
         XCTAssertNil(interaction.selectedNodeID)
-        interaction.selectSubsystem("perception")
-        XCTAssertEqual(interaction.selectedSubsystemID, "perception")
-        XCTAssertNil(interaction.selectedNodeID)
-        interaction.selectNode("camera", in: "perception")
+        XCTAssertTrue(interaction.expandedSubsystemIDs.isEmpty)
+        interaction.toggleSubsystem("perception")
+        XCTAssertEqual(interaction.expandedSubsystemIDs, ["perception"])
+        interaction.toggleSubsystem("localization")
+        XCTAssertEqual(interaction.expandedSubsystemIDs, ["perception", "localization"])
+
+        let projection = RobotTopologyCatalog.project(expandedSubsystemIDs: interaction.expandedSubsystemIDs)
+        XCTAssertTrue(projection.nodes.contains { $0.id == "camera" })
+        XCTAssertTrue(projection.nodes.contains { $0.id == "mid360" })
+        XCTAssertTrue(projection.nodes.contains { $0.id == "navigation" && $0.isSubsystem })
+        XCTAssertTrue(projection.nodes.contains { $0.id == "chassis" && $0.isSubsystem })
+
+        interaction.selectNode("camera")
         XCTAssertEqual(interaction.selectedNodeID, "camera")
-        XCTAssertEqual(interaction.selectedSubsystemID, "perception")
+        XCTAssertEqual(interaction.expandedSubsystemIDs, ["perception", "localization"])
         interaction.clearSelection()
         XCTAssertNil(interaction.selectedNodeID)
-        interaction.selectSubsystem("navigation")
-        interaction.selectNode("nav2", in: "navigation")
-        XCTAssertEqual(interaction.selectedSubsystemID, "navigation")
+
+        interaction.selectNode("nav2")
+        XCTAssertTrue(interaction.expandedSubsystemIDs.contains("navigation"), "Selecting a module must reveal its parent subsystem inline")
         XCTAssertEqual(interaction.selectedNodeID, "nav2")
-        interaction.clearSelection()
-        XCTAssertEqual(interaction.selectedSubsystemID, "navigation")
-        XCTAssertNil(interaction.selectedNodeID)
-        interaction.showOverview()
-        XCTAssertNil(interaction.selectedSubsystemID)
-        interaction.clearSelection()
+
+        interaction.toggleSubsystem("navigation")
+        XCTAssertNil(interaction.selectedNodeID, "Collapsing a selected module's parent clears the stale inspector selection")
+        XCTAssertFalse(interaction.expandedSubsystemIDs.contains("navigation"))
+        XCTAssertTrue(interaction.expandedSubsystemIDs.contains("perception"))
+        interaction.collapseAll()
+        XCTAssertTrue(interaction.expandedSubsystemIDs.isEmpty)
         XCTAssertNil(interaction.selectedNodeID)
     }
 
