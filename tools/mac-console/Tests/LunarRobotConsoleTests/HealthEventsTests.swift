@@ -38,7 +38,13 @@ final class HealthEventsTests: XCTestCase {
             XCTAssertFalse(item.module.isEmpty)
             XCTAssertFalse(item.ruleID.isEmpty)
             XCTAssertFalse(item.sourceLocation.isEmpty)
-            XCTAssertEqual(item.severity, .informational)
+            let expectedSeverity: HealthSeverity
+            switch item.state {
+            case .normal, .notRunning: expectedSeverity = .informational
+            case .unknown: expectedSeverity = .warning
+            case .abnormal: expectedSeverity = .error
+            }
+            XCTAssertEqual(item.severity, expectedSeverity)
         }
     }
 
@@ -809,8 +815,12 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", domainID: 42, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
-            vision: makeVision(rgb: stream(.rgb, status: "stale", age: 2_100), depth: stream(.depth, status: "stale", age: 2_400), yolo: stream(.yolo, status: "waiting"))
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", domainID: 42, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "unavailable", publisherCount: 0),
+                depth: stream(.depth, status: "unavailable", publisherCount: 0),
+                yolo: stream(.yolo, status: "waiting")
+            )
         )
 
         let abnormalIDs = Set(events.filter { $0.state == .abnormal }.map(\.id))
