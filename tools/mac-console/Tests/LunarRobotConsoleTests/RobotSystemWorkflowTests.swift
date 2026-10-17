@@ -81,7 +81,7 @@ final class RobotSystemWorkflowTests: XCTestCase {
 
     func testExecutionStageDoesNotClaimChassisAcknowledgementOrConnectedEstop() throws {
         let chassis = try XCTUnwrap(RobotTopologyCatalog.edge("chassis-bridge-mcu"))
-        XCTAssertTrue(chassis.sourceNote.contains("没有 STM32 acknowledgement"))
+        XCTAssertTrue(chassis.sourceNote.contains("没有 STM32 ACK"))
         let execution = try XCTUnwrap(RobotSystemWorkflowCatalog.phase("execution"))
         let estop = try XCTUnwrap(execution.lanes.flatMap(\.steps).first { $0.id == "estop-boundary" })
         XCTAssertTrue(estop.output.contains("无可验证连接"))
