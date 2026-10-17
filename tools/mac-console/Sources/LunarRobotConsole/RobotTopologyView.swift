@@ -766,7 +766,7 @@ private struct LinkTelemetryStreamEvidenceRow: View {
             Text("源时间 \(stream.sourceStamp ?? "未知") · header 对照 \(stream.headerToAgentMs.map { String(format: "%.1f ms", $0) } ?? "未知") · frame \(stream.frameId ?? "未知")")
                 .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
             if let previous = stream.previousReceivedAt {
-                Text("历史接收（仅供参考，不参与当前状态判定）\(previous) · 上一周期 #\(stream.previousSubscriptionGeneration.map(String.init) ?? "未知")")
+                Text("历史接收（仅供参考，不参与当前状态判定）\(previous) · 上一周期 #\(stream.previousSubscriptionGeneration.map { String($0) } ?? "未知")")
                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
             }
             Text("发布者 \(stream.publisherCount.map { String($0) } ?? "未知") · 端点 \(publisherSummary) · 工作区归属：未确认 · 样本尺寸 \(sampleSummary) · 接收间断 \(stream.gapEvents) 次（最近 \(stream.lastGapMs.map { "\($0) ms" } ?? "无记录")）")

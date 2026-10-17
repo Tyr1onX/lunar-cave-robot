@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import os
+import signal
 import statistics
 import subprocess
 import sys
@@ -201,12 +202,18 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
         _wait_for_health(agent)
         time.sleep(2.0)
         baseline = _sample_phase(agent.pid, baseline_seconds)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps({
+            "benchmark": "isolated_ros2_pointcloud2_agent_load",
+            "phase": "baseline_complete",
+            "ros_domain_id": int(DOMAIN_ID),
+            "baseline": baseline,
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
         publisher = subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--publisher"],
             env=os.environ.copy(),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
@@ -222,8 +229,12 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
             raise TimeoutError("Synthetic PointCloud2 data did not reach the Agent")
 
         load = _sample_phase(agent.pid, load_seconds)
-        publisher.terminate()
-        publisher.wait(timeout=5.0)
+        publisher.send_signal(signal.SIGINT)
+        try:
+            publisher.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            publisher.terminate()
+            publisher.wait(timeout=5.0)
         recovery_deadline = time.monotonic() + 8.0
         recovered_to_unavailable = False
         while time.monotonic() < recovery_deadline:

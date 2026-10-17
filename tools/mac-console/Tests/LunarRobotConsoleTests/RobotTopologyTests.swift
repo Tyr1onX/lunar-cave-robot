@@ -185,8 +185,8 @@ final class RobotTopologyTests: XCTestCase {
             ("pointlio_odometry", "/odometry", "streaming"),
             ("cloud_registered", "/cloud_registered", "streaming"),
         ])
-        XCTAssertEqual(telemetry.streams.first?.subscriptionGeneration, 1)
-        XCTAssertEqual(telemetry.streams.first?.subscriptionStartedAt, "2026-10-17T00:59:58.000Z")
+        XCTAssertEqual(telemetry.streams.first?.subscriptionGeneration, Optional(1))
+        XCTAssertEqual(telemetry.streams.first?.subscriptionStartedAt, Optional("2026-10-17T00:59:58.000Z"))
         let context = try makeContext(linkTelemetry: telemetry)
         let evaluation = TopologyStatusResolver.evaluate(context)
 
