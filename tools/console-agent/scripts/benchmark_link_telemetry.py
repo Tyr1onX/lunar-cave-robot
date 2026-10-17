@@ -35,6 +35,7 @@ def _publisher_main() -> int:
     if os.environ.get("ROS_DOMAIN_ID") != DOMAIN_ID or os.environ.get("ROS_LOCALHOST_ONLY") != "1":
         raise SystemExit("Synthetic ROS publisher requires ROS_DOMAIN_ID=47 and ROS_LOCALHOST_ONLY=1")
     import rclpy
+    from rclpy.executors import ExternalShutdownException
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import PointCloud2
 
@@ -58,12 +59,13 @@ def _publisher_main() -> int:
     node.create_timer(1.0 / PUBLISH_HZ, publish)
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_publisher(publisher)
-        node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            node.destroy_publisher(publisher)
+            node.destroy_node()
+            rclpy.shutdown()
     return 0
 
 
@@ -196,20 +198,20 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
     agent = subprocess.Popen(
         [sys.executable, "-m", "console_agent"],
         env=agent_env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
     )
     publisher: subprocess.Popen[Any] | None = None
     try:
         _wait_for_health(agent)
         time.sleep(2.0)
         baseline = _sample_phase(agent.pid, baseline_seconds)
+        baseline_telemetry = _http_json("/v1/telemetry")
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps({
             "benchmark": "isolated_ros2_pointcloud2_agent_load",
             "phase": "baseline_complete",
             "ros_domain_id": int(DOMAIN_ID),
             "baseline": baseline,
+            "baseline_telemetry": baseline_telemetry,
         }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
         publisher = subprocess.Popen(
@@ -217,18 +219,31 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
             env=os.environ.copy(),
             stdout=subprocess.DEVNULL,
         )
+        last_telemetry: dict[str, Any] | None = None
         deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline:
             if publisher.poll() is not None:
                 raise RuntimeError(f"Synthetic publisher exited with status {publisher.returncode}")
             telemetry = _http_json("/v1/telemetry")
             if telemetry is not None:
+                last_telemetry = telemetry
                 stream = next((item for item in telemetry.get("streams", []) if item.get("topic") == TOPIC), None)
                 if stream and stream.get("status") == "streaming":
                     break
             time.sleep(0.25)
         else:
-            raise TimeoutError("Synthetic PointCloud2 data did not reach the Agent")
+            stream = None if last_telemetry is None else next(
+                (item for item in last_telemetry.get("streams", []) if item.get("topic") == TOPIC), None
+            )
+            diagnostic = {
+                "agent_health": _http_json("/health"),
+                "graph_status": None if last_telemetry is None else last_telemetry.get("graph_status"),
+                "graph_reason": None if last_telemetry is None else last_telemetry.get("graph_reason"),
+                "graph_age_ms": None if last_telemetry is None else last_telemetry.get("graph_age_ms"),
+                "domain_id": None if last_telemetry is None else last_telemetry.get("domain_id"),
+                "stream": stream,
+            }
+            raise TimeoutError("Synthetic PointCloud2 data did not reach the Agent: " + json.dumps(diagnostic, sort_keys=True))
 
         load = _sample_phase(agent.pid, load_seconds)
         publisher.send_signal(signal.SIGINT)
