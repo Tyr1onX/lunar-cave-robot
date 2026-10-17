@@ -88,7 +88,7 @@ struct ConsoleRootView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 240)
         } detail: {
             VStack(spacing: 0) {
-                if model.section != .simulation && model.section != .armPreview {
+                if model.section != .simulation && model.section != .armPreview && model.section != .topology {
                     ConsoleHeader(model: model)
                 }
                 ScrollView {
