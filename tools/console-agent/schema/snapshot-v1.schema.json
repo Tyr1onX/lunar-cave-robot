@@ -77,6 +77,10 @@
         "status": {"enum": ["ok", "unknown"]},
         "source": {"const": "nuc-read-only-workspace-and-process-observer"},
         "collected_at": {"type": "string", "format": "date-time"},
+        "expectation_status": {"enum": ["configured", "unconfigured", "invalid"]},
+        "expectation_source": {"type": ["string", "null"]},
+        "expectation_observed_at": {"type": "string", "format": "date-time"},
+        "expectation_error": {"type": ["string", "null"]},
         "process_scan": {
           "type": "object", "required": ["status", "scope", "source", "observed_at", "reason"], "additionalProperties": false,
           "properties": {
@@ -165,7 +169,10 @@
         "packages": {"type": "array", "items": {"type": "string"}},
         "source_status": {"enum": ["present", "unknown"]}, "runtime_status": {"enum": ["running", "not_running", "unknown"]},
         "execution_state": {"enum": ["not_running", "simulation_running", "hardware_declared_running", "unknown"]},
-        "run_expectation": {"const": "unconfigured"},
+        "run_expectation": {"enum": ["confirmed", "unconfigured", "unknown"]},
+        "run_expectation_source": {"type": ["string", "null"]},
+        "run_expectation_observed_at": {"type": "string", "format": "date-time"},
+        "run_expectation_reason": {"type": "string"},
         "interface_topics": {"type": "array", "items": {"type": "string"}},
         "observed_interface_topics": {"type": "array", "items": {"type": "string"}},
         "reason": {"type": "string"}
