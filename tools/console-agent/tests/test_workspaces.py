@@ -13,6 +13,7 @@ from console_agent.workspaces import (
     _INVENTORY_CACHE,
     _CACHE_LOCK,
     _graph_relationship,
+    _workspace_specs,
     collect_workspaces,
 )
 
@@ -69,6 +70,23 @@ class WorkspaceInventoryTests(unittest.TestCase):
         proc = Path(self.temporary.name) / "empty-proc"
         proc.mkdir(exist_ok=True)
         return proc
+
+    def test_original_navigation_chassis_maps_to_current_bridge_not_arm_driver(self) -> None:
+        with patch.dict("os.environ", {"LUNAR_CONSOLE_REPO": "/tmp/lunar-console-topology-test"}):
+            specs = _workspace_specs()
+
+        original_navigation = next(spec for spec in specs if spec.id == "original-navigation")
+        chassis = next(module for module in original_navigation.modules if module.id == "chassis")
+        navigation = next(module for module in original_navigation.modules if module.id == "navigation")
+        original_arm_vision = next(spec for spec in specs if spec.id == "original-arm-vision")
+        arm = next(module for module in original_arm_vision.modules if module.id == "arm")
+
+        self.assertEqual(chassis.packages, ("chassis_serial_bridge",))
+        self.assertEqual(chassis.interface_topics, ("/cmd_vel", "/chassis/serial_link_status"))
+        self.assertNotIn("rm_serial_driver", chassis.packages)
+        self.assertNotIn("/cmd_vel_chassis", navigation.interface_topics)
+        self.assertIn("/cmd_vel", navigation.interface_topics)
+        self.assertIn("rm_serial_driver", arm.packages)
 
     def test_source_presence_is_separate_from_runtime_expectation(self) -> None:
         reading = collect_workspaces(specs=(self.spec,), proc_root=self._empty_proc())

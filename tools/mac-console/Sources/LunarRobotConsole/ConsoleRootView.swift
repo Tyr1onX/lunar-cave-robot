@@ -94,6 +94,7 @@ struct ConsoleRootView: View {
                 ScrollView {
                     Group {
                         switch model.section {
+                        case .topology: RobotTopologyView(model: model)
                         case .cockpit: TestCockpitView(model: model)
                         case .moduleTests: ModuleTestsView(model: moduleTests)
                         case .simulation: SimulationDriveView(model: simulator)

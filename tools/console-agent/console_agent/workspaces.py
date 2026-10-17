@@ -87,8 +87,8 @@ def _workspace_specs() -> tuple[WorkspaceSpec, ...]:
             source_roots=(Path("/home/tzb/Nav2_rea_ws"),),
             modules=(
                 ModuleSpec("lidar", "雷达与定位", ("livox_ros_driver2", "point_lio", "fast_lio", "dlio"), ("/livox/lidar", "/imu/data", "/terrain_map")),
-                ModuleSpec("navigation", "Nav2 导航", ("bringup", "rm_navigation", "behavior_ext_plugins"), ("/scan", "/map", "/cmd_vel", "/cmd_vel_chassis")),
-                ModuleSpec("chassis", "底盘", ("rm_serial_driver",), ("/cmd_vel_chassis",)),
+                ModuleSpec("navigation", "Nav2 导航", ("bringup", "rm_navigation", "behavior_ext_plugins"), ("/scan", "/map", "/cmd_vel")),
+                ModuleSpec("chassis", "底盘", ("chassis_serial_bridge",), ("/cmd_vel", "/chassis/serial_link_status")),
             ),
         ),
     )
