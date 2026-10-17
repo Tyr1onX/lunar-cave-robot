@@ -1,7 +1,8 @@
 import SwiftUI
 
-struct RobotTopologyView: View {
+struct AdvancedRobotTopologyView: View {
     @ObservedObject var model: ConsoleModel
+    let onReturn: () -> Void
     @State private var interaction = TopologyInteractionState()
 
     private var context: TopologyRuntimeContext {
@@ -46,6 +47,13 @@ struct RobotTopologyView: View {
 
     private var pageHeading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Button(action: onReturn) {
+                Label("能力首页", systemImage: "chevron.left")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Palette.muted)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("topology.advanced.return")
             Text("机器人整机链路")
                 .font(.system(size: 24, weight: .semibold, design: .rounded))
             Text("从环境感知到执行机构与反馈")
