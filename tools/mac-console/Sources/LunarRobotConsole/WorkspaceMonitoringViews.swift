@@ -348,12 +348,12 @@ private func runModeEvidenceLabel(_ evidence: String?) -> String {
 enum WorkspaceExecutionPresentation {
     static func label(executionState: String?, runtimeStatus: String?) -> String {
         switch executionState {
-        case "not_running": return "未启动（扫描范围内未发现关联进程）"
+        case "not_running": return "未发现关联进程（Agent UID 可见范围）"
         case "simulation_running": return "仿真运行（进程环境声明）"
         case "hardware_declared_running": return "实体模式已声明 · 硬件状态未知"
         default:
             switch runtimeStatus {
-            case "not_running": return "未启动（旧版 Agent 扫描结果）"
+            case "not_running": return "未发现关联进程（旧版 Agent 扫描结果）"
             case "running": return "进程已发现 · 执行模式未知"
             default: return "状态未知"
             }

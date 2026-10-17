@@ -6,7 +6,7 @@ final class ModelDecodingTests: XCTestCase {
     func testWorkspaceExecutionPresentationKeepsModeAndHardwareClaimsConservative() {
         XCTAssertEqual(
             WorkspaceExecutionPresentation.label(executionState: "not_running", runtimeStatus: "not_running"),
-            "未启动（扫描范围内未发现关联进程）"
+            "未发现关联进程（Agent UID 可见范围）"
         )
         XCTAssertEqual(
             WorkspaceExecutionPresentation.label(executionState: "simulation_running", runtimeStatus: "running"),
@@ -22,7 +22,7 @@ final class ModelDecodingTests: XCTestCase {
         )
         XCTAssertEqual(
             WorkspaceExecutionPresentation.label(executionState: nil, runtimeStatus: "not_running"),
-            "未启动（旧版 Agent 扫描结果）"
+            "未发现关联进程（旧版 Agent 扫描结果）"
         )
     }
 
@@ -40,7 +40,7 @@ final class ModelDecodingTests: XCTestCase {
                 executionState: inventory.entries.first?.executionState,
                 runtimeStatus: inventory.entries.first?.runtimeStatus
             ),
-            "未启动（旧版 Agent 扫描结果）"
+            "未发现关联进程（旧版 Agent 扫描结果）"
         )
     }
 
