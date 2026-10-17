@@ -498,7 +498,7 @@ private struct WorkflowInterfaceList: View {
             ForEach(edgeIDs, id: \.self) { id in
                 if let edge = RobotTopologyCatalog.edge(id) {
                     HStack(alignment: .top, spacing: 5) {
-                        Image(systemName: "arrow.right")
+                        Image(systemName: isFeedback ? "arrow.left" : "arrow.right")
                             .font(.system(size: 7, weight: .semibold))
                             .foregroundStyle(edge.evidence == .conditionalSourceWiring ? Palette.warning : Palette.accent.opacity(0.8))
                             .padding(.top, 2)

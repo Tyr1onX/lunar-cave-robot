@@ -5,7 +5,7 @@ final class RobotSystemWorkflowTests: XCTestCase {
     func testFourStagesAndBothPrimaryProcessingLanesArePresent() throws {
         XCTAssertEqual(RobotSystemWorkflowCatalog.phases.map(\.id), ["perception", "planning", "control", "execution"])
         XCTAssertEqual(RobotSystemWorkflowCatalog.phases.map(\.number), ["01", "02", "03", "04"])
-        XCTAssertEqual(RobotSystemWorkflowCatalog.phases.map(\.title), ["感知与目标识别", "规划与决策", "运动控制接口", "执行与反馈"])
+        XCTAssertEqual(RobotSystemWorkflowCatalog.phases.map(\.title), ["感知与目标识别", "规划与决策", "运动控制", "执行与反馈"])
 
         let perception = try XCTUnwrap(RobotSystemWorkflowCatalog.phase("perception"))
         XCTAssertEqual(perception.lanes.map(\.id), ["vision", "localization"])
@@ -50,6 +50,20 @@ final class RobotSystemWorkflowTests: XCTestCase {
             XCTAssertFalse(step.nodeIDs.isEmpty, step.id)
             XCTAssertTrue(step.nodeIDs.allSatisfy { RobotTopologyCatalog.node($0) != nil }, step.id)
         }
+    }
+
+    func testPointCloudAndIMUArePresentedAsParallelInputsToPointLIO() throws {
+        let perception = try XCTUnwrap(RobotSystemWorkflowCatalog.phase("perception"))
+        let localization = try XCTUnwrap(perception.lanes.first { $0.id == "localization" })
+        let sensors = try XCTUnwrap(localization.steps.first { $0.id == "sensor-inputs" })
+        let pointLIO = try XCTUnwrap(localization.steps.first { $0.id == "localization-estimate" })
+
+        XCTAssertTrue(sensors.nodeIDs.contains("mid360"))
+        XCTAssertTrue(sensors.nodeIDs.contains("imu-transform"))
+        XCTAssertTrue(sensors.nodeIDs.contains("imu-filter"))
+        XCTAssertTrue(sensors.note.contains("并行支路"))
+        XCTAssertTrue(pointLIO.incomingEdgeIDs.contains("mid360-pointlio"))
+        XCTAssertTrue(pointLIO.incomingEdgeIDs.contains("imu-filter-pointlio"))
     }
 
     func testDefaultOptionalAndOfflineLinksKeepTheirEvidenceGrades() throws {

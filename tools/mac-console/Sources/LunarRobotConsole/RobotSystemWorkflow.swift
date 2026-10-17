@@ -62,8 +62,7 @@ enum RobotSystemWorkflowCatalog {
                     .init(id: "optional-visual-suggestion", title: "可选视觉导航建议", input: "检测结果与相机数据", process: "arm2nav 可生成建议状态。", output: "可选建议接口；默认流程未启用", nodeIDs: ["arm2nav"], incomingEdgeIDs: ["yolo-arm2nav"], note: "bring_launch 默认 use_arm2nav=false，planner 默认 sentry_mode=false。",),
                 ]),
                 .init(id: "localization", title: "雷达定位与地图", summary: "MID-360 点云 / IMU → Point-LIO → 障碍数据与在线地图", steps: [
-                    .init(id: "lidar-input", title: "采集雷达点云", input: "周围环境的激光测量", process: "MID-360 驱动在选定单雷达 Launch 中提供点云。", output: "/livox/lidar", nodeIDs: ["mid360"], incomingEdgeIDs: [], note: "进程或 Topic 可见不能证明雷达供电、测量质量或实体安装状态。"),
-                    .init(id: "imu-conditioning", title: "整理惯性测量", input: "/livox/imu", process: "先按坐标配置变换，再经过互补滤波。", output: "/imu/data", nodeIDs: ["imu-transform", "imu-filter"], incomingEdgeIDs: ["mid360-imu-transform", "imu-transform-filter"], note: "这是选定 Launch 的两级处理路径。"),
+                    .init(id: "sensor-inputs", title: "采集雷达与惯性数据", input: "MID-360 的周围环境测量与运动测量", process: "点云保留为 Point-LIO 直接输入；IMU 单独经过坐标变换和互补滤波。", output: "/livox/lidar 与整理后的 /imu/data", nodeIDs: ["mid360", "imu-transform", "imu-filter"], incomingEdgeIDs: ["mid360-imu-transform", "imu-transform-filter"], note: "该卡片中点云与 IMU 是并行支路，不是串行经过同一处理链。Topic 可见不能证明设备供电或测量质量。"),
                     .init(id: "localization-estimate", title: "估计位置与移动", input: "/livox/lidar 与 /imu/data", process: "Point-LIO 融合点云和惯性测量。", output: "/odometry、/cloud_registered 与源码定义的定位 TF", nodeIDs: ["point-lio"], incomingEdgeIDs: ["mid360-pointlio", "imu-filter-pointlio"], note: "Agent 不检查点云质量、里程计精度或 TF frame pair。"),
                     .init(id: "terrain-filter", title: "整理地形与障碍", input: "注册点云与里程计", process: "地形分析过滤导航侧点云。", output: "/terrain_map", nodeIDs: ["terrain"], incomingEdgeIDs: ["pointlio-terrain"], note: "同一 /terrain_map 还会直接提供给 Nav2 点云障碍层。"),
                     .init(id: "scan-generation", title: "生成地图扫描输入", input: "/terrain_map", process: "点云转换节点生成平面 LaserScan。", output: "/scan", nodeIDs: ["scan-conversion"], incomingEdgeIDs: ["terrain-scan"], note: "该 Launch 中 /scan 是 SLAM Toolbox 的输入，不是 Nav2 的障碍点云输入。"),
@@ -93,8 +92,8 @@ enum RobotSystemWorkflowCatalog {
         .init(
             id: "control",
             number: "03",
-            title: "运动控制接口",
-            summary: "主机桥接程序把软件请求编码为通信帧；这里展示接口，不执行或发送控制。",
+            title: "运动控制",
+            summary: "主机桥接程序把软件请求编码为通信帧；Console 仅展示接口，不执行或发送控制。",
             lanes: [
                 .init(id: "arm-host-bridge", title: "机械臂主机桥", summary: "关节轨迹与串口 / 状态接口", steps: [
                     .init(id: "arm-serial-bridge", title: "转换机械臂通信帧", input: "/tzb_catch/arm_joint_command 与控制器返回帧", process: "旧版 rm_serial_driver 解析 / 编码串口协议，并发布主机侧关节与安全状态 Topic。", output: "串口帧、/serial/arm_joint_state、/serial/arm_safety/status", nodeIDs: ["arm-serial", "arm-safety-status"], incomingEdgeIDs: ["arm-planner-driver", "arm-driver-safety", "arm-serial-feedback", "arm-mcu-serial-feedback"], note: "协议源码不能证明当前串口连接、固件版本或物理反馈有效。")
