@@ -45,3 +45,14 @@ jobs:
 
       - name: Run Console tests
         run: swift test --package-path tools/mac-console
+
+      - name: Build Console app bundle
+        run: tools/mac-console/Scripts/build-app.sh
+
+      - name: Upload Console app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunar-robot-console-${{ github.sha }}
+          path: tools/mac-console/.build/Lunar Robot Console.app/
+          if-no-files-found: error
+          retention-days: 14
