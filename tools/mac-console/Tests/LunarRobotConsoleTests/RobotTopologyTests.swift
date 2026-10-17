@@ -323,6 +323,63 @@ final class RobotTopologyTests: XCTestCase {
         }
     }
 
+    func testVerticalHomeLayoutContainsEverySubsystemOnceAndFitsAvailableWidth() {
+        let expected = Set(RobotTopologyCatalog.subsystems.filter { $0.id != "system" }.map(\.id))
+        for width in [CGFloat(640), 1_180, 1_520] {
+            let layout = RobotTopologyPresentationLayout.overview(width: width)
+            XCTAssertEqual(Set(layout.nodeFrames.keys), expected)
+            XCTAssertLessThanOrEqual(layout.size.width, width)
+            for frame in layout.nodeFrames.values {
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertLessThanOrEqual(frame.maxX, width)
+                XCTAssertGreaterThanOrEqual(frame.minY, 0)
+                XCTAssertLessThanOrEqual(frame.maxY, layout.size.height)
+            }
+        }
+
+        XCTAssertEqual(RobotTopologyPresentationLayout.overviewRows.flatMap { $0 }.count, expected.count)
+        XCTAssertEqual(Set(RobotTopologyPresentationLayout.overviewRows.flatMap { $0 }).count, expected.count)
+    }
+
+    func testVerticalSubsystemLayoutsAreTopDownAndContainEachFlowNodeOnce() throws {
+        for flow in RobotTopologyCatalog.flows where flow.id != "system-flow" {
+            let layout = RobotTopologyPresentationLayout.detail(flow, width: 760)
+            XCTAssertEqual(Set(layout.nodeFrames.keys), Set(flow.nodeIDs), flow.id)
+            XCTAssertLessThanOrEqual(layout.size.width, 760)
+
+            for edgeID in flow.edgeIDs {
+                guard let edge = RobotTopologyCatalog.edge(edgeID),
+                      let source = layout.nodeFrames[edge.sourceNodeID],
+                      let destination = layout.nodeFrames[edge.destinationNodeID] else { continue }
+                XCTAssertLessThan(source.midY, destination.midY, "Expected top-to-bottom direction for \(edgeID)")
+            }
+        }
+
+        let localization = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
+        let layout = RobotTopologyPresentationLayout.detail(localization, width: 620)
+        XCTAssertLessThan(layout.nodeFrames["mid360"]!.midY, layout.nodeFrames["point-lio"]!.midY)
+        XCTAssertLessThan(layout.nodeFrames["point-lio"]!.midY, layout.nodeFrames["terrain"]!.midY)
+        XCTAssertLessThan(layout.nodeFrames["terrain"]!.midY, layout.nodeFrames["slam-toolbox"]!.midY)
+        XCTAssertLessThan(layout.nodeFrames["slam-toolbox"]!.midY, layout.nodeFrames["localization-map"]!.midY)
+    }
+
+    func testTopologyDisplayUsesFunctionalChineseNamesAndKeepsTechnicalNameInCatalog() {
+        XCTAssertEqual(TopologyFriendlyNames.node("yolo"), "识别目标")
+        XCTAssertEqual(TopologyFriendlyNames.node("point-lio"), "判断机器人位置")
+        XCTAssertEqual(TopologyFriendlyNames.node("slam-toolbox"), "生成地图")
+        XCTAssertEqual(TopologyFriendlyNames.node("nav2"), "自动规划导航路线")
+        XCTAssertEqual(TopologyFriendlyNames.node("chassis-controller"), "底盘控制板")
+        XCTAssertEqual(RobotTopologyCatalog.node("yolo")?.title, "YOLO 检测")
+        XCTAssertEqual(RobotTopologyCatalog.node("slam-toolbox")?.title, "SLAM Toolbox")
+    }
+
+    func testNodeEvidenceMovesBelowGraphWhenWindowNarrows() {
+        XCTAssertFalse(TopologyInspectorPlacement.usesTrailingPane(width: 820))
+        XCTAssertFalse(TopologyInspectorPlacement.usesTrailingPane(width: 1_049))
+        XCTAssertTrue(TopologyInspectorPlacement.usesTrailingPane(width: 1_050))
+        XCTAssertTrue(TopologyInspectorPlacement.usesTrailingPane(width: 1_360))
+    }
+
     func testSingleLidarFlowMatchesLaunchLaserScanSlamMapAndNav2Branches() throws {
         let localization = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
         let navigation = try XCTUnwrap(RobotTopologyCatalog.flow("navigation-flow"))
