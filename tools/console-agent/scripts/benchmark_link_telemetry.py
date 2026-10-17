@@ -190,7 +190,9 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
 
     repo_root = Path(__file__).resolve().parents[3]
     agent_env = os.environ.copy()
-    agent_env["PYTHONPATH"] = str(repo_root / "tools" / "console-agent")
+    agent_python_path = str(repo_root / "tools" / "console-agent")
+    ros_python_path = agent_env.get("PYTHONPATH", "")
+    agent_env["PYTHONPATH"] = os.pathsep.join(path for path in (agent_python_path, ros_python_path) if path)
     agent = subprocess.Popen(
         [sys.executable, "-m", "console_agent"],
         env=agent_env,
