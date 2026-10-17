@@ -247,6 +247,32 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIsNone(reading["process_scan"]["reason"])
         self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
 
+    def test_unreadable_observed_sd_pam_identity_and_argv_pair_is_excluded(self) -> None:
+        proc = self._fake_process(
+            b"(sd-pam)\0",
+            b"",
+            comm="(sd-pam)",
+            cwd=Path(self.temporary.name),
+        )
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "ok")
+        self.assertIsNone(reading["process_scan"]["reason"])
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "not_running")
+
+    def test_sd_pam_comm_with_other_argv_still_requires_readable_process_evidence(self) -> None:
+        command = f"{self.root}/install/yolo_node/lib/yolo_node/yolo_detector\0".encode()
+        proc = self._fake_process(command, b"", comm="(sd-pam)")
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "partial")
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "running")
+        self.assertEqual(reading["workspaces"][0]["processes"][0]["domain_evidence"], "unavailable")
+
     def test_unreadable_ssh_session_wrapper_does_not_make_scan_partial(self) -> None:
         proc = self._fake_process(
             b"sshd: operator@notty\0",
