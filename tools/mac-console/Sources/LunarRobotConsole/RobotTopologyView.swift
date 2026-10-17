@@ -34,6 +34,7 @@ private func signalColor(_ signal: TopologySignal) -> Color {
 struct TopologyNodeEvidencePanel: View {
     let node: TopologyNodeDefinition
     let status: TopologyElementStatus
+    let evaluation: TopologyEvaluation
     let context: TopologyRuntimeContext
     let linkTelemetryMessage: String?
     let onClose: () -> Void
@@ -63,6 +64,8 @@ struct TopologyNodeEvidencePanel: View {
                     .help("关闭节点详情")
                     .accessibilityIdentifier("topology.node-evidence.close")
                 }
+
+                neighborhoodSection
 
                 evidenceSection(title: "结构依据", source: node.sourceNote, paths: node.sourcePaths)
 
@@ -110,6 +113,46 @@ struct TopologyNodeEvidencePanel: View {
         case .historical: return "历史，不参与实时判定"
         case .expired: return "过期，不参与实时判定"
         case .unavailable: return "不可用"
+        }
+    }
+
+    private var neighborhoodSection: some View {
+        let incoming = RobotTopologyCatalog.edges.filter { $0.destinationNodeID == node.id }
+        let outgoing = RobotTopologyCatalog.edges.filter { $0.sourceNodeID == node.id }
+        return VStack(alignment: .leading, spacing: 8) {
+            evidenceHeading("当前位置 · \(TopologyFriendlyNames.subsystem(node.groupID))")
+            relationshipGroup(title: "上游输入", edges: incoming, sourceNode: true)
+            relationshipGroup(title: "下游输出", edges: outgoing, sourceNode: false)
+        }
+    }
+
+    private func relationshipGroup(title: String, edges: [TopologyEdgeDefinition], sourceNode: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.muted)
+            if edges.isEmpty {
+                Text("没有已验证的连接关系")
+                    .font(.system(size: 9)).foregroundStyle(Palette.muted)
+            } else {
+                ForEach(edges) { edge in
+                    let peerID = sourceNode ? edge.sourceNodeID : edge.destinationNodeID
+                    let edgeStatus = evaluation.edgeStatus(edge.id)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("\(sourceNode ? "←" : "→") \(TopologyFriendlyNames.node(peerID)) · \(edge.label)")
+                                .font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            TopologyStatusBadge(signal: edgeStatus.signal)
+                        }
+                        Text("\(edge.evidence.rawValue)\(edge.topics.isEmpty ? "" : " · " + edge.topics.joined(separator: " / "))")
+                            .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(edgeStatus.note)
+                            .font(.system(size: 8)).foregroundStyle(Palette.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
     }
 

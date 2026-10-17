@@ -17,12 +17,6 @@ struct RobotTopologyView: View {
     }
 
     private var evaluation: TopologyEvaluation { TopologyStatusResolver.evaluate(context) }
-    private var selectedSubsystem: TopologySubsystemDefinition? {
-        interaction.selectedSubsystemID.flatMap(RobotTopologyCatalog.subsystem)
-    }
-    private var selectedFlow: TopologyFlowDefinition? {
-        selectedSubsystem.flatMap { RobotTopologyCatalog.flow($0.flowID) }
-    }
     private var selectedNode: TopologyNodeDefinition? {
         interaction.selectedNodeID.flatMap(RobotTopologyCatalog.node)
     }
@@ -30,13 +24,22 @@ struct RobotTopologyView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             pageHeading
-
-            if let selectedSubsystem, let selectedFlow {
-                subsystemHeading(selectedSubsystem)
-                detailContent(selectedFlow, subsystemID: selectedSubsystem.id)
-            } else {
-                overview
+            HStack(spacing: 8) {
+                Text("点击子系统原位展开；点击模块查看证据")
+                Text("·").foregroundStyle(Palette.muted)
+                evidenceLegend
+                Spacer()
+                if !interaction.expandedSubsystemIDs.isEmpty {
+                    Button("全部收起") { interaction.collapseAll() }
+                        .font(.system(size: 10, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Palette.muted)
+                        .accessibilityIdentifier("topology.collapse-all")
+                }
             }
+            .font(.system(size: 10))
+            .foregroundStyle(Palette.muted)
+            topologyGraph
         }
         .accessibilityIdentifier("robot-topology.view")
     }
@@ -53,76 +56,113 @@ struct RobotTopologyView: View {
         .accessibilityIdentifier("topology.page-heading")
     }
 
-    private var overview: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Text("整机总览").font(.system(size: 12, weight: .medium))
-                Text("·").foregroundStyle(Palette.muted)
-                Text("选择子系统查看内部链路").font(.system(size: 10)).foregroundStyle(Palette.muted)
-                Spacer()
-                evidenceLegend
-            }
+    private var topologyGraph: some View {
+        let projection = RobotTopologyCatalog.project(expandedSubsystemIDs: interaction.expandedSubsystemIDs)
+        let nodes = experienceNodes(projection)
+        let links = experienceLinks(projection)
+        let headers = expandedHeaders(projection)
+        let graphHeight = RobotTopologyPresentationLayout.graphHeight(expandedSubsystemIDs: interaction.expandedSubsystemIDs)
 
-            GeometryReader { geometry in
-                let layout = RobotTopologyPresentationLayout.overview(width: geometry.size.width)
-                TopologyVerticalDiagram(
-                    layout: layout,
-                    nodes: overviewNodes,
-                    links: overviewLinks,
-                    routeSkippedEdges: false,
-                    accessibilityID: "topology.overview.canvas"
-                )
-                .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
+        return TopologyAdaptiveInspectorLayout(
+            expandedSubsystemIDs: interaction.expandedSubsystemIDs,
+            hasInspector: selectedNode != nil
+        ) {
+            TopologyGraphCanvas(
+                expandedSubsystemIDs: interaction.expandedSubsystemIDs,
+                nodes: nodes,
+                expandedHeaders: headers,
+                links: links,
+                height: graphHeight
+            )
+            if let selectedNode {
+                nodeEvidence(selectedNode)
             }
-            .frame(height: RobotTopologyPresentationLayout.overviewHeight)
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    private var overviewNodes: [TopologyExperienceNode] {
-        RobotTopologyPresentationLayout.overviewRows.flatMap { $0 }.compactMap { id in
-            guard let subsystem = RobotTopologyCatalog.subsystem(id) else { return nil }
-            let status = subsystemStatus(subsystem)
+    private func experienceNodes(_ projection: TopologyGraphProjection) -> [TopologyExperienceNode] {
+        projection.nodes.compactMap { projected in
+            if projected.isSubsystem {
+                guard let subsystem = RobotTopologyCatalog.subsystem(projected.subsystemID) else { return nil }
+                return TopologyExperienceNode(
+                    id: projected.id,
+                    title: TopologyFriendlyNames.subsystem(subsystem.id),
+                    status: subsystemStatus(subsystem),
+                    selected: false,
+                    isSubsystem: true,
+                    action: { interaction.toggleSubsystem(subsystem.id) }
+                )
+            }
+            guard let nodeID = projected.moduleNodeID,
+                  RobotTopologyCatalog.node(nodeID) != nil else { return nil }
             return TopologyExperienceNode(
-                id: subsystem.id,
-                title: TopologyFriendlyNames.subsystem(subsystem.id),
-                status: status,
-                selected: false,
-                isSubsystem: true,
-                action: { interaction.selectSubsystem(subsystem.id) }
+                id: projected.id,
+                title: TopologyFriendlyNames.node(nodeID),
+                status: evaluation.nodeStatus(nodeID),
+                selected: interaction.selectedNodeID == nodeID,
+                isSubsystem: false,
+                action: { interaction.selectNode(nodeID) }
             )
         }
     }
 
-    private var overviewLinks: [TopologyExperienceLink] {
-        RobotTopologyCatalog.overviewEdges.compactMap { edge in
-            guard RobotTopologyCatalog.subsystem(edge.sourceSubsystemID) != nil,
-                  RobotTopologyCatalog.subsystem(edge.destinationSubsystemID) != nil else { return nil }
+    private func expandedHeaders(_ projection: TopologyGraphProjection) -> [TopologyExperienceSubsystemHeader] {
+        interaction.expandedSubsystemIDs.compactMap { id in
+            guard let subsystem = RobotTopologyCatalog.subsystem(id),
+                  projection.nodes.contains(where: { $0.subsystemID == id }) else { return nil }
+            return TopologyExperienceSubsystemHeader(
+                id: id,
+                title: TopologyFriendlyNames.subsystem(id),
+                symbol: subsystem.symbol,
+                status: subsystemStatus(subsystem),
+                action: { interaction.toggleSubsystem(id) }
+            )
+        }
+    }
+
+    private func experienceLinks(_ projection: TopologyGraphProjection) -> [TopologyExperienceLink] {
+        projection.edges.compactMap { projected in
+            guard let source = RobotTopologyCatalog.edge(projected.id) else { return nil }
             return TopologyExperienceLink(
-                id: edge.id,
-                sourceID: edge.sourceSubsystemID,
-                destinationID: edge.destinationSubsystemID,
-                evidence: edge.evidence,
-                status: TopologyStatusResolver.overviewEdgeStatus(edge, context: context, evaluation: evaluation)
+                id: projected.id,
+                sourceID: projected.sourceID,
+                destinationID: projected.destinationID,
+                evidence: projected.evidence,
+                isFeedback: projected.isFeedback,
+                status: evaluation.edgeStatus(source.id)
             )
         }
     }
 
     private var evidenceLegend: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 5) {
-                Capsule().fill(Palette.muted).frame(width: 17, height: 2)
-                Text("源码关系").foregroundStyle(Palette.muted)
-            }
-            HStack(spacing: 5) {
-                Capsule().fill(Palette.warning).frame(width: 17, height: 2)
-                Text("待确认").foregroundStyle(Palette.muted)
-            }
+        HStack(spacing: 8) {
+            evidenceLine(title: "源码", evidence: .sourceWiring)
+            evidenceLine(title: "离线验证", evidence: .offlineExercise)
+            evidenceLine(title: "可选模式", evidence: .conditionalSourceWiring)
+            evidenceLine(title: "待核实", evidence: .openInterface)
             legendStatus(Palette.accent, title: "正常")
             legendStatus(Palette.danger, title: "异常")
             legendStatus(Palette.warning, title: "未知")
         }
         .font(.system(size: 9))
         .accessibilityIdentifier("topology.evidence-legend")
+    }
+
+    private func evidenceLine(title: String, evidence: TopologyEvidenceGrade) -> some View {
+        HStack(spacing: 4) {
+            switch evidence {
+            case .sourceWiring:
+                Capsule().fill(Palette.muted).frame(width: 13, height: 2)
+            case .offlineExercise:
+                Capsule().stroke(Palette.muted, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])).frame(width: 13, height: 2)
+            case .conditionalSourceWiring:
+                Capsule().stroke(Palette.warning, style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])).frame(width: 13, height: 2)
+            case .openInterface:
+                Capsule().stroke(Palette.muted, style: StrokeStyle(lineWidth: 1.5, dash: [1, 3])).frame(width: 13, height: 2)
+            }
+            Text(title).foregroundStyle(Palette.muted)
+        }
     }
 
     private func legendStatus(_ color: Color, title: String) -> some View {
@@ -132,111 +172,6 @@ struct RobotTopologyView: View {
         }
     }
 
-    private func subsystemHeading(_ subsystem: TopologySubsystemDefinition) -> some View {
-        HStack(spacing: 10) {
-            Button {
-                interaction.showOverview()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.muted)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("返回整机总览")
-            .accessibilityIdentifier("topology.breadcrumb.overview")
-
-            Image(systemName: subsystem.symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Palette.accent)
-            Text(TopologyFriendlyNames.subsystem(subsystem.id))
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-            TopologyExperienceStatus(status: subsystemStatus(subsystem), compact: true)
-            Spacer()
-        }
-        .accessibilityIdentifier("topology.detail.\(subsystem.id)")
-    }
-
-    @ViewBuilder
-    private func detailContent(_ flow: TopologyFlowDefinition, subsystemID: String) -> some View {
-        let graph = detailDiagram(flow, subsystemID: subsystemID)
-        if let selectedNode {
-            GeometryReader { geometry in
-                if TopologyInspectorPlacement.usesTrailingPane(width: geometry.size.width) {
-                    HStack(alignment: .top, spacing: 20) {
-                        graph.frame(maxWidth: .infinity, alignment: .top)
-                        nodeEvidence(selectedNode)
-                            .frame(width: 370, alignment: .topLeading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                } else {
-                    VStack(alignment: .leading, spacing: 18) {
-                        graph
-                        nodeEvidence(selectedNode)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            }
-            .frame(height: max(detailHeight(flow), selectedNodeEvidenceMinimumHeight))
-        } else {
-            graph
-        }
-    }
-
-    private var selectedNodeEvidenceMinimumHeight: CGFloat { 510 }
-
-    private func detailDiagram(_ flow: TopologyFlowDefinition, subsystemID: String) -> some View {
-        let flowNodes = Set(flow.nodeIDs)
-        let nodes = flow.nodeIDs.compactMap { id -> TopologyExperienceNode? in
-            guard RobotTopologyCatalog.node(id) != nil else { return nil }
-            return TopologyExperienceNode(
-                id: id,
-                title: TopologyFriendlyNames.node(id),
-                status: evaluation.nodeStatus(id),
-                selected: interaction.selectedNodeID == id,
-                isSubsystem: false,
-                action: { interaction.selectNode(id, in: subsystemID) }
-            )
-        }
-        let links = flow.edgeIDs.compactMap { id -> TopologyExperienceLink? in
-            guard let edge = RobotTopologyCatalog.edge(id),
-                  flowNodes.contains(edge.sourceNodeID),
-                  flowNodes.contains(edge.destinationNodeID) else { return nil }
-            return TopologyExperienceLink(
-                id: id,
-                sourceID: edge.sourceNodeID,
-                destinationID: edge.destinationNodeID,
-                evidence: edge.evidence,
-                status: evaluation.edgeStatus(id)
-            )
-        }
-        let layoutHeight = detailHeight(flow)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(flow.title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Palette.muted)
-            GeometryReader { geometry in
-                let layout = RobotTopologyPresentationLayout.detail(flow, width: geometry.size.width)
-                TopologyVerticalDiagram(
-                    layout: layout,
-                    nodes: nodes,
-                    links: links,
-                    routeSkippedEdges: true,
-                    accessibilityID: "topology.detail.canvas.\(flow.id)"
-                )
-                .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
-            }
-            .frame(height: layoutHeight)
-        }
-        .accessibilityIdentifier("topology.diagram.\(flow.id)")
-    }
-
-    private func detailHeight(_ flow: TopologyFlowDefinition) -> CGFloat {
-        RobotTopologyPresentationLayout.detailHeight(nodeCount: flow.nodeIDs.count)
-    }
-
     private func nodeEvidence(_ node: TopologyNodeDefinition) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(TopologyFriendlyNames.node(node.id))
@@ -244,6 +179,7 @@ struct RobotTopologyView: View {
             TopologyNodeEvidencePanel(
                 node: node,
                 status: evaluation.nodeStatus(node.id),
+                evaluation: evaluation,
                 context: context,
                 linkTelemetryMessage: model.linkTelemetryMessage,
                 onClose: { interaction.clearSelection() }
@@ -259,9 +195,11 @@ struct RobotTopologyView: View {
         if let abnormal = statuses.first(where: { $0.signal == .abnormal }) {
             return TopologyElementStatus(signal: .abnormal, note: abnormal.note, directEvents: events, possiblyAffectedDownstream: false)
         }
-        if let staleStream = RobotTopologyCatalog.flow(subsystem.flowID)?.edgeIDs
-            .compactMap({ evaluation.edgeStatus($0) })
-            .first(where: { $0.signal == .dataStale }) {
+        let subsystemNodeIDs = Set(RobotTopologyCatalog.nodes.filter { $0.groupID == subsystem.id }.map(\.id))
+        let incidentEdgeStatuses = RobotTopologyCatalog.edges
+            .filter { subsystemNodeIDs.contains($0.sourceNodeID) || subsystemNodeIDs.contains($0.destinationNodeID) }
+            .map { evaluation.edgeStatus($0.id) }
+        if let staleStream = incidentEdgeStatuses.first(where: { $0.signal == .dataStale }) {
             return TopologyElementStatus(
                 signal: .dataStale,
                 note: "直接观测到数据流暂未更新；原因和工作区来源未知，不判定模块故障。\n\(staleStream.note)",
@@ -294,7 +232,7 @@ enum TopologyFriendlyNames {
         case "navigation": return "自动导航"
         case "arm": return "机械臂"
         case "chassis": return "底盘运动"
-        case "safety": return "安全反馈"
+        case "safety": return "未接入安全输入"
         default: return RobotTopologyCatalog.subsystem(id)?.title ?? id
         }
     }
@@ -305,7 +243,7 @@ enum TopologyFriendlyNames {
         case "yolo": return "识别目标"
         case "arm2nav": return "生成导航建议"
         case "pose-estimator": return "估计目标位置"
-        case "lidar-stack": return "雷达与定位进程"
+        case "lidar-stack": return "雷达软件进程扫描"
         case "mid360": return "采集雷达点云与 IMU"
         case "imu-transform": return "转换 IMU 坐标"
         case "imu-filter": return "融合 IMU 数据"
@@ -313,6 +251,7 @@ enum TopologyFriendlyNames {
         case "terrain": return "分析地形与障碍"
         case "scan-conversion": return "生成扫描数据"
         case "slam-toolbox": return "生成地图"
+        case "map-odom-tf": return "发布地图坐标变换"
         case "localization-map": return "发布在线地图"
         case "nav2": return "自动规划导航路线"
         case "mission-coordinator": return "协调导航与机械臂任务"
@@ -323,8 +262,8 @@ enum TopologyFriendlyNames {
         case "arm-safety-status": return "机械臂主机安全状态"
         case "chassis-bridge": return "发送底盘指令"
         case "chassis-controller": return "底盘控制板"
-        case "chassis-link-status": return "底盘主机串口状态"
-        case "physical-estop": return "实体急停反馈"
+        case "chassis-link-status": return "读取底盘主机串口状态"
+        case "physical-estop": return "实体急停输入（未接入）"
         case "agent": return "只读 Agent"
         case "ros-domain": return "ROS 通信域"
         case "ros-graph": return "ROS 节点与数据目录"
@@ -341,71 +280,88 @@ enum TopologyInspectorPlacement {
 struct TopologyVerticalCanvasLayout: Equatable {
     let size: CGSize
     let nodeFrames: [String: CGRect]
+    let expandedHeaderFrames: [String: CGRect]
 }
 
 enum RobotTopologyPresentationLayout {
-    static let overviewRows = [
-        ["perception", "localization"],
-        ["coordination"],
-        ["arm", "navigation"],
-        ["chassis"],
-        ["safety"],
-    ]
+    private static let subsystemPriority = ["perception", "localization", "coordination", "navigation", "arm", "chassis", "safety"]
+    private static let nodeHeight: CGFloat = 54
+    private static let groupHeight: CGFloat = 62
+    private static let groupHeaderHeight: CGFloat = 28
+    private static let moduleGap: CGFloat = 22
+    private static let groupGap: CGFloat = 30
 
-    static let overviewHeight: CGFloat = 450
-    private static let cardHeight: CGFloat = 58
-    private static let verticalGap: CGFloat = 36
-
-    static func overview(width: CGFloat) -> TopologyVerticalCanvasLayout {
-        let safeWidth = max(320, width)
-        let cardWidth = min(390, max(160, (safeWidth - 48) / 2))
-        let originY: [String: CGFloat] = [
-            "perception": 14, "localization": 14,
-            "coordination": 106,
-            "arm": 198, "navigation": 198,
-            "chassis": 290,
-            "safety": 382,
-        ]
-        let centerX: [String: CGFloat] = [
-            "perception": safeWidth * 0.28,
-            "localization": safeWidth * 0.72,
-            "coordination": safeWidth * 0.28,
-            "arm": safeWidth * 0.28,
-            "navigation": safeWidth * 0.72,
-            "chassis": safeWidth * 0.72,
-            "safety": safeWidth * 0.50,
-        ]
-        let frames = Dictionary(uniqueKeysWithValues: overviewRows.flatMap { $0 }.compactMap { id -> (String, CGRect)? in
-            guard let x = centerX[id], let y = originY[id] else { return nil }
-            return (id, CGRect(x: x - cardWidth / 2, y: y, width: cardWidth, height: cardHeight))
-        })
-        return TopologyVerticalCanvasLayout(size: CGSize(width: safeWidth, height: overviewHeight), nodeFrames: frames)
-    }
-
-    static func detail(_ flow: TopologyFlowDefinition, width: CGFloat) -> TopologyVerticalCanvasLayout {
-        let nodeIDs = flow.nodeIDs
-        let nodeSet = Set(nodeIDs)
-        let edges = flow.edgeIDs.compactMap(RobotTopologyCatalog.edge).filter {
-            nodeSet.contains($0.sourceNodeID) && nodeSet.contains($0.destinationNodeID)
+    static func graphHeight(expandedSubsystemIDs: Set<String>) -> CGFloat {
+        var height: CGFloat = 18
+        for subsystemID in orderedSubsystemIDs() {
+            if expandedSubsystemIDs.contains(subsystemID) {
+                let count = moduleOrder(subsystemID).count
+                height += groupHeaderHeight + 11
+                height += CGFloat(count) * nodeHeight + CGFloat(max(0, count - 1)) * moduleGap
+            } else {
+                height += groupHeight
+            }
+            height += groupGap
         }
-        let order = topologicalOrder(nodeIDs: nodeIDs, edges: edges)
-        let rows = order.map { [$0] }
-        let height = detailHeight(nodeCount: rows.count)
-        return makeLayout(rows: rows, width: max(320, width), height: height, maxColumns: 1, cardHeight: cardHeight, verticalGap: verticalGap, maxCardWidth: 570)
+        return max(260, height - groupGap + 18)
     }
 
-    static func detailHeight(nodeCount: Int) -> CGFloat {
-        max(260, CGFloat(max(1, nodeCount)) * (cardHeight + verticalGap) + 10)
+    static func graph(width: CGFloat, expandedSubsystemIDs: Set<String>) -> TopologyVerticalCanvasLayout {
+        let safeWidth = max(1, width)
+        let cardWidth = min(600, max(240, safeWidth - 32))
+        let x = (safeWidth - cardWidth) / 2
+        var nodeFrames: [String: CGRect] = [:]
+        var headerFrames: [String: CGRect] = [:]
+        var y: CGFloat = 18
+
+        for subsystemID in orderedSubsystemIDs() {
+            if expandedSubsystemIDs.contains(subsystemID) {
+                headerFrames[subsystemID] = CGRect(x: x, y: y, width: cardWidth, height: groupHeaderHeight)
+                y += groupHeaderHeight + 11
+                for nodeID in moduleOrder(subsystemID) {
+                    nodeFrames[nodeID] = CGRect(x: x, y: y, width: cardWidth, height: nodeHeight)
+                    y += nodeHeight + moduleGap
+                }
+                y -= moduleGap
+            } else {
+                nodeFrames[subsystemID] = CGRect(x: x, y: y, width: cardWidth, height: groupHeight)
+                y += groupHeight
+            }
+            y += groupGap
+        }
+
+        return TopologyVerticalCanvasLayout(
+            size: CGSize(width: safeWidth, height: max(260, y - groupGap + 18)),
+            nodeFrames: nodeFrames,
+            expandedHeaderFrames: headerFrames
+        )
     }
 
-    private static func topologicalOrder(nodeIDs: [String], edges: [TopologyEdgeDefinition]) -> [String] {
-        let orderIndex = Dictionary(uniqueKeysWithValues: nodeIDs.enumerated().map { ($0.element, $0.offset) })
-        var remaining = Set(nodeIDs)
+    static func orderedSubsystemIDs() -> [String] {
+        let ids = RobotTopologyCatalog.subsystemIDs
+        let orderIndex = Dictionary(uniqueKeysWithValues: subsystemPriority.enumerated().map { ($0.element, $0.offset) })
+        let visibleEdges = RobotTopologyCatalog.edges.filter { edge in
+            guard !edge.isFeedback,
+                  edge.evidence != .openInterface else { return false }
+            guard let source = RobotTopologyCatalog.node(edge.sourceNodeID),
+                  let destination = RobotTopologyCatalog.node(edge.destinationNodeID) else { return false }
+            return source.groupID != destination.groupID && ids.contains(source.groupID) && ids.contains(destination.groupID)
+        }
+        var remaining = Set(ids)
         var result: [String] = []
         while !remaining.isEmpty {
-            let ready = remaining.filter { nodeID in
-                !edges.contains { $0.destinationNodeID == nodeID && remaining.contains($0.sourceNodeID) }
-            }.sorted { (orderIndex[$0] ?? 0) < (orderIndex[$1] ?? 0) }
+            let ready = remaining.filter { id in
+                !visibleEdges.contains { edge in
+                    guard let destination = RobotTopologyCatalog.node(edge.destinationNodeID),
+                          destination.groupID == id,
+                          let source = RobotTopologyCatalog.node(edge.sourceNodeID) else { return false }
+                    return remaining.contains(source.groupID)
+                }
+            }.sorted { lhs, rhs in
+                if lhs == "safety" { return false }
+                if rhs == "safety" { return true }
+                return (orderIndex[lhs] ?? 0) < (orderIndex[rhs] ?? 0)
+            }
             guard !ready.isEmpty else {
                 result.append(contentsOf: remaining.sorted { (orderIndex[$0] ?? 0) < (orderIndex[$1] ?? 0) })
                 break
@@ -416,34 +372,27 @@ enum RobotTopologyPresentationLayout {
         return result
     }
 
-    private static func makeLayout(
-        rows: [[String]],
-        width: CGFloat,
-        height: CGFloat,
-        maxColumns: Int,
-        cardHeight: CGFloat,
-        verticalGap: CGFloat,
-        maxCardWidth: CGFloat
-    ) -> TopologyVerticalCanvasLayout {
-        let horizontalInset: CGFloat = 16
-        let columnGap: CGFloat = 18
-        var frames: [String: CGRect] = [:]
-        let contentRows = rows.filter { !$0.isEmpty }
-        let totalRowsHeight = CGFloat(contentRows.count) * cardHeight + CGFloat(max(0, contentRows.count - 1)) * verticalGap
-        let topInset = max(10, (height - totalRowsHeight) / 2)
-
-        for (rowIndex, row) in contentRows.enumerated() {
-            let columns = min(maxColumns, row.count)
-            let usableWidth = max(220, width - horizontalInset * 2 - CGFloat(max(0, columns - 1)) * columnGap)
-            let cardWidth = min(maxCardWidth, usableWidth / CGFloat(max(1, columns)))
-            let rowWidth = CGFloat(columns) * cardWidth + CGFloat(max(0, columns - 1)) * columnGap
-            let firstX = (width - rowWidth) / 2
-            let y = topInset + CGFloat(rowIndex) * (cardHeight + verticalGap)
-            for (column, id) in row.enumerated() where column < columns {
-                frames[id] = CGRect(x: firstX + CGFloat(column) * (cardWidth + columnGap), y: y, width: cardWidth, height: cardHeight)
-            }
+    static func moduleOrder(_ subsystemID: String) -> [String] {
+        let nodeIDs = RobotTopologyCatalog.nodes.filter { $0.groupID == subsystemID }.map(\.id)
+        let nodeSet = Set(nodeIDs)
+        let edges = RobotTopologyCatalog.edges.filter {
+            nodeSet.contains($0.sourceNodeID) && nodeSet.contains($0.destinationNodeID) && !$0.isFeedback
         }
-        return TopologyVerticalCanvasLayout(size: CGSize(width: width, height: height), nodeFrames: frames)
+        let orderIndex = Dictionary(uniqueKeysWithValues: nodeIDs.enumerated().map { ($0.element, $0.offset) })
+        var remaining = Set(nodeIDs)
+        var result: [String] = []
+        while !remaining.isEmpty {
+            let ready = remaining.filter { id in
+                !edges.contains { $0.destinationNodeID == id && remaining.contains($0.sourceNodeID) }
+            }.sorted { (orderIndex[$0] ?? 0) < (orderIndex[$1] ?? 0) }
+            guard !ready.isEmpty else {
+                result.append(contentsOf: remaining.sorted { (orderIndex[$0] ?? 0) < (orderIndex[$1] ?? 0) })
+                break
+            }
+            result.append(contentsOf: ready)
+            remaining.subtract(ready)
+        }
+        return result
     }
 }
 
@@ -456,19 +405,112 @@ private struct TopologyExperienceNode {
     let action: () -> Void
 }
 
+private struct TopologyExperienceSubsystemHeader: Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    let status: TopologyElementStatus
+    let action: () -> Void
+}
+
 private struct TopologyExperienceLink: Identifiable {
     let id: String
     let sourceID: String
     let destinationID: String
     let evidence: TopologyEvidenceGrade
+    let isFeedback: Bool
     let status: TopologyElementStatus
+}
+
+private struct TopologyGraphCanvas: View {
+    let expandedSubsystemIDs: Set<String>
+    let nodes: [TopologyExperienceNode]
+    let expandedHeaders: [TopologyExperienceSubsystemHeader]
+    let links: [TopologyExperienceLink]
+    let height: CGFloat
+
+    var body: some View {
+        GeometryReader { geometry in
+            let layout = RobotTopologyPresentationLayout.graph(
+                width: geometry.size.width,
+                expandedSubsystemIDs: expandedSubsystemIDs
+            )
+            TopologyVerticalDiagram(
+                layout: layout,
+                nodes: nodes,
+                expandedHeaders: expandedHeaders,
+                links: links,
+                accessibilityID: "topology.recursive-graph"
+            )
+            .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
+        }
+        .frame(height: height)
+    }
+}
+
+private struct TopologyAdaptiveInspectorLayout: Layout {
+    let expandedSubsystemIDs: Set<String>
+    let hasInspector: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = max(320, proposal.width ?? 1_200)
+        let graphHeight = RobotTopologyPresentationLayout.graphHeight(expandedSubsystemIDs: expandedSubsystemIDs)
+        guard hasInspector, subviews.count > 1 else { return CGSize(width: width, height: graphHeight) }
+
+        if TopologyInspectorPlacement.usesTrailingPane(width: width) {
+            let inspectorHeight = subviews[1].sizeThatFits(ProposedViewSize(width: 370, height: nil)).height
+            return CGSize(width: width, height: max(graphHeight, inspectorHeight))
+        }
+        let inspectorHeight = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil)).height
+        return CGSize(width: width, height: graphHeight + 18 + inspectorHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let graph = subviews.first else { return }
+        let width = max(320, bounds.width)
+        let graphHeight = RobotTopologyPresentationLayout.graphHeight(expandedSubsystemIDs: expandedSubsystemIDs)
+        guard hasInspector, subviews.count > 1 else {
+            graph.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: width, height: graphHeight)
+            )
+            return
+        }
+
+        let inspector = subviews[1]
+        if TopologyInspectorPlacement.usesTrailingPane(width: width) {
+            let graphWidth = max(320, width - 390)
+            graph.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: graphWidth, height: graphHeight)
+            )
+            inspector.place(
+                at: CGPoint(x: bounds.minX + width - 370, y: bounds.minY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: 370, height: bounds.height)
+            )
+        } else {
+            graph.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: width, height: graphHeight)
+            )
+            inspector.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY + graphHeight + 18),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: width, height: nil)
+            )
+        }
+    }
 }
 
 private struct TopologyVerticalDiagram: View {
     let layout: TopologyVerticalCanvasLayout
     let nodes: [TopologyExperienceNode]
+    let expandedHeaders: [TopologyExperienceSubsystemHeader]
     let links: [TopologyExperienceLink]
-    let routeSkippedEdges: Bool
     let accessibilityID: String
 
     var body: some View {
@@ -478,6 +520,14 @@ private struct TopologyVerticalDiagram: View {
                     guard let source = layout.nodeFrames[link.sourceID],
                           let destination = layout.nodeFrames[link.destinationID] else { continue }
                     draw(link, index: index, from: source, to: destination, in: &context)
+                }
+            }
+
+            ForEach(expandedHeaders) { header in
+                if let frame = layout.expandedHeaderFrames[header.id] {
+                    TopologyExperienceSubsystemHeaderButton(header: header)
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
                 }
             }
 
@@ -495,42 +545,76 @@ private struct TopologyVerticalDiagram: View {
 
     private func draw(_ link: TopologyExperienceLink, index: Int, from source: CGRect, to destination: CGRect, in context: inout GraphicsContext) {
         let color = topologyColor(link.status.signal)
+        let downward = !link.isFeedback && destination.midY > source.midY
+        let start = CGPoint(x: source.midX, y: downward ? source.maxY : source.minY)
+        let end = CGPoint(x: destination.midX, y: downward ? destination.minY : destination.maxY)
+        let verticalDistance = abs(end.y - start.y)
         var path = Path()
-        let start = CGPoint(x: source.midX, y: source.maxY)
-        let end = CGPoint(x: destination.midX, y: destination.minY)
         path.move(to: start)
 
-        if !routeSkippedEdges || destination.minY - source.maxY <= 76 {
+        if downward && verticalDistance <= 82 {
             path.addCurve(
                 to: end,
                 control1: CGPoint(x: start.x, y: start.y + 12),
                 control2: CGPoint(x: end.x, y: end.y - 12)
             )
         } else {
-            let laneInset = CGFloat(index % 3 + 1) * 8
-            let laneX = max(4, source.minX - laneInset)
-            let firstBend = CGPoint(x: laneX, y: start.y + 13)
-            let lastBend = CGPoint(x: laneX, y: end.y - 13)
-            path.addCurve(to: firstBend, control1: CGPoint(x: start.x, y: start.y + 5), control2: CGPoint(x: laneX, y: start.y + 6))
+            let laneOffset = CGFloat(index % 4) * 5
+            let laneX = downward
+                ? max(4, min(source.minX, destination.minX) - 10 - laneOffset)
+                : min(layout.size.width - 4, max(source.maxX, destination.maxX) + 10 + laneOffset)
+            let sign: CGFloat = downward ? 1 : -1
+            let firstBend = CGPoint(x: laneX, y: start.y + sign * 13)
+            let lastBend = CGPoint(x: laneX, y: end.y - sign * 13)
+            path.addCurve(to: firstBend, control1: CGPoint(x: start.x, y: start.y + sign * 5), control2: CGPoint(x: laneX, y: start.y + sign * 6))
             path.addLine(to: lastBend)
-            path.addCurve(to: end, control1: CGPoint(x: laneX, y: end.y - 5), control2: CGPoint(x: end.x, y: end.y - 7))
+            path.addCurve(to: end, control1: CGPoint(x: laneX, y: end.y - sign * 5), control2: CGPoint(x: end.x, y: end.y - sign * 7))
         }
 
         let dash: [CGFloat]
         switch link.evidence {
         case .sourceWiring: dash = []
         case .offlineExercise: dash = [5, 4]
+        case .conditionalSourceWiring: dash = [3, 3]
         case .openInterface: dash = [2, 4]
         }
-        context.stroke(path, with: .color(color.opacity(0.9)), style: StrokeStyle(lineWidth: link.status.signal == .abnormal ? 2.6 : 1.5, lineCap: .round, dash: dash))
+        context.stroke(path, with: .color(color.opacity(0.92)), style: StrokeStyle(lineWidth: link.status.signal == .abnormal ? 2.6 : 1.5, lineCap: .round, dash: dash))
 
         let arrow = Path { arrow in
             arrow.move(to: end)
-            arrow.addLine(to: CGPoint(x: end.x - 4.5, y: end.y - 7))
-            arrow.addLine(to: CGPoint(x: end.x + 4.5, y: end.y - 7))
+            let vertical: CGFloat = downward ? -7 : 7
+            arrow.addLine(to: CGPoint(x: end.x - 4.5, y: end.y + vertical))
+            arrow.addLine(to: CGPoint(x: end.x + 4.5, y: end.y + vertical))
             arrow.closeSubpath()
         }
         context.fill(arrow, with: .color(color))
+    }
+}
+
+private struct TopologyExperienceSubsystemHeaderButton: View {
+    let header: TopologyExperienceSubsystemHeader
+
+    var body: some View {
+        Button(action: header.action) {
+            HStack(spacing: 9) {
+                Image(systemName: header.symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.accent)
+                Text(header.title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                TopologyExperienceStatus(status: header.status, compact: true)
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+            }
+            .padding(.horizontal, 7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("topology.subsystem-header.\(header.id)")
     }
 }
 
@@ -551,6 +635,11 @@ private struct TopologyExperienceNodeButton: View {
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 4)
                 TopologyExperienceStatus(status: node.status, compact: false)
+                if node.isSubsystem {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                }
             }
             .padding(.horizontal, 13)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
