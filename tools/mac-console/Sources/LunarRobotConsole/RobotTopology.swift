@@ -453,6 +453,7 @@ enum TopologyStatusResolver {
         }
         let staleStreamDownstream = RobotTopologyCatalog.edges.reduce(into: Set<String>()) { result, edge in
             guard streamState(for: edge, context: context) == .stale else { return }
+            result.insert(edge.destinationNodeID)
             result.formUnion(RobotTopologyCatalog.downstreamNodeIDs(from: edge.destinationNodeID))
         }
         let allPossiblyAffected = downstream.union(staleStreamDownstream)
