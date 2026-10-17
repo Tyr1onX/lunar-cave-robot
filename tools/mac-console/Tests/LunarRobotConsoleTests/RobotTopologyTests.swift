@@ -164,7 +164,7 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertNil(context.snapshot?.workspaces)
         XCTAssertEqual(evaluation.nodeStatus("camera").signal, .unknown)
         XCTAssertEqual(evaluation.nodeStatus("nav2").signal, .unknown)
-        XCTAssertEqual(evaluation.edgeStatus("scan-nav2").signal, .unknown)
+        XCTAssertEqual(evaluation.edgeStatus("scan-slam-toolbox").signal, .unknown)
     }
 
     func testUnconfiguredMissingAggregateProcessIsNotAnAbnormalEvent() throws {
@@ -194,6 +194,107 @@ final class RobotTopologyTests: XCTestCase {
                 XCTAssertNotNil(layout.nodeCenters[edge.destinationNodeID])
             }
         }
+    }
+
+    func testSingleLidarFlowMatchesLaunchLaserScanSlamMapAndNav2Branches() throws {
+        let localization = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
+        let navigation = try XCTUnwrap(RobotTopologyCatalog.flow("navigation-flow"))
+        XCTAssertTrue(localization.nodeIDs.contains("scan-conversion"))
+        XCTAssertTrue(localization.nodeIDs.contains("slam-toolbox"))
+        XCTAssertTrue(localization.nodeIDs.contains("localization-map"))
+        XCTAssertTrue(localization.edgeIDs.contains("scan-slam-toolbox"))
+        XCTAssertTrue(localization.edgeIDs.contains("slam-map"))
+
+        let scanToSlam = try XCTUnwrap(RobotTopologyCatalog.edge("scan-slam-toolbox"))
+        XCTAssertEqual(scanToSlam.sourceNodeID, "scan-conversion")
+        XCTAssertEqual(scanToSlam.destinationNodeID, "slam-toolbox")
+        XCTAssertEqual(scanToSlam.topics, ["/scan"])
+        XCTAssertEqual(scanToSlam.evidence, .sourceWiring)
+
+        let slamToMap = try XCTUnwrap(RobotTopologyCatalog.edge("slam-map"))
+        XCTAssertEqual(slamToMap.sourceNodeID, "slam-toolbox")
+        XCTAssertEqual(slamToMap.destinationNodeID, "localization-map")
+        XCTAssertEqual(slamToMap.topics, ["/map"])
+        XCTAssertEqual(slamToMap.evidence, .sourceWiring)
+
+        let mapToNav = try XCTUnwrap(RobotTopologyCatalog.edge("map-nav2"))
+        XCTAssertEqual(mapToNav.sourceNodeID, "localization-map")
+        XCTAssertEqual(mapToNav.destinationNodeID, "nav2")
+        XCTAssertTrue(navigation.edgeIDs.contains("map-nav2"))
+        XCTAssertTrue(navigation.edgeIDs.contains("terrain-nav2"))
+        XCTAssertFalse(navigation.edgeIDs.contains("scan-nav2"), "The selected single-lidar launch config gives Nav2 /terrain_map; /scan feeds SLAM Toolbox.")
+        XCTAssertNil(RobotTopologyCatalog.edge("scan-nav2"))
+
+        let root = try XCTUnwrap(repositoryRoot())
+        let launch = try sourceText("Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py", root: root)
+        let slamConfig = try sourceText("Nav2_rea_ws/src/bringup/config/slam_toolbox_single_lidar.yaml", root: root)
+        let navConfig = try sourceText("Nav2_rea_ws/src/bringup/config/nav2_params.yaml", root: root)
+
+        XCTAssertTrue(launch.contains("remappings=[(\"cloud_in\", \"/terrain_map\"), (\"scan\", \"/scan\")]"))
+        XCTAssertTrue(launch.contains("package=\"slam_toolbox\""))
+        XCTAssertTrue(launch.contains("executable=\"sync_slam_toolbox_node\""))
+        XCTAssertTrue(launch.contains("slam_toolbox_single_lidar.yaml"))
+        XCTAssertTrue(launch.contains("source_file=os.path.join(bringup_share, \"config\", \"nav2_params.yaml\")"))
+        XCTAssertTrue(slamConfig.contains("scan_topic: /scan"))
+        XCTAssertTrue(slamConfig.contains("map_frame: map"))
+        XCTAssertTrue(slamConfig.contains("odom_frame: odom_init"))
+        XCTAssertTrue(slamConfig.contains("transform_publish_period: 0.0"))
+        XCTAssertTrue(navConfig.contains("topic: /terrain_map"))
+        XCTAssertTrue(navConfig.contains("static_layer:"))
+        XCTAssertFalse(navConfig.contains("topic: /scan"), "The selected bringup params do not configure Nav2 to consume the generated LaserScan.")
+    }
+
+    func testSingleLidarImuPreprocessingChainMatchesLaunchAndPointLioConfig() throws {
+        let flow = try XCTUnwrap(RobotTopologyCatalog.flow("localization-flow"))
+        for nodeID in ["mid360", "imu-transform", "imu-filter", "point-lio"] {
+            XCTAssertTrue(flow.nodeIDs.contains(nodeID), "Missing IMU path node \(nodeID)")
+        }
+        let expectedEdges: [(String, String, String, String)] = [
+            ("mid360-imu-transform", "mid360", "imu-transform", "/livox/imu"),
+            ("imu-transform-filter", "imu-transform", "imu-filter", "/livox/imu_aft_tf"),
+            ("imu-filter-pointlio", "imu-filter", "point-lio", "/imu/data"),
+        ]
+        for (edgeID, source, destination, topic) in expectedEdges {
+            let edge = try XCTUnwrap(RobotTopologyCatalog.edge(edgeID))
+            XCTAssertEqual(edge.sourceNodeID, source, edgeID)
+            XCTAssertEqual(edge.destinationNodeID, destination, edgeID)
+            XCTAssertEqual(edge.topics, [topic], edgeID)
+            XCTAssertTrue(flow.edgeIDs.contains(edgeID), edgeID)
+        }
+
+        let root = try XCTUnwrap(repositoryRoot())
+        let launch = try sourceText("Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py", root: root)
+        let imuTransformConfig = try sourceText("Nav2_rea_ws/src/preprocess/imu_tools/config/imu_transform.yaml", root: root)
+        let imuFilterLaunch = try sourceText("Nav2_rea_ws/src/preprocess/imu_tools/launch/imu_complementary_filter.launch.py", root: root)
+        let imuFilterSource = try sourceText("Nav2_rea_ws/src/preprocess/imu_tools/imu_complementary_filter/complementary_filter_ros.cpp", root: root)
+        let pointLioConfig = try sourceText("Nav2_rea_ws/src/localization/point_lio/config/mid360.yaml", root: root)
+
+        XCTAssertTrue(launch.contains("imu_transform.launch.py"))
+        XCTAssertTrue(launch.contains("imu_complementary_filter.launch.py"))
+        XCTAssertTrue(imuTransformConfig.contains("sub_topic: \"/livox/imu\""))
+        XCTAssertTrue(imuTransformConfig.contains("pub_topic: \"/livox/imu_aft_tf\""))
+        XCTAssertTrue(imuFilterLaunch.contains("('/imu/data_raw', '/livox/imu_aft_tf')"))
+        XCTAssertTrue(imuFilterSource.contains("create_publisher<ImuMsg>(\"imu/data\""))
+        XCTAssertTrue(pointLioConfig.contains("lid_topic: \"livox/lidar\""))
+        XCTAssertTrue(pointLioConfig.contains("imu_topic: \"imu/data\""))
+    }
+
+    func testNonSystemFlowsHaveNoUnexplainedOrphanNodes() throws {
+        let intentionalMonitorOnlyNodes = [
+            "localization-flow": Set(["lidar-stack"]),
+            "arm-flow": Set(["arm-stack"]),
+        ]
+        for flow in RobotTopologyCatalog.flows where flow.id != "system-flow" {
+            let incidentNodeIDs = Set(flow.edgeIDs.compactMap(RobotTopologyCatalog.edge).flatMap { [$0.sourceNodeID, $0.destinationNodeID] })
+            let orphanNodeIDs = Set(flow.nodeIDs).subtracting(incidentNodeIDs)
+            XCTAssertEqual(orphanNodeIDs, intentionalMonitorOnlyNodes[flow.id] ?? [], "Unexpected isolated topology node in \(flow.id)")
+        }
+
+        let safetyFlow = try XCTUnwrap(RobotTopologyCatalog.flow("safety-flow"))
+        XCTAssertTrue(safetyFlow.nodeIDs.contains("agent"))
+        XCTAssertTrue(safetyFlow.nodeIDs.contains("physical-estop"))
+        XCTAssertTrue(safetyFlow.edgeIDs.contains("estop-unconnected"))
+        XCTAssertEqual(RobotTopologyCatalog.edge("estop-unconnected")?.evidence, .openInterface)
     }
 
     func testTopologySelectionSupportsThreeInteractionLevels() {
@@ -287,5 +388,24 @@ final class RobotTopologyTests: XCTestCase {
             observedAt: "2026-10-17T01:00:00.000Z",
             source: "RobotTopologyTests"
         )
+    }
+
+    private func repositoryRoot() -> URL? {
+        let marker = "Nav2_rea_ws/src/bringup/launch/mapping_navigation_single_lidar.launch.py"
+        let starts = [URL(fileURLWithPath: #filePath).deletingLastPathComponent(), URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
+        for start in starts {
+            var current = start
+            while true {
+                if FileManager.default.fileExists(atPath: current.appendingPathComponent(marker).path) { return current }
+                let parent = current.deletingLastPathComponent()
+                if parent.path == current.path { break }
+                current = parent
+            }
+        }
+        return nil
+    }
+
+    private func sourceText(_ relativePath: String, root: URL) throws -> String {
+        try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
     }
 }
