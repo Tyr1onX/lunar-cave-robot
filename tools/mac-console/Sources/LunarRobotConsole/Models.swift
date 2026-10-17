@@ -97,6 +97,10 @@ struct WorkspaceInventoryReading: Decodable {
     let status: String?
     let source: String?
     let collectedAt: String?
+    let expectationStatus: String?
+    let expectationSource: String?
+    let expectationObservedAt: String?
+    let expectationError: String?
     let processScan: WorkspaceProcessScanReading?
     let graphSource: WorkspaceGraphSourceReading?
     let workspaces: [WorkspaceReading]?
@@ -197,6 +201,9 @@ struct WorkspaceModuleReading: Decodable, Identifiable {
     let runtimeStatus: String?
     let executionState: String?
     let runExpectation: String?
+    let runExpectationSource: String?
+    let runExpectationObservedAt: String?
+    let runExpectationReason: String?
     let interfaceTopics: [String]?
     let observedInterfaceTopics: [String]?
     let reason: String?

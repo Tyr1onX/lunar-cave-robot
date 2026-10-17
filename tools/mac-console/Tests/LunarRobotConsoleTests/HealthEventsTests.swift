@@ -10,7 +10,7 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain"),
             vision: makeVision(rgb: stream(.rgb, status: "streaming", age: 80), depth: stream(.depth, status: "streaming", age: 90), yolo: stream(.yolo, status: "streaming", age: 120))
         )
 
@@ -21,6 +21,12 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertEqual(event("vision-rgb", in: events).state, .normal)
         XCTAssertEqual(event("vision-depth", in: events).state, .normal)
         XCTAssertEqual(event("vision-yolo", in: events).state, .normal)
+        XCTAssertEqual(event("module-camera", in: events).state, .normal)
+        XCTAssertEqual(event("module-camera", in: events).module, "Orbbec Gemini 336L")
+        XCTAssertEqual(event("module-camera", in: events).ruleID, "camera.rgb_depth.runtime_and_freshness")
+        XCTAssertTrue(event("module-camera", in: events).resource.contains("/camera/color/image_raw"))
+        XCTAssertTrue(event("module-camera", in: events).observation.contains("30.00 Hz"))
+        XCTAssertEqual(event("module-camera", in: events).observedAt, "2026-10-14T05:00:00.010Z")
         XCTAssertEqual(event("ros-graph-freshness", in: events).observedAt, "2026-10-14T05:00:00.000Z")
         XCTAssertEqual(event("ros-graph-freshness", in: events).source, "NUC Agent · ROS graph observer")
         XCTAssertEqual(event("vision-rgb", in: events).source, "nuc-ros2-read-only-subscriber")
@@ -40,13 +46,14 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(expectedDomainID: nil, expectedNodes: [], nodes: []),
+            snapshot: try makeCameraSnapshot(expectation: "unconfigured", runtimeStatus: "not_running", graphRelationship: "unknown", expectedDomainID: nil, expectedNodes: [], nodes: []),
             vision: makeVision(rgb: stream(.rgb, status: "unavailable", publisherCount: 0), depth: stream(.depth, status: "unavailable", publisherCount: 0), yolo: stream(.yolo, status: "unavailable", publisherCount: 0))
         )
 
         XCTAssertEqual(event("expected-ros-nodes", in: events).state, .notRunning)
         XCTAssertEqual(event("vision-rgb", in: events).state, .notRunning)
         XCTAssertEqual(event("vision-depth", in: events).state, .notRunning)
+        XCTAssertEqual(event("module-camera", in: events).state, .notRunning)
         XCTAssertEqual(event("ros-domain", in: events).state, .unknown)
         XCTAssertFalse(events.contains { $0.state == .abnormal })
     }
@@ -58,14 +65,15 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(graphAgeMs: 1_000),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", graphAgeMs: 1_000),
             vision: makeVision(rgb: stream(.rgb, status: "stale", age: 2_200), depth: stream(.depth, status: "stale", age: 2_800), yolo: stream(.yolo, status: "waiting"))
         )
 
         XCTAssertEqual(event("ros-graph-freshness", in: events).state, .normal)
-        XCTAssertEqual(event("vision-rgb", in: events).state, .abnormal)
-        XCTAssertEqual(event("vision-depth", in: events).state, .abnormal)
-        XCTAssertTrue(event("vision-rgb", in: events).observation.contains("2200 ms"))
+        XCTAssertEqual(event("module-camera", in: events).state, .abnormal)
+        XCTAssertEqual(event("vision-rgb", in: events).state, .unknown)
+        XCTAssertEqual(event("vision-depth", in: events).state, .unknown)
+        XCTAssertTrue(event("module-camera", in: events).observation.contains("2200 ms"))
         XCTAssertEqual(event("vision-rgb", in: events).dataTime, "2026-10-14T05:00:00.008Z")
     }
 
@@ -88,6 +96,137 @@ final class HealthEventsTests: XCTestCase {
         XCTAssertTrue(events.filter { $0.id != "agent-connection" }.allSatisfy { $0.state == .unknown })
         XCTAssertTrue(agent.source.contains("Mac Console"))
         XCTAssertNotEqual(agent.observedAt, "未知")
+    }
+
+    func testCameraStaleFramesRequireConfirmedRunExpectation() throws {
+        let staleVision = makeVision(
+            rgb: stream(.rgb, status: "stale", age: 2_100),
+            depth: stream(.depth, status: "stale", age: 2_300),
+            yolo: stream(.yolo, status: "waiting")
+        )
+        let unconfigured = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "unconfigured", runtimeStatus: "not_running", graphRelationship: "unknown"),
+            vision: staleVision
+        )
+        XCTAssertEqual(event("module-camera", in: unconfigured).state, .unknown)
+        XCTAssertEqual(event("vision-rgb", in: unconfigured).state, .unknown)
+        XCTAssertFalse(unconfigured.contains { $0.state == .abnormal })
+
+        let expected = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain"),
+            vision: staleVision
+        )
+        XCTAssertEqual(event("module-camera", in: expected).state, .abnormal)
+        XCTAssertEqual(event("vision-rgb", in: expected).state, .unknown)
+        XCTAssertEqual(Set(expected.filter { $0.state == .abnormal }.map(\.id)), ["module-camera"])
+    }
+
+    func testConfirmedMissingCameraProcessRequiresCompleteProcessScan() throws {
+        let noImage = makeVision(
+            rgb: stream(.rgb, status: "unavailable", publisherCount: 0),
+            depth: stream(.depth, status: "unavailable", publisherCount: 0),
+            yolo: stream(.yolo, status: "waiting")
+        )
+        let complete = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown"),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: complete).state, .abnormal)
+        XCTAssertTrue(event("module-camera", in: complete).observation.contains("完整进程扫描未发现"))
+
+        let partial = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "not_running", graphRelationship: "unknown", processScanStatus: "partial"),
+            vision: noImage
+        )
+        XCTAssertEqual(event("module-camera", in: partial).state, .unknown)
+        XCTAssertFalse(partial.contains { $0.id == "module-camera" && $0.state == .abnormal })
+    }
+
+    func testCameraDomainMismatchAndExpiredGraphSuppressModuleFinding() throws {
+        let vision = makeVision(
+            rgb: stream(.rgb, status: "stale", age: 2_100),
+            depth: stream(.depth, status: "stale", age: 2_200),
+            yolo: stream(.yolo, status: "waiting")
+        )
+        let mismatch = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", domainID: 17, expectedDomainID: 42),
+            vision: vision
+        )
+        XCTAssertEqual(event("module-camera", in: mismatch).state, .unknown)
+        XCTAssertFalse(mismatch.contains { $0.id == "module-camera" && $0.state == .abnormal })
+
+        let expired = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", graphAgeMs: 6_000),
+            vision: vision
+        )
+        XCTAssertEqual(event("module-camera", in: expired).state, .unknown)
+        XCTAssertFalse(expired.contains { $0.id == "module-camera" && $0.state == .abnormal })
+
+        let workspaceDomainMismatch = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "different_domain", expectedDomainID: nil),
+            vision: vision
+        )
+        XCTAssertEqual(event("module-camera", in: workspaceDomainMismatch).state, .unknown)
+        XCTAssertFalse(workspaceDomainMismatch.contains { $0.id == "module-camera" && $0.state == .abnormal })
+    }
+
+    func testInvalidModuleExpectationKeepsCameraStateUnknown() throws {
+        let events = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeCameraSnapshot(
+                expectation: "unknown",
+                runtimeStatus: "not_running",
+                graphRelationship: "unknown",
+                expectationStatus: "invalid"
+            ),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "stale", age: 2_200),
+                depth: stream(.depth, status: "unavailable", publisherCount: 0),
+                yolo: stream(.yolo, status: "waiting")
+            )
+        )
+
+        XCTAssertEqual(event("module-camera", in: events).state, .unknown)
+        XCTAssertFalse(events.contains { $0.state == .abnormal })
     }
 
     func testDomainMismatchRequiresAnExplicitFreshExpectation() throws {
@@ -292,7 +431,7 @@ final class HealthEventsTests: XCTestCase {
         let t1 = "2026-10-14T05:00:01.000Z"
         let t2 = "2026-10-14T05:00:02.000Z"
         let t3 = "2026-10-14T05:00:03.000Z"
-        let snapshot = try makeSnapshot()
+        let snapshot = try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain")
 
         let firstRaw = HealthEvaluator.evaluate(
             agentOnline: true,
@@ -308,7 +447,7 @@ final class HealthEventsTests: XCTestCase {
                 collectedAt: t0
             )
         )
-        let first = event("vision-rgb", in: tracker.update(firstRaw))
+        let first = event("module-camera", in: tracker.update(firstRaw))
         XCTAssertEqual(first.persistence, .singleSnapshot)
         XCTAssertEqual(first.observationCount, 1)
 
@@ -326,7 +465,7 @@ final class HealthEventsTests: XCTestCase {
                 collectedAt: t1
             )
         )
-        let second = event("vision-rgb", in: tracker.update(secondRaw))
+        let second = event("module-camera", in: tracker.update(secondRaw))
         XCTAssertEqual(second.persistence, .sustained)
         XCTAssertEqual(second.observationCount, 2)
         XCTAssertEqual(second.firstObservedAt, t0)
@@ -347,7 +486,7 @@ final class HealthEventsTests: XCTestCase {
                 collectedAt: t2
             )
         )
-        let recovered = event("vision-rgb", in: tracker.update(recoveredRaw))
+        let recovered = event("module-camera", in: tracker.update(recoveredRaw))
         XCTAssertEqual(recovered.state, .normal)
         XCTAssertEqual(recovered.persistence, .singleSnapshot)
         XCTAssertEqual(recovered.observationCount, 1)
@@ -366,7 +505,7 @@ final class HealthEventsTests: XCTestCase {
                 collectedAt: t3
             )
         )
-        let recurred = event("vision-rgb", in: tracker.update(recurredRaw))
+        let recurred = event("module-camera", in: tracker.update(recurredRaw))
         XCTAssertEqual(recurred.state, .abnormal)
         XCTAssertEqual(recurred.persistence, .singleSnapshot)
         XCTAssertEqual(recurred.observationCount, 1)
@@ -408,6 +547,25 @@ final class HealthEventsTests: XCTestCase {
         }
     }
 
+    func testYOLOUnsupportedOutputWithoutConfirmedExpectationIsUnknown() throws {
+        let events = HealthEvaluator.evaluate(
+            agentOnline: true,
+            hasEverConnectedToAgent: true,
+            agentMessage: "Agent 在线",
+            lastSuccessfulRead: nil,
+            lastKnownDomainID: nil,
+            snapshot: try makeSnapshot(),
+            vision: makeVision(
+                rgb: stream(.rgb, status: "streaming", age: 30),
+                depth: stream(.depth, status: "streaming", age: 30),
+                yolo: stream(.yolo, status: "unsupported", topicType: "std_msgs/msg/String")
+            )
+        )
+
+        XCTAssertEqual(event("vision-yolo", in: events).state, .unknown)
+        XCTAssertFalse(events.contains { $0.id == "vision-yolo" && $0.state == .abnormal })
+    }
+
     func testMultipleIndependentAnomaliesCanBeReportedTogether() throws {
         let events = HealthEvaluator.evaluate(
             agentOnline: true,
@@ -415,12 +573,12 @@ final class HealthEventsTests: XCTestCase {
             agentMessage: "Agent 在线",
             lastSuccessfulRead: nil,
             lastKnownDomainID: nil,
-            snapshot: try makeSnapshot(domainID: 42, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
+            snapshot: try makeCameraSnapshot(expectation: "confirmed", runtimeStatus: "running", graphRelationship: "shared_domain", domainID: 42, expectedDomainID: 42, expectedNodes: ["/camera_node", "/lidar_node"], nodes: ["/camera_node"]),
             vision: makeVision(rgb: stream(.rgb, status: "stale", age: 2_100), depth: stream(.depth, status: "stale", age: 2_400), yolo: stream(.yolo, status: "waiting"))
         )
 
         let abnormalIDs = Set(events.filter { $0.state == .abnormal }.map(\.id))
-        XCTAssertTrue(abnormalIDs.isSuperset(of: ["expected-ros-nodes", "vision-rgb", "vision-depth"]))
+        XCTAssertTrue(abnormalIDs.isSuperset(of: ["expected-ros-nodes", "module-camera"]))
         XCTAssertFalse(abnormalIDs.contains("ros-domain"))
         XCTAssertEqual(event("vision-yolo", in: events).state, .unknown)
     }
@@ -466,7 +624,8 @@ final class HealthEventsTests: XCTestCase {
         expectedNodes: [String] = ["/camera_node"],
         nodes: [String] = ["/camera_node"],
         graphAgeMs: Int? = 1_000,
-        collectedAt: String = "2026-10-14T05:00:00.000Z"
+        collectedAt: String = "2026-10-14T05:00:00.000Z",
+        workspaceData: [String: Any]? = nil
     ) throws -> ConsoleSnapshot {
         var ros: [String: Any] = [
             "status": "ok",
@@ -481,7 +640,7 @@ final class HealthEventsTests: XCTestCase {
         if let expectedDomainError {
             ros["expected_domain_error"] = expectedDomainError
         }
-        let value: [String: Any] = [
+        var value: [String: Any] = [
             "schema_version": 1,
             "collected_at": collectedAt,
             "source": "nuc-read-only-agent",
@@ -502,9 +661,84 @@ final class HealthEventsTests: XCTestCase {
                 "control": "disabled"
             ]
         ]
+        if let workspaceData {
+            value["workspaces"] = workspaceData
+        }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(ConsoleSnapshot.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    private func makeCameraSnapshot(
+        expectation: String,
+        runtimeStatus: String,
+        graphRelationship: String,
+        domainID: Int? = 42,
+        expectedDomainID: Int? = 42,
+        expectedNodes: [String] = ["/camera_node"],
+        nodes: [String] = ["/camera_node"],
+        graphAgeMs: Int? = 1_000,
+        processScanStatus: String = "ok",
+        expectationStatus: String? = nil
+    ) throws -> ConsoleSnapshot {
+        let observedAt = "2026-10-14T05:00:00.000Z"
+        let effectiveExpectationStatus = expectationStatus ?? (expectation == "confirmed" ? "configured" : "unconfigured")
+        let workspaceData: [String: Any] = [
+            "status": processScanStatus == "ok" ? "ok" : "unknown",
+            "source": "nuc-read-only-workspace-and-process-observer",
+            "collected_at": observedAt,
+            "expectation_status": effectiveExpectationStatus,
+            "expectation_source": effectiveExpectationStatus == "configured" ? "LUNAR_CONSOLE_EXPECTED_MODULES" : NSNull() as Any,
+            "expectation_observed_at": observedAt,
+            "expectation_error": NSNull(),
+            "process_scan": [
+                "status": processScanStatus,
+                "scope": "Agent UID",
+                "source": "/proc",
+                "observed_at": observedAt,
+                "reason": NSNull()
+            ],
+            "graph_source": [
+                "domain_id": domainID ?? NSNull() as Any,
+                "observed_at": observedAt,
+                "graph_age_ms": graphAgeMs ?? NSNull() as Any,
+                "source": "existing Agent ROS graph observer"
+            ],
+            "workspaces": [[
+                "id": "original-arm-vision",
+                "label": "原始机械臂与视觉工程",
+                "source_kind": "original",
+                "source_status": "present",
+                "runtime_status": runtimeStatus,
+                "runtime_observed_at": observedAt,
+                "graph_relationship": graphRelationship,
+                "graph_domain_id": domainID ?? NSNull() as Any,
+                "graph_reason": "fixture graph relation",
+                "modules": [[
+                    "id": "camera",
+                    "label": "相机",
+                    "source_status": "present",
+                    "runtime_status": runtimeStatus,
+                    "execution_state": runtimeStatus == "not_running" ? "not_running" : "unknown",
+                    "run_expectation": expectation,
+                    "run_expectation_source": expectation == "confirmed" ? "LUNAR_CONSOLE_EXPECTED_MODULES" : NSNull() as Any,
+                    "run_expectation_observed_at": observedAt,
+                    "run_expectation_reason": "test fixture",
+                    "interface_topics": ["/camera/color/image_raw", "/camera/depth/image_rect_raw"],
+                    "observed_interface_topics": [],
+                    "reason": "test fixture"
+                ]]
+            ]]
+        ]
+        return try makeSnapshot(
+            domainID: domainID,
+            expectedDomainID: expectedDomainID,
+            expectedNodes: expectedNodes,
+            nodes: nodes,
+            graphAgeMs: graphAgeMs,
+            collectedAt: observedAt,
+            workspaceData: workspaceData
+        )
     }
 
     private func nodeValue(_ value: String) -> [String: String] {
@@ -515,7 +749,7 @@ final class HealthEventsTests: XCTestCase {
         ]
     }
 
-    private func stream(_ id: VisionStreamID, status: String, age: Int? = nil, publisherCount: Int = 1, frameID: String? = nil) -> VisionStreamReading {
+    private func stream(_ id: VisionStreamID, status: String, age: Int? = nil, publisherCount: Int = 1, frameID: String? = nil, topicType: String? = nil) -> VisionStreamReading {
         let topic: String
         switch id {
         case .rgb: topic = "/camera/color/image_raw"
@@ -526,7 +760,7 @@ final class HealthEventsTests: XCTestCase {
             id: id.rawValue,
             label: id.label,
             topic: topic,
-            topicType: publisherCount == 0 ? nil : "sensor_msgs/msg/Image",
+            topicType: publisherCount == 0 ? nil : (topicType ?? "sensor_msgs/msg/Image"),
             status: status,
             reason: status == "unavailable" ? "ROS Topic 当前没有发布者" : nil,
             publisherCount: publisherCount,

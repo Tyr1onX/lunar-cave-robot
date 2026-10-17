@@ -129,6 +129,13 @@ private struct WorkspaceEvidenceCard: View {
                                 }
                                 Text("包：\((module.packages ?? []).joined(separator: ", ").isEmpty ? "未知" : (module.packages ?? []).joined(separator: ", ")) · 运行预期：\(expectationLabel(module.runExpectation))")
                                     .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                                if let expectationSource = module.runExpectationSource {
+                                    Text("运行预期来源：\(expectationSource) · 观测时间：\(module.runExpectationObservedAt ?? "未知")")
+                                        .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted)
+                                }
+                                if let expectationReason = module.runExpectationReason {
+                                    Text(expectationReason).font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                                }
                                 if let reason = module.reason {
                                     Text(reason).font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
                                 }
@@ -237,6 +244,15 @@ private struct WorkspaceScanSummary: View {
                 WorkspaceEvidenceValue(label: "进程范围", value: inventory.processScan?.scope ?? "未知")
             }
             WorkspaceEvidenceValue(label: "工作区快照时间", value: inventory.collectedAt ?? "未知")
+            if let expectationStatus = inventory.expectationStatus {
+                WorkspaceEvidenceValue(
+                    label: "模块运行预期",
+                    value: "\(expectationStatusLabel(expectationStatus)) · \(inventory.expectationObservedAt ?? "时间未知")"
+                )
+                if let expectationError = inventory.expectationError {
+                    Text(expectationError).font(.system(size: 8)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             HStack(alignment: .top, spacing: 12) {
                 WorkspaceEvidenceValue(label: "Agent Graph", value: "Domain \(inventory.graphSource?.domainId.map(String.init) ?? "未知") · \(inventory.graphSource?.graphAgeMs.map { String($0) + " ms" } ?? "时龄未知")")
                 WorkspaceEvidenceValue(label: "Graph 时间", value: inventory.graphSource?.observedAt ?? "未知")
@@ -305,6 +321,15 @@ private func expectationLabel(_ expectation: String?) -> String {
     switch expectation {
     case "confirmed": return "已确认"
     case "unconfigured": return "未配置"
+    default: return "未知"
+    }
+}
+
+private func expectationStatusLabel(_ value: String) -> String {
+    switch value {
+    case "configured": return "显式配置"
+    case "unconfigured": return "未配置"
+    case "invalid": return "配置无效"
     default: return "未知"
     }
 }

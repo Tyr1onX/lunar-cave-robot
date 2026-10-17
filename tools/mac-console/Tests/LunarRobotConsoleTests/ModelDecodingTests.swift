@@ -33,6 +33,9 @@ final class ModelDecodingTests: XCTestCase {
         let inventory = try decoder.decode(WorkspaceInventoryReading.self, from: data)
 
         XCTAssertNil(inventory.entries.first?.executionState)
+        XCTAssertNil(inventory.expectationStatus, "Older Agents omit the explicit module-expectation metadata.")
+        XCTAssertNil(inventory.entries.first?.modules?.first?.runExpectationSource)
+        XCTAssertNil(inventory.entries.first?.modules?.first?.runExpectationObservedAt)
         XCTAssertNil(inventory.entries.first?.processes?.first?.runModeEvidence)
         XCTAssertNil(inventory.entries.first?.modules?.first?.executionState)
         XCTAssertEqual(
