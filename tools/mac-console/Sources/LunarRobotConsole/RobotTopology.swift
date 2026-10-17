@@ -16,6 +16,10 @@ enum TopologySignal: String, Equatable {
     case topicsAllVisible
     case topicsPartiallyVisible
     case topicsNoneVisible
+    case dataObserved
+    case dataPartiallyObserved
+    case dataStale
+    case dataNotObserved
 
     var label: String {
         switch self {
@@ -28,6 +32,10 @@ enum TopologySignal: String, Equatable {
         case .topicsAllVisible: return "Topic 名称全部可见"
         case .topicsPartiallyVisible: return "Topic 名称部分可见"
         case .topicsNoneVisible: return "Topic 名称均未见"
+        case .dataObserved: return "Agent 已收到数据"
+        case .dataPartiallyObserved: return "部分数据已收到"
+        case .dataStale: return "数据流暂未更新"
+        case .dataNotObserved: return "尚未收到数据"
         }
     }
 }
@@ -358,6 +366,7 @@ struct TopologyRuntimeContext {
     let displayedWorkspaceInventory: WorkspaceInventoryReading?
     let workspaceFreshness: WorkspaceSnapshotFreshness
     let vision: VisionReading?
+    let linkTelemetry: LinkTelemetryReading?
     let healthEvents: [HealthEvent]
 
     var liveInventory: WorkspaceInventoryReading? {
@@ -376,6 +385,27 @@ struct TopologyRuntimeContext {
         guard snapshot.ros.status == "ok" else { return snapshot.ros.reason ?? "ROS Graph 状态未知。" }
         guard let age = snapshot.ros.graphAgeMs, age >= 0, age <= HealthEvaluator.rosGraphTimeoutMs else {
             return "ROS Graph 数据过期或缺少时间证据；下游运行状态保持未知。"
+        }
+        return nil
+    }
+
+    var linkTelemetryBlockReason: String? {
+        guard let linkTelemetry else { return nil }
+        guard linkTelemetry.status == "ok", linkTelemetry.graphStatus == "ok" else {
+            return linkTelemetry.graphReason ?? "实时链路遥测或 ROS Graph 证据不可用。"
+        }
+        guard let snapshotDomain = snapshot?.ros.domainId,
+              linkTelemetry.domainId == snapshotDomain else {
+            return "链路遥测 ROS Domain 与当前快照不一致；Topic 与工作区归属保持未知。"
+        }
+        if linkTelemetry.domainMatchesExpectation == false {
+            return "预期 ROS Domain 不匹配；下游链路归属保持未知。"
+        }
+        if let error = linkTelemetry.expectedDomainError {
+            return "预期 ROS Domain 配置无效：\(error)"
+        }
+        guard let age = linkTelemetry.graphAgeMs, age >= 0, age <= HealthEvaluator.rosGraphTimeoutMs else {
+            return "链路遥测所依赖的 ROS Graph 数据过期或缺少时间证据。"
         }
         return nil
     }
@@ -421,21 +451,28 @@ enum TopologyStatusResolver {
         let downstream = directAbnormalNodes.reduce(into: Set<String>()) { result, nodeID in
             result.formUnion(RobotTopologyCatalog.downstreamNodeIDs(from: nodeID))
         }
+        let staleStreamDownstream = RobotTopologyCatalog.edges.reduce(into: Set<String>()) { result, edge in
+            guard streamState(for: edge, context: context) == .stale else { return }
+            result.insert(edge.destinationNodeID)
+            result.formUnion(RobotTopologyCatalog.downstreamNodeIDs(from: edge.destinationNodeID))
+        }
+        let allPossiblyAffected = downstream.union(staleStreamDownstream)
         let directAbnormalNodeSet = Set(directAbnormalNodes)
 
         var nodes: [String: TopologyElementStatus] = [:]
         for node in RobotTopologyCatalog.nodes {
-            nodes[node.id] = nodeStatus(node, context: context, downstream: downstream)
+            nodes[node.id] = nodeStatus(node, context: context, downstream: allPossiblyAffected)
         }
 
         var edges: [String: TopologyElementStatus] = [:]
         for edge in RobotTopologyCatalog.edges {
-            let possiblyAffected = directAbnormalNodeSet.contains(edge.sourceNodeID) ||
+            let edgePossiblyAffected = directAbnormalNodeSet.contains(edge.sourceNodeID) ||
                 directAbnormalNodeSet.contains(edge.destinationNodeID) ||
-                downstream.contains(edge.sourceNodeID) || downstream.contains(edge.destinationNodeID)
-            edges[edge.id] = edgeStatus(edge, context: context, possiblyAffected: possiblyAffected)
+                allPossiblyAffected.contains(edge.sourceNodeID) || allPossiblyAffected.contains(edge.destinationNodeID) ||
+                streamState(for: edge, context: context) == .stale
+            edges[edge.id] = edgeStatus(edge, context: context, possiblyAffected: edgePossiblyAffected)
         }
-        return TopologyEvaluation(nodeStatuses: nodes, edgeStatuses: edges, possiblyAffectedNodeIDs: downstream)
+        return TopologyEvaluation(nodeStatuses: nodes, edgeStatuses: edges, possiblyAffectedNodeIDs: allPossiblyAffected)
     }
 
     private static func directEvents(for node: TopologyNodeDefinition, context: TopologyRuntimeContext) -> [HealthEvent] {
@@ -551,6 +588,9 @@ enum TopologyStatusResolver {
         guard !edge.topics.isEmpty else {
             return TopologyElementStatus(signal: .unknown, note: "连接没有可观察的 Topic 名称；仅保留源码 / 协议证据。", directEvents: [], possiblyAffectedDownstream: possiblyAffected)
         }
+        if let streamSignal = telemetrySignal(for: edge, context: context) {
+            return telemetryEdgeStatus(edge, context: context, possiblyAffected: possiblyAffected, signal: streamSignal)
+        }
         let topicNames = Set(snapshot.ros.topics.map(\.name))
         let observed = edge.topics.filter { topicNames.contains($0) }
         let signal: TopologySignal
@@ -567,6 +607,72 @@ enum TopologyStatusResolver {
             (missing.isEmpty ? "" : "未见：\(missing.joined(separator: "、"))。") +
             "名称可见不证明发布 / 订阅两端归属或消息实际流动。"
         return TopologyElementStatus(signal: signal, note: note, directEvents: [], possiblyAffectedDownstream: possiblyAffected)
+    }
+
+    private enum StreamEvidenceState: Equatable {
+        case streaming
+        case stale
+        case notObserved
+        case unknown
+    }
+
+    private static func streamState(for edge: TopologyEdgeDefinition, context: TopologyRuntimeContext) -> StreamEvidenceState? {
+        guard edge.probe == .topicName,
+              !edge.topics.isEmpty,
+              context.linkTelemetryBlockReason == nil,
+              let telemetry = context.linkTelemetry else { return nil }
+        let streams = edge.topics.compactMap { telemetry.stream(topic: $0) }
+        guard !streams.isEmpty else { return nil }
+        if streams.contains(where: { $0.status == "stale" }) { return .stale }
+        if streams.allSatisfy({ $0.status == "streaming" }) { return .streaming }
+        if streams.contains(where: { $0.status == "streaming" }) { return .notObserved }
+        if streams.allSatisfy({ ["waiting", "unavailable"].contains($0.status) }) { return .notObserved }
+        return .unknown
+    }
+
+    private static func telemetrySignal(for edge: TopologyEdgeDefinition, context: TopologyRuntimeContext) -> TopologySignal? {
+        guard context.linkTelemetry != nil else { return nil }
+        if context.linkTelemetryBlockReason != nil {
+            return .unknown
+        }
+        let streams = edge.topics.compactMap { context.linkTelemetry?.stream(topic: $0) }
+        guard !streams.isEmpty else { return nil }
+        if streams.allSatisfy({ $0.status == "streaming" }) { return .dataObserved }
+        if streams.contains(where: { $0.status == "stale" }) {
+            return streams.contains(where: { $0.status == "streaming" }) ? .dataPartiallyObserved : .dataStale
+        }
+        if streams.contains(where: { $0.status == "streaming" }) { return .dataPartiallyObserved }
+        if streams.allSatisfy({ ["waiting", "unavailable"].contains($0.status) }) { return .dataNotObserved }
+        return .unknown
+    }
+
+    private static func telemetryEdgeStatus(
+        _ edge: TopologyEdgeDefinition,
+        context: TopologyRuntimeContext,
+        possiblyAffected: Bool,
+        signal: TopologySignal
+    ) -> TopologyElementStatus {
+        if let blocked = context.linkTelemetryBlockReason {
+            return TopologyElementStatus(signal: .unknown, note: blocked, directEvents: [], possiblyAffectedDownstream: false)
+        }
+        let telemetry = context.linkTelemetry
+        let streams = edge.topics.compactMap { telemetry?.stream(topic: $0) }
+        let details = streams.map { stream in
+            let freshness = stream.ageMs.map { "\($0) ms" } ?? "无接收时间"
+            let rate = stream.receiveRateHz.map { String(format: "%.2f Hz", $0) } ?? "频率待采样"
+            let endpoints = stream.publisherEndpoints.map { endpoint in
+                endpoint.namespace == "/" ? endpoint.name : "\(endpoint.namespace)/\(endpoint.name)"
+            }
+            let source = endpoints.isEmpty ? "发布端点未见" : "发布端点：\(endpoints.joined(separator: "、"))"
+            return "\(stream.topic)：\(stream.status)，\(rate)，最近接收 \(freshness)，类型 \(stream.topicType ?? "未知")，\(source)"
+        }.joined(separator: "\n")
+        let note = details + "\n工作区归属未确认；Agent 收到数据不证明下游消费者已处理，也不证明实体硬件健康。数据时效只描述接收端；跨时钟时间差需确认时钟同步。"
+        return TopologyElementStatus(
+            signal: signal,
+            note: note,
+            directEvents: [],
+            possiblyAffectedDownstream: possiblyAffected || signal == .dataStale
+        )
     }
 
     static func overviewEdgeStatus(
@@ -626,5 +732,59 @@ enum TopologyStatusResolver {
         case .notRunning: return .notRunning
         case .unknown: return .unknown
         }
+    }
+}
+
+enum LinkTelemetryDiagnostics {
+    static func streams(for nodeID: String, telemetry: LinkTelemetryReading?) -> [LinkTelemetryStreamReading] {
+        guard let telemetry, let node = RobotTopologyCatalog.node(nodeID) else { return [] }
+        let incidentTopics = RobotTopologyCatalog.edges
+            .filter { $0.sourceNodeID == nodeID || $0.destinationNodeID == nodeID }
+            .flatMap(\.topics)
+        let topicHints = node.resourceHints.filter { $0.hasPrefix("/") }
+        let topics = Set(incidentTopics + topicHints)
+        return telemetry.streams.filter { topics.contains($0.topic) }
+    }
+
+    static func pipelineSummary(nodeID: String, telemetry: LinkTelemetryReading?, blockedReason: String?) -> String? {
+        guard ["point-lio", "slam-toolbox"].contains(nodeID) else { return nil }
+        guard let telemetry else { return "实时链路遥测不可用；当前 Agent 版本或连接未提供消息接收证据。" }
+        if let blockedReason { return "实时链路对照保持未知：\(blockedReason)" }
+
+        let inputs: [String]
+        let outputs: [String]
+        switch nodeID {
+        case "point-lio":
+            inputs = ["/livox/lidar", "/imu/data"]
+            outputs = ["/odometry", "/cloud_registered"]
+        default:
+            inputs = ["/scan"]
+            outputs = ["/map"]
+        }
+        let inputStreams = inputs.compactMap { telemetry.stream(topic: $0) }
+        let outputStreams = outputs.compactMap { telemetry.stream(topic: $0) }
+        guard inputStreams.count == inputs.count, outputStreams.count == outputs.count else {
+            return "链路对照数据不完整；不能定位处理原因或确认模块运行状态。"
+        }
+
+        let allInputsFresh = inputStreams.allSatisfy { $0.status == "streaming" }
+        let anyInputObserved = inputStreams.contains { ["streaming", "stale"].contains($0.status) }
+        let allOutputsFresh = outputStreams.allSatisfy { $0.status == "streaming" }
+        let anyOutputStale = outputStreams.contains { $0.status == "stale" }
+        let noOutputObserved = outputStreams.allSatisfy { ["waiting", "unavailable"].contains($0.status) }
+
+        if allInputsFresh && !allOutputsFresh && (anyOutputStale || noOutputObserved) {
+            return "处理链路线索：输入 Topic 已由 Agent 收到，输出 Topic 暂未收到或已过期。可能存在处理链路间断；工作区来源与运行预期未确认，因此不判定模块故障。\n建议查看对应模块日志、输入/输出类型和 TF 证据。"
+        }
+        if !anyInputObserved && !allOutputsFresh {
+            return "输入数据尚未观测到，输出状态不能用于区分模块未运行与上游数据缺失。运行预期未确认，模块状态保持未知。"
+        }
+        if !allInputsFresh && allOutputsFresh {
+            return "部分输入未更新，但输出最近仍有 Agent 接收记录；数据可能处于恢复或跨源状态，不能据此定位根因。"
+        }
+        if allInputsFresh && allOutputsFresh {
+            return "输入和输出 Topic 均有近期 Agent 接收记录；这不确认指定工作区归属、算法质量、消费者处理或实体硬件健康。"
+        }
+        return "输入或输出证据不足；模块运行预期未确认，处理状态保持未知。"
     }
 }

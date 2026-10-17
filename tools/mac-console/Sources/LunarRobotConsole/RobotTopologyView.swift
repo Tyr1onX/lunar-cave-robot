@@ -11,6 +11,7 @@ struct RobotTopologyView: View {
             displayedWorkspaceInventory: model.workspaceInventorySnapshot,
             workspaceFreshness: model.workspaceSnapshotFreshness,
             vision: model.vision,
+            linkTelemetry: model.linkTelemetry,
             healthEvents: model.healthEvents
         )
     }
@@ -65,7 +66,8 @@ struct RobotTopologyView: View {
                 HStack(spacing: 12) {
                     legend("实线", color: Palette.blue, text: "源码 / Launch")
                     legend("虚线", color: Palette.warning, text: "离线验证或待核实")
-                    legend("颜色", color: Palette.accent, text: "当前状态证据")
+                    legend("蓝色", color: Palette.blue, text: "Agent 收到数据")
+                    legend("琥珀", color: Palette.warning, text: "数据未更新 / 未确认")
                     Spacer(minLength: 6)
                     Text("Topic 名称可见不代表消息已传输")
                         .font(.system(size: 9)).foregroundStyle(Palette.muted)
@@ -272,6 +274,7 @@ struct RobotTopologyView: View {
             node: node,
             status: evaluation.nodeStatus(node.id),
             context: context,
+            linkTelemetryMessage: model.linkTelemetryMessage,
             onClose: { interaction.clearSelection() }
         )
         .accessibilityIdentifier("topology.node-evidence")
@@ -283,6 +286,16 @@ struct RobotTopologyView: View {
         let affected = statuses.contains(where: \.possiblyAffectedDownstream)
         if let abnormal = statuses.first(where: { $0.signal == .abnormal }) {
             return TopologyElementStatus(signal: .abnormal, note: abnormal.note, directEvents: events, possiblyAffectedDownstream: false)
+        }
+        if let staleStream = RobotTopologyCatalog.flow(subsystem.flowID)?.edgeIDs
+            .compactMap({ evaluation.edgeStatus($0) })
+            .first(where: { $0.signal == .dataStale }) {
+            return TopologyElementStatus(
+                signal: .dataStale,
+                note: "直接观测到数据流暂未更新；原因和工作区来源未知，不判定模块故障。\n\(staleStream.note)",
+                directEvents: events,
+                possiblyAffectedDownstream: true
+            )
         }
         if statuses.contains(where: { $0.signal == .unknown }) {
             return TopologyElementStatus(signal: .unknown, note: "子系统存在未知或未确认来源的组件状态。", directEvents: events, possiblyAffectedDownstream: affected)
@@ -560,6 +573,9 @@ private func signalColor(_ signal: TopologySignal) -> Color {
     case .unknown, .notRunning, .processNotFound: return Palette.warning
     case .processObserved, .topicsAllVisible, .topicsPartiallyVisible: return Palette.blue
     case .topicsNoneVisible: return Palette.muted
+    case .dataObserved: return Palette.blue
+    case .dataPartiallyObserved, .dataStale: return Palette.warning
+    case .dataNotObserved: return Palette.muted
     }
 }
 
@@ -567,6 +583,7 @@ private struct TopologyNodeEvidencePanel: View {
     let node: TopologyNodeDefinition
     let status: TopologyElementStatus
     let context: TopologyRuntimeContext
+    let linkTelemetryMessage: String?
     let onClose: () -> Void
 
     private var workspaceEvidence: [(WorkspaceReading, WorkspaceModuleReading)] {
@@ -596,6 +613,10 @@ private struct TopologyNodeEvidencePanel: View {
 
                 if !node.resourceHints.isEmpty {
                     evidenceSection(title: "Topic / 接口", source: node.resourceHints.joined(separator: " · "), paths: [])
+                }
+
+                if node.groupID == "localization" {
+                    linkTelemetryEvidence
                 }
 
                 if !workspaceEvidence.isEmpty {
@@ -637,6 +658,42 @@ private struct TopologyNodeEvidencePanel: View {
         }
     }
 
+    private var linkTelemetryEvidence: some View {
+        let streams = LinkTelemetryDiagnostics.streams(for: node.id, telemetry: context.linkTelemetry)
+        let telemetry = context.linkTelemetry
+        return VStack(alignment: .leading, spacing: 8) {
+            evidenceHeading("实时数据链路 · Agent 只读接收")
+            if let telemetry {
+                Text("ROS Domain \(telemetry.domainId.map(String.init) ?? "未知") · Graph \(telemetry.graphObservedAt ?? "时间未知") · Agent 快照 \(telemetry.collectedAt) · 工作区来源未确认")
+                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+                if let blocked = context.linkTelemetryBlockReason {
+                    Text("当前 Domain / Graph 证据阻止链路归属判断：\(blocked)")
+                        .font(.system(size: 9, weight: .medium)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
+                }
+                if let summary = LinkTelemetryDiagnostics.pipelineSummary(
+                    nodeID: node.id,
+                    telemetry: telemetry,
+                    blockedReason: context.linkTelemetryBlockReason
+                ) {
+                    Text(summary).font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                }
+                if streams.isEmpty {
+                    Text("该节点没有当前 Agent 固定采样的 Topic，或该版本未提供遥测记录。")
+                        .font(.system(size: 9)).foregroundStyle(Palette.muted)
+                } else {
+                    ForEach(streams) { stream in
+                        LinkTelemetryStreamEvidenceRow(stream: stream, blockedReason: context.linkTelemetryBlockReason, clockNote: telemetry.clockNote)
+                    }
+                }
+            } else {
+                Text(context.agentOnline
+                     ? (linkTelemetryMessage ?? "当前 Agent 尚未返回实时链路遥测。")
+                     : "Agent 当前断连；不使用历史链路数据进行实时判定。")
+                    .font(.system(size: 9)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private var runModeSummary: String {
         let modes = workspaceEvidence.compactMap { $0.0.runMode }.filter { $0 != "unknown" }
         return modes.isEmpty ? "未知" : Array(Set(modes)).sorted().joined(separator: " / ")
@@ -662,6 +719,79 @@ private struct TopologyNodeEvidencePanel: View {
             Text(value).font(.system(size: 9, design: .monospaced)).foregroundStyle(.white).textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct LinkTelemetryStreamEvidenceRow: View {
+    let stream: LinkTelemetryStreamReading
+    let blockedReason: String?
+    let clockNote: String
+
+    private var signal: TopologySignal {
+        guard blockedReason == nil else { return .unknown }
+        switch stream.status {
+        case "streaming": return .dataObserved
+        case "stale": return .dataStale
+        case "waiting", "unavailable": return .dataNotObserved
+        default: return .unknown
+        }
+    }
+
+    private var recommendation: String {
+        switch stream.id {
+        case "livox_lidar", "livox_imu": return "查看 MID-360 配置、驱动日志与主机网络证据；Console 不启动设备或驱动。"
+        case "imu_transformed": return "查看 imu_transform 节点日志、输入/输出类型与变换配置。"
+        case "imu_data": return "查看 IMU 互补滤波节点日志及 /livox/imu_aft_tf 输入证据。"
+        case "pointlio_odometry", "cloud_registered": return "对照点云和 /imu/data 输入，再查看 Point-LIO 日志与 TF 证据。"
+        case "terrain_map": return "对照 /cloud_registered 和地形分析节点证据。"
+        case "scan": return "对照 /terrain_map、点云转 LaserScan 节点及所需 TF。"
+        case "map": return "对照 /scan 更新、SLAM Toolbox 日志和地图更新条件。"
+        default: return "查看该 Topic 对应的只读运行证据。"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                TopologyStatusBadge(signal: signal, compact: true)
+                Text(stream.label).font(.system(size: 9, weight: .semibold))
+                Spacer()
+                Text(stream.receiveRateHz.map { "Agent \(String(format: "%.2f Hz", $0))" } ?? "Agent 接收频率未知")
+                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.blue)
+            }
+            Text("\(stream.topic) · \(stream.topicType ?? "消息类型未知") · ROS Domain 接收年龄 \(stream.ageMs.map { "\($0) ms" } ?? "未知") · 超时阈值 \(stream.staleAfterMs) ms")
+                .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            Text("订阅周期 #\(stream.subscriptionGeneration.map { String($0) } ?? "未知") 开始 \(stream.subscriptionStartedAt ?? "未知") · 当前周期接收 \(stream.receivedAt ?? "尚无")")
+                .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            Text("源时间 \(stream.sourceStamp ?? "未知") · header 对照 \(stream.headerToAgentMs.map { String(format: "%.1f ms", $0) } ?? "未知") · frame \(stream.frameId ?? "未知")")
+                .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            if let previous = stream.previousReceivedAt {
+                Text("历史接收（仅供参考，不参与当前状态判定）\(previous) · 上一周期 #\(stream.previousSubscriptionGeneration.map { String($0) } ?? "未知")")
+                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            }
+            Text("发布者 \(stream.publisherCount.map { String($0) } ?? "未知") · 端点 \(publisherSummary) · 工作区归属：未确认 · 样本尺寸 \(sampleSummary) · 接收间断 \(stream.gapEvents) 次（最近 \(stream.lastGapMs.map { "\($0) ms" } ?? "无记录")）")
+                .font(.system(size: 8)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            if let reason = blockedReason ?? stream.reason {
+                Text(reason).font(.system(size: 8)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("排查建议：\(recommendation)").font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            Text(clockNote).font(.system(size: 7)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .background(Palette.panelRaised.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("topology.telemetry.\(stream.id)")
+    }
+
+    private var publisherSummary: String {
+        let endpoints = stream.publisherEndpoints.map { endpoint in
+            endpoint.namespace == "/" ? endpoint.name : "\(endpoint.namespace)/\(endpoint.name)"
+        }
+        return endpoints.isEmpty ? "未见" : endpoints.joined(separator: "、")
+    }
+
+    private var sampleSummary: String {
+        guard let count = stream.sampleCount else { return "未知" }
+        return "\(count) \(stream.sampleUnit ?? "")"
     }
 }
 

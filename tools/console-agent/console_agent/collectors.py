@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .link_telemetry import TELEMETRY_STREAMS, LinkTelemetryObserver
 from .vision import STREAMS, VisionObserver
 from .workspaces import collect_workspaces
 
@@ -259,7 +260,7 @@ def collect_tests() -> dict[str, Any]:
 
 
 class ROSGraphObserver:
-    """One ROS graph reader with fixed, read-only image subscriptions."""
+    """One ROS graph reader with fixed, read-only image and link subscriptions."""
 
     def __init__(self) -> None:
         self._stop = threading.Event()
@@ -274,6 +275,7 @@ class ROSGraphObserver:
         self._last_observed_at: str | None = None
         self._last_observed_mono: float | None = None
         self._vision = VisionObserver()
+        self._link_telemetry = LinkTelemetryObserver()
         self._thread = threading.Thread(target=self._run, name="ros-graph-observer", daemon=True)
         self._thread.start()
 
@@ -304,6 +306,9 @@ class ROSGraphObserver:
     def vision_snapshot(self) -> dict[str, Any]:
         return self._vision.snapshot()
 
+    def link_telemetry_snapshot(self) -> dict[str, Any]:
+        return self._link_telemetry.snapshot()
+
     def vision_frame_png(self, stream_id: str) -> tuple[bytes | None, str | None, int | None]:
         return self._vision.frame_png(stream_id)
 
@@ -327,7 +332,13 @@ class ROSGraphObserver:
         try:
             import rclpy
             from rclpy.executors import SingleThreadedExecutor
-            from rclpy.qos import qos_profile_sensor_data
+            from rclpy.qos import (
+                QoSDurabilityPolicy,
+                QoSHistoryPolicy,
+                QoSProfile,
+                QoSReliabilityPolicy,
+                qos_profile_sensor_data,
+            )
             from sensor_msgs.msg import Image
 
             context = rclpy.context.Context()
@@ -346,6 +357,15 @@ class ROSGraphObserver:
                     lambda message, selected=stream_id: self._vision.receive(selected, message),
                     qos_profile_sensor_data,
                 )
+            message_types = _load_link_telemetry_message_types()
+            self._link_telemetry.set_available_message_types(set(message_types))
+            telemetry_qos = QoSProfile(
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                durability=QoSDurabilityPolicy.VOLATILE,
+            )
+            telemetry_subscriptions: dict[str, tuple[str, tuple[tuple[str, str, str, str], ...], Any]] = {}
             executor = SingleThreadedExecutor(context=context)
             executor.add_node(node)
             last_graph_read = 0.0
@@ -373,7 +393,39 @@ class ROSGraphObserver:
                         [publisher.topic_type for publisher in publishers],
                         len(publishers),
                     )
+                for stream_id, definition in TELEMETRY_STREAMS.items():
+                    try:
+                        publishers = node.get_publishers_info_by_topic(definition["topic"])
+                    except Exception:
+                        self._link_telemetry.update_publishers(stream_id, None)
+                        continue
+                    endpoints = [
+                        {
+                            "name": str(getattr(publisher, "node_name", "")),
+                            "namespace": str(getattr(publisher, "node_namespace", "")),
+                            "topic_type": str(getattr(publisher, "topic_type", "")),
+                            "endpoint_gid": _endpoint_gid_signature(getattr(publisher, "endpoint_gid", None)),
+                        }
+                        for publisher in publishers
+                    ]
+                    self._link_telemetry.update_publishers(stream_id, endpoints)
+                    _sync_link_telemetry_subscription(
+                        node,
+                        stream_id,
+                        endpoints,
+                        message_types,
+                        telemetry_qos,
+                        telemetry_subscriptions,
+                        self._link_telemetry,
+                    )
                 self._vision.graph_available()
+                expected_domain_id, expected_domain_error = _expected_ros_domain_id()
+                self._link_telemetry.graph_available(
+                    domain_id=self._domain_id(),
+                    observed_at=utc_now(),
+                    expected_domain_id=expected_domain_id,
+                    expected_domain_error=expected_domain_error,
+                )
                 self._store_snapshot({
                     "status": "ok",
                     "domain_id": self._domain_id(),
@@ -383,6 +435,7 @@ class ROSGraphObserver:
                 })
         except Exception as exc:
             self._vision.graph_unavailable(f"ROS image observer unavailable: {type(exc).__name__}: {exc}")
+            self._link_telemetry.graph_unavailable(f"ROS graph observer unavailable: {type(exc).__name__}: {exc}")
             self._store_snapshot({
                 "status": "unknown",
                 "domain_id": self._domain_id(),
@@ -396,6 +449,12 @@ class ROSGraphObserver:
                     executor.remove_node(node)
                 except Exception:
                     pass
+            if node is not None:
+                for _message_type, _fingerprint, subscription in locals().get("telemetry_subscriptions", {}).values():
+                    try:
+                        node.destroy_subscription(subscription)
+                    except Exception:
+                        pass
             if node is not None:
                 try:
                     node.destroy_node()
@@ -416,6 +475,129 @@ def _disable_default_parameter_event_publisher(node: Any) -> None:
     if publisher is not None:
         node.destroy_publisher(publisher)
         node._parameter_event_publisher = None
+
+
+def _endpoint_gid_signature(value: Any) -> str:
+    """Normalize the ROS endpoint GID for internal publisher-restart detection."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        raw = bytes(value)
+        if raw:
+            return raw.hex()
+    except (TypeError, ValueError):
+        pass
+    try:
+        return ",".join(str(int(part)) for part in value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _load_link_telemetry_message_types() -> dict[str, Any]:
+    """Load only fixed ROS message types; missing workspace type support stays observable as unknown."""
+    result: dict[str, Any] = {}
+    try:
+        from sensor_msgs.msg import Imu, LaserScan, PointCloud2
+
+        result.update({
+            "sensor_msgs/msg/Imu": Imu,
+            "sensor_msgs/msg/LaserScan": LaserScan,
+            "sensor_msgs/msg/PointCloud2": PointCloud2,
+        })
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from nav_msgs.msg import OccupancyGrid, Odometry
+
+        result.update({
+            "nav_msgs/msg/OccupancyGrid": OccupancyGrid,
+            "nav_msgs/msg/Odometry": Odometry,
+        })
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from livox_ros_driver2.msg import CustomMsg
+
+        result["livox_ros_driver2/msg/CustomMsg"] = CustomMsg
+    except (ImportError, AttributeError):
+        pass
+    return result
+
+
+def _sync_link_telemetry_subscription(
+    node: Any,
+    stream_id: str,
+    endpoints: list[dict[str, str]],
+    message_types: dict[str, Any],
+    qos_profile: Any,
+    subscriptions: dict[str, tuple[str, tuple[tuple[str, str, str, str], ...], Any]],
+    telemetry: LinkTelemetryObserver,
+) -> None:
+    """Create subscriptions only for one allowlisted type on a fixed topic."""
+    definition = TELEMETRY_STREAMS[stream_id]
+    topic_types = sorted({endpoint["topic_type"] for endpoint in endpoints if endpoint.get("topic_type")})
+    existing = subscriptions.get(stream_id)
+    fingerprint = tuple(sorted((
+        str(endpoint.get("name") or ""),
+        str(endpoint.get("namespace") or ""),
+        str(endpoint.get("topic_type") or ""),
+        str(endpoint.get("endpoint_gid") or ""),
+    ) for endpoint in endpoints))
+    if len(topic_types) != 1 or topic_types[0] not in definition["message_types"]:
+        if existing is not None:
+            try:
+                node.destroy_subscription(existing[2])
+            except Exception:
+                pass
+            subscriptions.pop(stream_id, None)
+        reason = "publisher type is missing or ambiguous" if len(topic_types) != 1 else "publisher type is outside the fixed telemetry allowlist"
+        # An empty publisher list is a valid observation and does not need an active subscription.
+        if not endpoints:
+            reason = "no publisher is currently visible in this ROS Domain"
+        telemetry.subscription_unavailable(stream_id, None, reason)
+        return
+
+    message_type = topic_types[0]
+    message_class = message_types.get(message_type)
+    if message_class is None:
+        if existing is not None:
+            try:
+                node.destroy_subscription(existing[2])
+            except Exception:
+                pass
+            subscriptions.pop(stream_id, None)
+        telemetry.subscription_unavailable(stream_id, message_type, "ROS message type support is not loaded in the Agent environment")
+        return
+    if existing is not None and existing[0] == message_type and existing[1] == fingerprint:
+        telemetry.subscription_ready(stream_id, message_type)
+        return
+    if existing is not None:
+        try:
+            node.destroy_subscription(existing[2])
+        except Exception:
+            pass
+        subscriptions.pop(stream_id, None)
+        telemetry.subscription_unavailable(stream_id, message_type, "publisher endpoint set changed; replacing the read-only subscription")
+    generation = telemetry.begin_subscription(stream_id, message_type)
+    try:
+        subscription = node.create_subscription(
+            message_class,
+            definition["topic"],
+            lambda message, selected=stream_id, selected_type=message_type, selected_generation=generation: telemetry.receive(
+                selected,
+                message,
+                selected_type,
+                subscription_generation=selected_generation,
+            ),
+            qos_profile,
+        )
+    except Exception as exc:
+        telemetry.subscription_unavailable(stream_id, message_type, f"fixed read-only subscription unavailable: {type(exc).__name__}")
+        return
+    subscriptions[stream_id] = (message_type, fingerprint, subscription)
+    telemetry.subscription_ready(stream_id, message_type)
 
 
 def start_ros_graph_observer() -> ROSGraphObserver:
@@ -476,6 +658,13 @@ def collect_vision() -> dict[str, Any]:
             for stream_id, definition in STREAMS.items()
         ],
     }
+
+
+def collect_link_telemetry() -> dict[str, Any]:
+    observer = _ROS_OBSERVER
+    if observer is not None:
+        return observer.link_telemetry_snapshot()
+    return LinkTelemetryObserver().snapshot()
 
 
 def collect_vision_frame(stream_id: str) -> tuple[bytes | None, str | None, int | None]:

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lunar-cave-robot.local/schemas/link-telemetry-v1.schema.json",
+  "title": "Lunar Console fixed ROS link telemetry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "source",
+    "collected_at",
+    "domain_id",
+    "expected_domain_id",
+    "expected_domain_error",
+    "domain_matches_expectation",
+    "graph_status",
+    "graph_observed_at",
+    "graph_age_ms",
+    "graph_reason",
+    "workspace_attribution",
+    "clock_note",
+    "streams"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "status": { "enum": ["ok", "unknown"] },
+    "source": { "const": "nuc-ros2-fixed-topic-read-only-subscriber" },
+    "collected_at": { "type": "string", "format": "date-time" },
+    "domain_id": { "type": ["integer", "null"], "minimum": 0, "maximum": 232 },
+    "expected_domain_id": { "type": ["integer", "null"], "minimum": 0, "maximum": 232 },
+    "expected_domain_error": { "type": ["string", "null"] },
+    "domain_matches_expectation": { "type": ["boolean", "null"] },
+    "graph_status": { "enum": ["ok", "unknown"] },
+    "graph_observed_at": { "type": ["string", "null"], "format": "date-time" },
+    "graph_age_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "graph_reason": { "type": ["string", "null"] },
+    "workspace_attribution": { "const": "unknown" },
+    "clock_note": { "type": "string" },
+    "streams": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/stream" }
+    }
+  },
+  "$defs": {
+    "publisherEndpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace", "topic_type"],
+      "properties": {
+        "name": { "type": "string" },
+        "namespace": { "type": "string" },
+        "topic_type": { "type": "string" }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "label", "topic", "topic_type", "topic_types", "status", "reason",
+        "publisher_count", "publisher_endpoints", "workspace_attribution", "subscription_generation",
+        "subscription_started_at", "previous_received_at", "previous_subscription_generation", "received_at",
+        "source_stamp", "age_ms", "receive_rate_hz", "header_to_agent_ms", "frame_id",
+        "sample_count", "sample_unit", "gap_events", "last_gap_ms", "stale_after_ms", "receive_count"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "topic": { "type": "string" },
+        "topic_type": { "type": ["string", "null"] },
+        "topic_types": { "type": "array", "items": { "type": "string" } },
+        "status": { "enum": ["streaming", "stale", "unavailable", "unsupported", "waiting", "unknown"] },
+        "reason": { "type": ["string", "null"] },
+        "publisher_count": { "type": ["integer", "null"], "minimum": 0 },
+        "publisher_endpoints": { "type": "array", "items": { "$ref": "#/$defs/publisherEndpoint" } },
+        "workspace_attribution": { "const": "unknown" },
+        "subscription_generation": { "type": "integer", "minimum": 0 },
+        "subscription_started_at": { "type": ["string", "null"], "format": "date-time" },
+        "previous_received_at": { "type": ["string", "null"], "format": "date-time" },
+        "previous_subscription_generation": { "type": ["integer", "null"], "minimum": 0 },
+        "received_at": { "type": ["string", "null"], "format": "date-time" },
+        "source_stamp": { "type": ["string", "null"], "format": "date-time" },
+        "age_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "receive_rate_hz": { "type": ["number", "null"], "minimum": 0 },
+        "header_to_agent_ms": { "type": ["number", "null"] },
+        "frame_id": { "type": ["string", "null"] },
+        "sample_count": { "type": ["integer", "null"], "minimum": 0 },
+        "sample_unit": { "type": ["string", "null"], "enum": ["points", "ranges", "cells", null] },
+        "gap_events": { "type": "integer", "minimum": 0 },
+        "last_gap_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "stale_after_ms": { "type": "integer", "minimum": 0 },
+        "receive_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

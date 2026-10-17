@@ -9,10 +9,12 @@ from datetime import datetime, timezone
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from console_agent.collectors import ROSGraphObserver, _disable_default_parameter_event_publisher, collect_logs
+from console_agent.collectors import ROSGraphObserver, _disable_default_parameter_event_publisher, _sync_link_telemetry_subscription, collect_logs
+from console_agent.link_telemetry import LinkTelemetryObserver
 from console_agent.server import HOST, ReadOnlyHandler, main
 
 
@@ -137,6 +139,131 @@ class AgentHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
         self.assertEqual(json.loads(body), payload)
+
+    def test_link_telemetry_endpoint_returns_fixed_allowlist_observations(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "status": "ok",
+            "source": "nuc-ros2-fixed-topic-read-only-subscriber",
+            "collected_at": "2026-10-17T00:00:00.000Z",
+            "domain_id": 187,
+            "expected_domain_id": None,
+            "expected_domain_error": None,
+            "domain_matches_expectation": None,
+            "graph_status": "ok",
+            "graph_observed_at": "2026-10-17T00:00:00.000Z",
+            "graph_age_ms": 20,
+            "graph_reason": None,
+            "workspace_attribution": "unknown",
+            "clock_note": "source and Agent clocks are not confirmed synchronized",
+            "streams": [],
+        }
+        with patch("console_agent.server.collect_link_telemetry", return_value=payload):
+            status, headers, body = self.request("GET", "/v1/telemetry")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(json.loads(body), payload)
+
+    def test_link_telemetry_contract_matches_its_versioned_schema(self) -> None:
+        payload = LinkTelemetryObserver().snapshot()
+        schema_path = Path(__file__).resolve().parents[1] / "schema" / "link-telemetry-v1.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assert_matches_schema(payload, schema, schema)
+
+    def test_link_telemetry_subscribes_only_fixed_topic_and_discovered_allowlisted_type(self) -> None:
+        class NodeStub:
+            def __init__(self) -> None:
+                self.subscriptions = []
+                self.destroyed = []
+
+            def create_subscription(self, message_class, topic, callback, qos_profile):
+                value = (message_class, topic, callback, qos_profile)
+                self.subscriptions.append(value)
+                return value
+
+            def destroy_subscription(self, _subscription):
+                self.destroyed.append(_subscription)
+
+        class PointCloud2:
+            pass
+
+        node = NodeStub()
+        observer = LinkTelemetryObserver()
+        observer.set_available_message_types({"sensor_msgs/msg/PointCloud2"})
+        observer.graph_available(
+            domain_id=187,
+            observed_at="2026-10-17T00:00:00.000Z",
+            expected_domain_id=None,
+            expected_domain_error=None,
+        )
+        subscriptions = {}
+        endpoints = [{
+            "name": "synthetic_lidar", "namespace": "/sim",
+            "topic_type": "sensor_msgs/msg/PointCloud2", "endpoint_gid": "01",
+        }]
+        observer.update_publishers("livox_lidar", endpoints)
+        _sync_link_telemetry_subscription(
+            node, "livox_lidar", endpoints, {"sensor_msgs/msg/PointCloud2": PointCloud2}, object(), subscriptions, observer
+        )
+        self.assertEqual(len(node.subscriptions), 1)
+        self.assertIs(node.subscriptions[0][0], PointCloud2)
+        self.assertEqual(node.subscriptions[0][1], "/livox/lidar")
+
+        message = SimpleNamespace(
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(sec=1_797_589_600, nanosec=0),
+                frame_id="synthetic_lidar",
+            ),
+            width=10,
+            height=1,
+        )
+        old_callback = node.subscriptions[0][2]
+        old_callback(message)
+        old_stream = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(old_stream["status"], "streaming")
+        self.assertEqual(old_stream["subscription_generation"], 1)
+
+        # A publisher restart may keep its name, namespace, and type while receiving a new ROS endpoint GID.
+        replacement = [{**endpoints[0], "endpoint_gid": "02"}]
+        observer.update_publishers("livox_lidar", replacement)
+        _sync_link_telemetry_subscription(
+            node,
+            "livox_lidar",
+            replacement,
+            {"sensor_msgs/msg/PointCloud2": PointCloud2},
+            object(),
+            subscriptions,
+            observer,
+        )
+        self.assertEqual(len(node.subscriptions), 2)
+        self.assertEqual(len(node.destroyed), 1)
+        waiting = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting["subscription_generation"], 2)
+        self.assertIsNone(waiting["received_at"])
+        self.assertIsNone(waiting["age_ms"])
+        self.assertEqual(waiting["previous_subscription_generation"], 1)
+        self.assertIsNotNone(waiting["previous_received_at"])
+
+        # A callback already queued for the destroyed publisher is rejected after the endpoint switch.
+        old_callback(message)
+        self.assertEqual(next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")["receive_count"], 0)
+        node.subscriptions[1][2](message)
+        recovered = next(item for item in observer.snapshot()["streams"] if item["id"] == "livox_lidar")
+        self.assertEqual(recovered["status"], "streaming")
+        self.assertEqual(recovered["receive_count"], 1)
+
+        _sync_link_telemetry_subscription(
+            node,
+            "livox_lidar",
+            [{"name": "unknown", "namespace": "/", "topic_type": "example_msgs/msg/Arbitrary"}],
+            {"example_msgs/msg/Arbitrary": object},
+            object(),
+            subscriptions,
+            observer,
+        )
+        self.assertEqual(len(node.subscriptions), 2, "Unknown message types must not create dynamic subscriptions.")
 
     def test_vision_frame_is_a_no_store_png(self) -> None:
         with patch("console_agent.server.collect_vision_frame", return_value=(b"\x89PNG\r\n\x1a\n", None, None)):

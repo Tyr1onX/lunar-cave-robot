@@ -64,6 +64,8 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var workspaceSnapshotFreshness: WorkspaceSnapshotFreshness = .unavailable
     @Published private(set) var logs: LogReading?
     @Published private(set) var vision: VisionReading?
+    @Published private(set) var linkTelemetry: LinkTelemetryReading?
+    @Published private(set) var linkTelemetryMessage: String?
     @Published private(set) var visionFrame: Data?
     @Published private(set) var visionMessage: String?
     @Published private(set) var visionFrameMessage: String?
@@ -87,6 +89,7 @@ final class ConsoleModel: ObservableObject {
     private var tunnelErrorPipe: Pipe?
     private var refreshTask: Task<Void, Never>?
     private var visionRefreshTask: Task<Void, Never>?
+    private var linkTelemetryRefreshTask: Task<Void, Never>?
     private var visionFrameTask: Task<Void, Never>?
     private(set) var agentSession = 0
     private var snapshotSession: Int?
@@ -95,6 +98,8 @@ final class ConsoleModel: ObservableObject {
     private var isReadingGitHub = false
     private var isReadingLogs = false
     private var isReadingVision = false
+    private var isReadingLinkTelemetry = false
+    private var linkTelemetryEndpointAvailable: Bool?
     private var isReadingVisionFrame = false
     private var lastLogRead = Date.distantPast
     private var lastFrameUpdateUptime: TimeInterval?
@@ -139,6 +144,12 @@ final class ConsoleModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+        linkTelemetryRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshLinkTelemetry()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
         visionFrameTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshVisionFrame()
@@ -153,6 +164,8 @@ final class ConsoleModel: ObservableObject {
         refreshTask = nil
         visionRefreshTask?.cancel()
         visionRefreshTask = nil
+        linkTelemetryRefreshTask?.cancel()
+        linkTelemetryRefreshTask = nil
         visionFrameTask?.cancel()
         visionFrameTask = nil
         invalidateAgentData(message: "NUC Agent 已停止")
@@ -277,6 +290,7 @@ final class ConsoleModel: ObservableObject {
                 throw URLError(.cannotParseResponse)
             }
             applySnapshot(received, requestSession: requestSession)
+            Task { await refreshLinkTelemetry() }
             if Date().timeIntervalSince(lastLogRead) > 6 { refreshLogs() }
         } catch {
             guard requestSession == agentSession else { return }
@@ -343,6 +357,9 @@ final class ConsoleModel: ObservableObject {
         snapshotSession = nil
         logs = nil
         vision = nil
+        linkTelemetry = nil
+        linkTelemetryMessage = nil
+        linkTelemetryEndpointAvailable = nil
         visionFrame = nil
         visionMessage = nil
         visionFrameMessage = nil
@@ -371,6 +388,19 @@ final class ConsoleModel: ObservableObject {
             visionFrameMessage = reading.stream(selectedVisionStream)?.reason
             return
         }
+    }
+
+    func applyLinkTelemetry(_ reading: LinkTelemetryReading, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession else { return }
+        linkTelemetry = reading
+        linkTelemetryMessage = nil
+        linkTelemetryEndpointAvailable = true
+    }
+
+    func applyLinkTelemetryError(_ message: String, requestSession: Int) {
+        guard agentOnline, requestSession == agentSession else { return }
+        linkTelemetry = nil
+        linkTelemetryMessage = message
     }
 
     func applyVisionFrame(_ data: Data, streamID: VisionStreamID, requestSession: Int, roundTripMs: Double) {
@@ -448,6 +478,32 @@ final class ConsoleModel: ObservableObject {
             applyVisionReading(try decoder.decode(VisionReading.self, from: data), requestSession: requestSession)
         } catch {
             applyVisionError("视觉状态暂不可读 · \(error.localizedDescription)", requestSession: requestSession)
+        }
+    }
+
+    private func refreshLinkTelemetry() async {
+        guard agentOnline, !isReadingLinkTelemetry, linkTelemetryEndpointAvailable != false else { return }
+        isReadingLinkTelemetry = true
+        defer { isReadingLinkTelemetry = false }
+        let requestSession = agentSession
+        do {
+            let (data, response) = try await session.data(from: apiRoot.appendingPathComponent("v1/telemetry"))
+            guard requestSession == agentSession, agentOnline else { return }
+            guard let http = response as? HTTPURLResponse else { throw URLError(.cannotParseResponse) }
+            guard http.statusCode == 200 else {
+                if http.statusCode == 404 {
+                    linkTelemetryEndpointAvailable = false
+                    applyLinkTelemetryError("当前 Agent 版本没有实时链路遥测接口", requestSession: requestSession)
+                    return
+                }
+                throw URLError(.badServerResponse)
+            }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            let reading = try decoder.decode(LinkTelemetryReading.self, from: data)
+            applyLinkTelemetry(reading, requestSession: requestSession)
+        } catch {
+            applyLinkTelemetryError("实时链路遥测暂不可读 · \(error.localizedDescription)", requestSession: requestSession)
         }
     }
 
