@@ -51,7 +51,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$RUNNER_TEMP/lunar-ros-results:/results" \
             ros:humble-ros-base \
-            bash -lc 'set -euo pipefail; source /opt/ros/humble/setup.bash; export PYTHONPATH="/workspace/tools/console-agent${PYTHONPATH:+:$PYTHONPATH}"; python3 /workspace/tools/console-agent/scripts/benchmark_link_telemetry.py --report /results/link-telemetry-benchmark.json'
+            bash -lc 'source /opt/ros/humble/setup.bash; set -eo pipefail; export PYTHONPATH="/workspace/tools/console-agent${PYTHONPATH:+:$PYTHONPATH}"; python3 /workspace/tools/console-agent/scripts/benchmark_link_telemetry.py --report /results/link-telemetry-benchmark.json'
 
       - name: Upload benchmark baseline and load report
         if: always()
