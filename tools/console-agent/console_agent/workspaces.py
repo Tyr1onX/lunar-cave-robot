@@ -227,6 +227,20 @@ def _package_from_text(text: str, known_packages: set[str]) -> str | None:
     return None
 
 
+def _is_known_session_helper(comm: str, cmdline: str) -> bool:
+    """Exclude only the audited systemd user-session helper from ROS probing."""
+    try:
+        tokens = shlex.split(cmdline)
+    except ValueError:
+        tokens = cmdline.split()
+    return (
+        Path(comm).name == "sd-pam"
+        and bool(tokens)
+        and Path(tokens[0]).name == "systemd"
+        and "--user" in tokens
+    )
+
+
 def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[dict[str, list[dict[str, Any]]], str, str | None]:
     found: dict[str, list[dict[str, Any]]] = {spec.id: [] for spec in specs}
     observed_at = _utc_now()
@@ -238,6 +252,11 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         return found, "unknown", f"process table could not be read: {type(exc).__name__}"
 
     current_uid = os.getuid()
+    package_sets = {
+        spec.id: {item["name"] for item in _collect_source_inventory(spec).get("packages", [])}
+        for spec in specs
+    }
+    known_packages = set().union(*package_sets.values()) if package_sets else set()
     ambiguous_process = False
     for process_dir in entries:
         if not process_dir.name.isdigit():
@@ -249,25 +268,57 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             comm = (process_dir / "comm").read_text(encoding="utf-8", errors="replace").strip()[:64]
             raw_cmdline = (process_dir / "cmdline").read_bytes()
             cmdline = raw_cmdline.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
-            if not raw_cmdline or not cmdline:
-                continue
-            environment = _read_process_environment(process_dir / "environ")
-            try:
-                cwd = str((process_dir / "cwd").resolve())
-            except OSError:
-                cwd = ""
-            try:
-                executable = str((process_dir / "exe").resolve())
-            except OSError:
-                executable = ""
         except FileNotFoundError:
             continue
         except PermissionError:
             scan_status = "partial"
-            scan_reason = "部分当前 UID 进程信息不可读"
+            scan_reason = "部分当前 UID 进程身份信息不可读"
             continue
         except OSError:
             continue
+
+        # Do not use an executable-name allowlist here: custom ROS executables
+        # may have arbitrary names and may expose their workspace only through
+        # cwd or the allowlisted overlay environment. The one excluded helper
+        # is the audited systemd session process whose metadata is commonly
+        # non-dumpable on the target NUC.
+        if _is_known_session_helper(comm, cmdline):
+            continue
+
+        environment_readable = True
+        try:
+            environment = _read_process_environment(process_dir / "environ")
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            environment = {}
+            environment_readable = False
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的 allowlisted 环境字段不可读"
+        try:
+            cwd = str((process_dir / "cwd").resolve())
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            cwd = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的工作目录信息不可读"
+        except OSError:
+            cwd = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的工作目录信息不可读"
+        try:
+            executable = str((process_dir / "exe").resolve())
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            executable = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的可执行文件信息不可读"
+        except OSError:
+            executable = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的可执行文件信息不可读"
 
         candidates: list[tuple[WorkspaceSpec, list[str]]] = []
         for spec in specs:
@@ -291,11 +342,6 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         if not candidates:
             continue
 
-        package_sets = {
-            spec.id: {item["name"] for item in _collect_source_inventory(spec).get("packages", [])}
-            for spec, _evidence in candidates
-        }
-        known_packages = set().union(*package_sets.values())
         package = _package_from_text(cmdline, known_packages)
         try:
             command_tokens = shlex.split(cmdline)
@@ -318,7 +364,7 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             except PermissionError:
                 maps = ""
                 scan_status = "partial"
-                scan_reason = "部分当前 UID 进程映射不可读"
+                scan_reason = "部分工作区候选进程的只读映射信息不可读"
             except OSError:
                 maps = ""
             package = _package_from_text(maps, known_packages)
@@ -352,6 +398,8 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         except ValueError:
             domain_id = None
             domain_evidence = "invalid"
+        if not environment_readable:
+            domain_evidence = "unavailable"
         local_only = environment.get("ROS_LOCALHOST_ONLY")
         raw_mode = environment.get("LUNAR_CONSOLE_RUN_MODE", "").strip().lower()
         run_mode = raw_mode if raw_mode in {"hardware", "simulation", "offline", "read-only"} else "unknown"
@@ -493,7 +541,7 @@ def collect_workspaces(
         "collected_at": observed_at,
         "process_scan": {
             "status": scan_status,
-            "scope": "Agent UID only",
+            "scope": "Agent UID; process identity and workspace references; audited systemd session helper excluded",
             "source": str(proc_root),
             "observed_at": observed_at,
             "reason": scan_reason,

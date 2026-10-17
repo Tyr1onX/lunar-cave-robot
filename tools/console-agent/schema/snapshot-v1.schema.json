@@ -150,7 +150,7 @@
       "properties": {
         "pid": {"type": "integer"}, "process_name": {"type": "string"},
         "package": {"type": ["string", "null"]}, "domain_id": {"type": ["integer", "null"]},
-        "domain_evidence": {"enum": ["observed", "unset", "invalid"]}, "localhost_only": {"enum": ["0", "1", null]},
+        "domain_evidence": {"enum": ["observed", "unset", "invalid", "unavailable"]}, "localhost_only": {"enum": ["0", "1", null]},
         "run_mode": {"enum": ["hardware", "simulation", "offline", "read-only", "unknown"]},
         "matched_by": {"type": "array", "items": {"enum": ["working_directory", "executable_path", "command_path", "overlay_environment"]}},
         "observed_at": {"type": "string", "format": "date-time"}
