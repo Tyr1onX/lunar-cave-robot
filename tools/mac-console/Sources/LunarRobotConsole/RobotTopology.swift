@@ -286,7 +286,7 @@ enum RobotTopologyCatalog {
         var visited = Set<String>()
         var pending = [startID]
         while let current = pending.popLast() {
-            for edge in edges where edge.sourceNodeID == current &&
+            for edge in edges where edge.sourceNodeID == current && !edge.isFeedback &&
                 edge.evidence != .openInterface && edge.evidence != .conditionalSourceWiring {
                 if visited.insert(edge.destinationNodeID).inserted {
                     pending.append(edge.destinationNodeID)

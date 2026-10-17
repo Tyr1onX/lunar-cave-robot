@@ -118,8 +118,10 @@ final class RobotTopologyTests: XCTestCase {
         XCTAssertEqual(evaluation.nodeStatus("yolo").signal, .unknown)
         XCTAssertTrue(evaluation.nodeStatus("yolo").possiblyAffectedDownstream)
         XCTAssertTrue(evaluation.edgeStatus("camera-yolo").possiblyAffectedDownstream)
-        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("mission-coordinator"), "Unconnected open interfaces must not propagate impact.")
-        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("arm-planner"))
+        XCTAssertTrue(evaluation.possiblyAffectedNodeIDs.contains("arm-planner"), "The confirmed pose topic makes the planner a possible downstream impact.")
+        XCTAssertNotEqual(evaluation.nodeStatus("arm-planner").signal, .abnormal, "A downstream impact must not be promoted to a direct fault.")
+        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("mission-coordinator"), "Return feedback does not extend forward impact propagation.")
+        XCTAssertFalse(evaluation.possiblyAffectedNodeIDs.contains("physical-estop"), "Unconnected safety inputs must remain isolated.")
     }
 
     func testRgbStreamDoesNotConfirmCameraModuleSource() throws {
