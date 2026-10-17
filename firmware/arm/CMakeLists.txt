@@ -50,6 +50,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # C++ business modules (mirror the "others" group of MDK-ARM/lunar_rover.uvprojx)
 set(USER_SOURCES
     others/src/app/Remote.c
+    others/src/app/arm_safety_state.c
     others/src/app/Host.cpp
     others/src/bsp/bsp_can.cpp
     others/src/callcallback/can_callback.cpp

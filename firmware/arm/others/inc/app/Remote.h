@@ -91,6 +91,10 @@ uint8_t Remote_IsHoldRequested(void);
    位置目标由上位机经 Joint::SetTarget() 下发。Host 模块据此决定是否采纳下行目标。 */
 uint8_t Remote_IsHostControl(void);
 
+/* Deliberate re-arm gesture: with neutral sticks, move S1 and S2 to DOWN/DOWN,
+   then move S1 to MID and select S2 DOWN (manual RC) or UP (host control). */
+uint8_t Remote_ConsumeManualRearmRequest(void);
+
 float Remote_NormalizeChannel(int16_t value);
 
 /* roboARM_task 每控制周期调用：整帧快照映射六轴（j1..j6）归一化速度。

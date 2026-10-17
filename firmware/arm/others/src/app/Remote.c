@@ -17,6 +17,7 @@ volatile RC_Status_t rc_status;
    按“空闲”而不是“收满”结束，避免与下一帧粘连错位。 */
 __attribute__((section(".dma_buffer"), aligned(32)))
 static uint8_t rc_rx_buf[RC_RX_BUF_LENGTH];
+static uint8_t manual_rearm_hold_seen;
 
 /* 整帧快照，避免 UART 中断更新到一半时混用通道与拨杆。 */
 static RC_Ctrl_t Remote_Snapshot(void)
@@ -130,6 +131,7 @@ void Remote_Init(void)
     memset(&rc_ctrl, 0, sizeof(rc_ctrl));
     memset(rc_rx_buf, 0, sizeof(rc_rx_buf));
     rc_ctrl.update_tick = HAL_GetTick() - RC_TICK_INIT_OFFSET;
+    manual_rearm_hold_seen = 0U;
 
     __HAL_UART_CLEAR_IDLEFLAG(&huart5);
     (void)Remote_StartReceive();
@@ -166,7 +168,43 @@ uint8_t Remote_IsHoldRequested(void)
 uint8_t Remote_IsHostControl(void)
 {
     const RC_Ctrl_t snapshot = Remote_Snapshot();
-    return (snapshot.rc.s2 == RC_SW_UP) ? 1U : 0U;
+    return (((HAL_GetTick() - snapshot.update_tick) <= RC_ONLINE_TIMEOUT_MS) &&
+            (snapshot.rc.s2 == RC_SW_UP)) ? 1U : 0U;
+}
+
+uint8_t Remote_ConsumeManualRearmRequest(void)
+{
+    const RC_Ctrl_t snapshot = Remote_Snapshot();
+    const uint8_t online =
+        ((HAL_GetTick() - snapshot.update_tick) <= RC_ONLINE_TIMEOUT_MS) ? 1U : 0U;
+    const uint8_t sticks_neutral =
+        (Remote_NormalizeChannel(snapshot.rc.ch0) == 0.0f &&
+         Remote_NormalizeChannel(snapshot.rc.ch1) == 0.0f &&
+         Remote_NormalizeChannel(snapshot.rc.ch2) == 0.0f &&
+         Remote_NormalizeChannel(snapshot.rc.ch3) == 0.0f) ? 1U : 0U;
+
+    if (online == 0U)
+    {
+        manual_rearm_hold_seen = 0U;
+        return 0U;
+    }
+    if ((sticks_neutral == 0U) ||
+        ((snapshot.rc.s1 == RC_SW_DOWN) && (snapshot.rc.s2 == RC_SW_DOWN)))
+    {
+        if ((sticks_neutral != 0U) &&
+            (snapshot.rc.s1 == RC_SW_DOWN) && (snapshot.rc.s2 == RC_SW_DOWN))
+        {
+            manual_rearm_hold_seen = 1U;
+        }
+        return 0U;
+    }
+    if ((manual_rearm_hold_seen != 0U) && (snapshot.rc.s1 == RC_SW_MID) &&
+        ((snapshot.rc.s2 == RC_SW_DOWN) || (snapshot.rc.s2 == RC_SW_UP)))
+    {
+        manual_rearm_hold_seen = 0U;
+        return 1U;
+    }
+    return 0U;
 }
 
 float Remote_NormalizeChannel(int16_t value)

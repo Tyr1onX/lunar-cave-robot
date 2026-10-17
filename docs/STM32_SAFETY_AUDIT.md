@@ -1,6 +1,14 @@
 # STM32 control safety audit
 
-Audit basis: static review of the repository firmware and ROS 2 bridge at the P9-B branch base, plus host-side protocol tests. No serial port, motor, controller, or robot was connected. This report identifies code paths; it does not claim a safety-rated design or successful physical stop.
+Audit basis: the findings below were first recorded against the P9-B branch base. The P9-C branch adds offline safety state machines and host tests described in [P9-C safety state machines](P9C_SAFETY_STATE_MACHINES.md). No serial port, motor, controller, or robot was connected. This report identifies code paths; it does not claim a safety-rated design or successful physical stop.
+
+## P9-C source-level disposition
+
+P9-C addresses the software behaviors behind `CHASSIS-01`, `ARM-01`, `ARM-03`, and `ARM-06` in source: the chassis no longer sends startup enable frames; its command gate remains closed until the operator completes a neutral re-arm sequence; receiver/serial/UART faults latch; arm target adoption has a 100 ms lease, and RC loss, host disable, stale command, or source change latches the arm held until manual re-arm. The existing 14-byte chassis and 46-byte arm command layouts remain unchanged.
+
+These changes do not close the physical S0 gate. The chassis sends a CAN relax command while disarmed, and the arm sends motor disable commands while held; the real drive response, braking/holding behavior, and mechanical support are not established. The arm may fall when torque is removed. Both firmwares still lack end-to-end measured-stop acknowledgement. Keep powered motion blocked pending the hardware-owner review listed in `P9C_SAFETY_STATE_MACHINES.md`.
+
+The policy modules and chassis production parser path have host tests. The arm test covers the pure C policy, not the full product integration. The arm firmware build remains blocked by missing XRobot-generated files. Build results, source/output hashes, warnings, and test commands are recorded in [P9-C firmware validation](P9C_FIRMWARE_VALIDATION.md). Therefore the P9-C changes are source-level mitigations with offline unit evidence, not verified control safety.
 
 ## Severity definitions
 

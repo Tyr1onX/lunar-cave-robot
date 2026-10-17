@@ -20,6 +20,18 @@ if [[ $compile_status -eq 0 ]]; then
   "$build_dir/test_chassis_protocol" || run_status=$?
 fi
 
+if [[ $run_status -eq 0 ]]; then
+  "$cc" -std=c11 -Wall -Wextra -Werror -pedantic \
+    -I"$repo_root/firmware/chassis/User/Bsp" \
+    -I"$repo_root/firmware/chassis/User/APP" \
+    "$repo_root/firmware/chassis/tests/host/test_chassis_safety.c" \
+    "$repo_root/firmware/chassis/User/APP/chassis_safety.c" \
+    -o "$build_dir/test_chassis_safety" || run_status=$?
+  if [[ $run_status -eq 0 ]]; then
+    "$build_dir/test_chassis_safety" || run_status=$?
+  fi
+fi
+
 if [[ $run_status -eq 0 ]]; then outcome=PASS; else outcome=FAIL; fi
 "$repo_root/tools/record_local_status.sh" firmware-chassis-protocol-test "$outcome" \
   chassis_protocol_parser protocol-parser-fault-injection "$build_dir"

@@ -28,6 +28,7 @@ typedef struct
     uint32_t accepted_command_count;
     uint32_t blocked_frame_count;
     uint32_t invalid_frame_count;
+    uint32_t uart_error_count;
     uint8_t online;
     uint8_t command_enabled;
 } Chaiss_Communication_t;

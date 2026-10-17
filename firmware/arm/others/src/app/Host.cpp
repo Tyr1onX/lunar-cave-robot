@@ -92,6 +92,13 @@ extern volatile uint8_t gripper_close_target;
 
 namespace
 {
+	volatile uint32_t host_command_tick = 0U;
+	volatile uint8_t host_command_seen = 0U;
+	volatile uint8_t host_safety_armed = 0U;
+	volatile uint8_t host_disabled_since_reset = 0U;
+	volatile uint8_t host_enable_after_disabled = 0U;
+	volatile uint8_t host_safety_disable_event = 0U;
+
 	/* ---- 下行帧偏移（46B） ---- */
 	constexpr uint16_t rx_chassis = 1U;   /* 3 × float32 底盘速度：解析后丢弃 */
 	constexpr uint16_t rx_sync_0 = 13U;
@@ -121,6 +128,17 @@ namespace
 
 	/* 帧里以关节角表达的轴数（j1..j6）；第 7 轴 j7 走夹爪命令字节 */
 	constexpr uint8_t host_axis_count = static_cast<uint8_t>(Joint_N::dof - 1U);
+
+	bool TargetsAreFinite(const uint8_t* const frame)
+	{
+		float target[host_axis_count] {};
+		std::memcpy(target, &frame[rx_angles], sizeof(target));
+		for (uint8_t i = 0U; i < host_axis_count; ++i)
+		{
+			if (!std::isfinite(target[i])) { return false; }
+		}
+		return true;
+	}
 
 	/* 夹爪命令字节（**有符号**）：> 0 = 抓紧、< 0 = 张开、0 = 保持上一状态。
 	   ⚠️ 不能再按「非 0 即抓紧」判断：上位机发 +1/-1 时两个值都非 0，会被判成同一个动作，
@@ -348,7 +366,7 @@ namespace
 	   j7 是夹爪：命令字节按**有符号**解释（> 0 抓紧 / < 0 张开 / 0 保持），
 	   只切换两个预设位，走 Gripper_Command() → Gripper_Update() 直发驱动器，
 	   不经过 Joint 的规划/PID（原因见 roboarm.hpp 顶部的夹爪说明）。 */
-	void ApplyFrame(const uint8_t* const frame, const int8_t gripper_command, const bool adopt)
+	bool ApplyFrame(const uint8_t* const frame, const int8_t gripper_command, const bool adopt)
 	{
 		/* 帧里为底盘保留的 12 字节：本机没有底盘，解析后丢弃（保持与参考工程同一帧长） */
 		chassis_command_s chassis_command {};
@@ -373,10 +391,10 @@ namespace
 		host_debug_target[host_axis_count] =
 			gripper_close_now ? Gripper_ClosePosition() : Gripper_OpenPosition();
 
-		if (!adopt) { return; }
+		if (!adopt) { return false; }
 		for (uint8_t i = 0U; i < host_axis_count; ++i)
 		{
-			if (!std::isfinite(target[i])) { return; }  /* 任一轴非法就整帧丢弃 */
+			if (!std::isfinite(target[i])) { return false; }  /* 任一轴非法就整帧丢弃 */
 		}
 		for (uint8_t i = 0U; i < host_axis_count; ++i)
 		{
@@ -387,6 +405,7 @@ namespace
 		if (gripper_command > 0) { Gripper_Command(1U); }
 		else if (gripper_command < 0) { Gripper_Command(0U); }
 		host_debug_adopted = 1U;   /* 放在最后：只有真的下发过才算“采纳” */
+		return true;
 	}
 }
 
@@ -434,6 +453,24 @@ extern "C" void Host_Poll(void)
 		(void)host_usb_queue.PopBatch(rx_frame, HOST_RX_FRAME_LEN);
 		++host_rx_frames;
 
+		/* A zero enable byte is a stop/latch request without changing frame layout. */
+		taskENTER_CRITICAL();
+		if (rx_frame[rx_enable] == 0U)
+		{
+			host_safety_armed = 0U;
+			host_command_seen = 0U;
+			host_disabled_since_reset = 1U;
+			host_safety_disable_event = 1U;
+		}
+		else if ((host_disabled_since_reset != 0U) &&
+			(Remote_IsHostControl() != 0U) && TargetsAreFinite(rx_frame))
+		{
+			host_enable_after_disabled = 1U;
+			host_command_tick = HAL_GetTick();
+			host_command_seen = 1U;
+		}
+		taskEXIT_CRITICAL();
+
 		/* 夹爪命令（有符号 ±1，0 = 保持）：每帧都记录，上行原样回显 */
 		last_gripper_command = static_cast<int8_t>(rx_frame[rx_gripper]);
 
@@ -441,19 +478,79 @@ extern "C" void Host_Poll(void)
 		   （仍然回状态包，上位机可据此知道当前没有控制权）。
 		   两种情形都调一次 ApplyFrame：逐轴目标照样解析并写入调试镜像，
 		   只是 adopt = false 时不下发。 */
-		const bool adopt = (rx_frame[rx_enable] != 0U) && (Remote_IsHostControl() != 0U);
-		ApplyFrame(rx_frame, last_gripper_command, adopt);
+		const bool adopt = (rx_frame[rx_enable] != 0U) &&
+			(Remote_IsHostControl() != 0U) && (host_safety_armed != 0U);
+		if (ApplyFrame(rx_frame, last_gripper_command, adopt))
+		{
+			host_command_tick = HAL_GetTick();
+			host_command_seen = 1U;
+		}
 		SendStateResponse();
 	}
 }
 
 /* ============================ 只读观测接口 ============================
-   注意：链路超时目前不参与任何 hold/失能策略（按约定机械臂保持当前目标），
-   只提供给遥测/调试判断上位机是否还在。 */
+   Host_IsOnline is diagnostic only. Motion authorization uses the separate
+   100 ms accepted-command lease below and the latched MCU safety state. */
 extern "C" uint8_t Host_IsOnline(void)
 {
 	if (host_link_tick == 0U) { return 0U; }  /* 上电后还没收到过任何 USB 数据 */
 	return ((HAL_GetTick() - host_link_tick) <= HOST_LINK_TIMEOUT_MS) ? 1U : 0U;
+}
+
+extern "C" uint8_t Host_IsCommandFresh(void)
+{
+	uint8_t fresh;
+	taskENTER_CRITICAL();
+	fresh = (host_command_seen != 0U &&
+		(HAL_GetTick() - host_command_tick) <= HOST_COMMAND_LEASE_MS) ? 1U : 0U;
+	taskEXIT_CRITICAL();
+	return fresh;
+}
+
+extern "C" void Host_ResetSafetyHandshake(void)
+{
+	taskENTER_CRITICAL();
+	host_command_seen = 0U;
+	host_command_tick = 0U;
+	host_safety_armed = 0U;
+	host_disabled_since_reset = 0U;
+	host_enable_after_disabled = 0U;
+	host_safety_disable_event = 0U;
+	taskEXIT_CRITICAL();
+}
+
+extern "C" void Host_SetSafetyArmed(uint8_t armed)
+{
+	host_safety_armed = (armed != 0U) ? 1U : 0U;
+}
+
+extern "C" uint8_t Host_HasDisabledSinceSafetyReset(void)
+{
+	uint8_t seen;
+	taskENTER_CRITICAL();
+	seen = host_disabled_since_reset;
+	taskEXIT_CRITICAL();
+	return seen;
+}
+
+extern "C" uint8_t Host_HasEnableAfterDisabled(void)
+{
+	uint8_t seen;
+	taskENTER_CRITICAL();
+	seen = host_enable_after_disabled;
+	taskEXIT_CRITICAL();
+	return seen;
+}
+
+extern "C" uint8_t Host_ConsumeSafetyDisableEvent(void)
+{
+	uint8_t event;
+	taskENTER_CRITICAL();
+	event = host_safety_disable_event;
+	host_safety_disable_event = 0U;
+	taskEXIT_CRITICAL();
+	return event;
 }
 
 extern "C" uint32_t Host_GetRxFrameCount(void)
