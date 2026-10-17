@@ -39,14 +39,27 @@ class WorkspaceInventoryTests(unittest.TestCase):
         with _CACHE_LOCK:
             _INVENTORY_CACHE.clear()
 
-    def _fake_process(self, command: bytes, environment: bytes, *, comm: str = "python3") -> Path:
+    def _fake_process(
+        self,
+        command: bytes,
+        environment: bytes,
+        *,
+        comm: str = "python3",
+        cwd: Path | None = None,
+        maps: str | None = None,
+    ) -> Path:
         proc = Path(self.temporary.name) / "proc"
         process = proc / "412"
         process.mkdir(parents=True)
         (process / "comm").write_text(f"{comm}\n", encoding="utf-8")
         (process / "cmdline").write_bytes(command)
         (process / "environ").write_bytes(environment)
-        (process / "cwd").symlink_to(self.root, target_is_directory=True)
+        (process / "cwd").symlink_to(cwd or self.root, target_is_directory=True)
+        executable = Path(self.temporary.name) / "unrelated-executable"
+        executable.touch(exist_ok=True)
+        (process / "exe").symlink_to(executable)
+        if maps is not None:
+            (process / "maps").write_text(maps, encoding="utf-8")
         return proc
 
     def _empty_proc(self) -> Path:
@@ -159,6 +172,7 @@ class WorkspaceInventoryTests(unittest.TestCase):
             b"/usr/lib/systemd/systemd --user\0",
             b"",
             comm="sd-pam",
+            cwd=Path(self.temporary.name),
         )
 
         with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
@@ -182,6 +196,59 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertEqual(workspace["processes"][0]["package"], "yolo_node")
         self.assertEqual(workspace["processes"][0]["domain_evidence"], "unavailable")
         self.assertEqual(workspace["graph_relationship"], "unknown")
+
+    def test_custom_ros_executable_is_found_without_a_known_process_name(self) -> None:
+        unrelated_cwd = Path(self.temporary.name) / "custom-runner"
+        unrelated_cwd.mkdir()
+        proc = self._fake_process(
+            b"/opt/robot/bin/vision_pipeline\0",
+            f"AMENT_PREFIX_PATH={self.root / 'install'}\0ROS_DOMAIN_ID=187\0".encode(),
+            comm="vision_pipeline",
+            cwd=unrelated_cwd,
+            maps="7f000000-7f001000 r-xp 00000000 08:01 42 /opt/ros/humble/lib/librclcpp.so\n",
+        )
+
+        reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        workspace = reading["workspaces"][0]
+        self.assertEqual(reading["process_scan"]["status"], "ok")
+        self.assertEqual(workspace["runtime_status"], "running")
+        self.assertEqual(workspace["process_count"], 1)
+        self.assertEqual(workspace["processes"][0]["process_name"], "vision_pipeline")
+        self.assertIn("overlay_environment", workspace["processes"][0]["matched_by"])
+
+    def test_unreadable_unclassified_process_prevents_complete_not_running_claim(self) -> None:
+        unrelated_cwd = Path(self.temporary.name) / "custom-runner"
+        unrelated_cwd.mkdir()
+        proc = self._fake_process(
+            b"/opt/robot/bin/custom_runtime\0",
+            b"",
+            comm="custom_runtime",
+            cwd=unrelated_cwd,
+        )
+
+        with patch("console_agent.workspaces._read_process_environment", side_effect=PermissionError):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "partial")
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "unknown")
+        self.assertIn("环境字段不可读", reading["process_scan"]["reason"])
+
+    def test_unreadable_process_identity_prevents_complete_not_running_claim(self) -> None:
+        proc = self._fake_process(b"/opt/robot/bin/custom_runtime\0", b"", comm="custom_runtime")
+        read_text = Path.read_text
+
+        def deny_comm(path: Path, *args, **kwargs):
+            if path.name == "comm":
+                raise PermissionError("synthetic denied process identity")
+            return read_text(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", deny_comm):
+            reading = collect_workspaces(specs=(self.spec,), proc_root=proc)
+
+        self.assertEqual(reading["process_scan"]["status"], "partial")
+        self.assertEqual(reading["workspaces"][0]["runtime_status"], "unknown")
+        self.assertIn("身份信息不可读", reading["process_scan"]["reason"])
 
     def test_overlaid_workspaces_with_duplicate_package_are_not_guessed(self) -> None:
         arm_root = Path(self.temporary.name) / "arm"

@@ -17,14 +17,6 @@ _CONFIG_DIRS = {"config", "cfg", "params", "param"}
 _INVENTORY_CACHE_SECONDS = 30.0
 _GRAPH_MAX_AGE_MS = 5000
 _PACKAGE_PATH_PATTERN = re.compile(r"(?:install|lib|share)/([^/]+)/")
-_ROS_PROCESS_NAMES = {
-    "component_container", "component_container_mt", "ros2_control_node",
-    "robot_state_publisher", "rviz2", "controller_server", "planner_server",
-    "bt_navigator", "waypoint_follower", "behavior_server", "smoother_server",
-    "velocity_smoother", "map_server", "amcl", "slam_toolbox", "gzserver",
-    "gz", "gazebo", "ign", "laserMapping", "livox_ros_driver2_node",
-}
-_INTERPRETER_PROCESS_NAMES = {"python", "python3", "python3.10", "bash", "sh"}
 _CACHE_LOCK = threading.Lock()
 _INVENTORY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
@@ -235,25 +227,18 @@ def _package_from_text(text: str, known_packages: set[str]) -> str | None:
     return None
 
 
-def _is_likely_ros_process(comm: str, cmdline: str, specs: tuple[WorkspaceSpec, ...], known_packages: set[str]) -> bool:
-    """Limit detailed /proc reads to processes that may belong to ROS workspaces.
-
-    Linux can deny access to environment, cwd, executable and maps for a
-    non-dumpable same-UID session process. Such a process is not workspace
-    evidence; unreadable metadata on an unrelated process must not make the
-    ROS workspace scan incomplete.
-    """
-    if any(str(root) in cmdline for spec in specs for root in spec.source_roots):
-        return True
-    if _package_from_text(f"{comm} {cmdline}", known_packages):
-        return True
+def _is_known_session_helper(comm: str, cmdline: str) -> bool:
+    """Exclude only the audited systemd user-session helper from ROS probing."""
     try:
         tokens = shlex.split(cmdline)
     except ValueError:
         tokens = cmdline.split()
-    basenames = {Path(token).name for token in tokens}
-    ros_command = "ros2" in basenames and bool({"launch", "run"} & set(tokens))
-    return ros_command or Path(comm).name in _ROS_PROCESS_NAMES | _INTERPRETER_PROCESS_NAMES
+    return (
+        Path(comm).name == "sd-pam"
+        and bool(tokens)
+        and Path(tokens[0]).name == "systemd"
+        and "--user" in tokens
+    )
 
 
 def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[dict[str, list[dict[str, Any]]], str, str | None]:
@@ -283,8 +268,6 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             comm = (process_dir / "comm").read_text(encoding="utf-8", errors="replace").strip()[:64]
             raw_cmdline = (process_dir / "cmdline").read_bytes()
             cmdline = raw_cmdline.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
-            if not raw_cmdline or not cmdline:
-                continue
         except FileNotFoundError:
             continue
         except PermissionError:
@@ -294,7 +277,12 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
         except OSError:
             continue
 
-        if not _is_likely_ros_process(comm, cmdline, specs, known_packages):
+        # Do not use an executable-name allowlist here: custom ROS executables
+        # may have arbitrary names and may expose their workspace only through
+        # cwd or the allowlisted overlay environment. The one excluded helper
+        # is the audited systemd session process whose metadata is commonly
+        # non-dumpable on the target NUC.
+        if _is_known_session_helper(comm, cmdline):
             continue
 
         environment_readable = True
@@ -306,15 +294,31 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             environment = {}
             environment_readable = False
             scan_status = "partial"
-            scan_reason = "部分 ROS 候选进程的 allowlisted 环境字段不可读"
+            scan_reason = "部分当前 UID 进程的 allowlisted 环境字段不可读"
         try:
             cwd = str((process_dir / "cwd").resolve())
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            cwd = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的工作目录信息不可读"
         except OSError:
             cwd = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的工作目录信息不可读"
         try:
             executable = str((process_dir / "exe").resolve())
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            executable = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的可执行文件信息不可读"
         except OSError:
             executable = ""
+            scan_status = "partial"
+            scan_reason = "部分当前 UID 进程的可执行文件信息不可读"
 
         candidates: list[tuple[WorkspaceSpec, list[str]]] = []
         for spec in specs:
@@ -360,7 +364,7 @@ def _process_scan(specs: tuple[WorkspaceSpec, ...], proc_root: Path) -> tuple[di
             except PermissionError:
                 maps = ""
                 scan_status = "partial"
-                scan_reason = "部分 ROS 候选进程的只读映射信息不可读"
+                scan_reason = "部分工作区候选进程的只读映射信息不可读"
             except OSError:
                 maps = ""
             package = _package_from_text(maps, known_packages)
@@ -537,7 +541,7 @@ def collect_workspaces(
         "collected_at": observed_at,
         "process_scan": {
             "status": scan_status,
-            "scope": "Agent UID; ROS/workspace candidates only",
+            "scope": "Agent UID; process identity and workspace references; audited systemd session helper excluded",
             "source": str(proc_root),
             "observed_at": observed_at,
             "reason": scan_reason,
