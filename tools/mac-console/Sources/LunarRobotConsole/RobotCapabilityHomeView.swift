@@ -1,7 +1,8 @@
 import SwiftUI
 
-struct RobotTopologyView: View {
+struct RobotCapabilityTopologyView: View {
     @ObservedObject var model: ConsoleModel
+    let onReturnToWorkflow: () -> Void
     @State private var selectedCapabilityID: String?
     @State private var selectedStepID: String?
     @State private var selectedNodeID: String?
@@ -74,6 +75,14 @@ struct RobotTopologyView: View {
             }
 
             HStack(spacing: 14) {
+                Button(action: onReturnToWorkflow) {
+                    Label("工作流程首页", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("capability.return-to-workflow")
+
                 Button {
                     showingAdvancedTopology = true
                 } label: {

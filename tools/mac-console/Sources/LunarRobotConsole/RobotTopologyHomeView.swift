@@ -48,7 +48,7 @@ struct AdvancedRobotTopologyView: View {
     private var pageHeading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Button(action: onReturn) {
-                Label("能力首页", systemImage: "chevron.left")
+                Label("返回上一级", systemImage: "chevron.left")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Palette.muted)
             }
