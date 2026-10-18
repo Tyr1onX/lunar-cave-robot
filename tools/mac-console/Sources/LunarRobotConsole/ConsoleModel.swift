@@ -81,6 +81,9 @@ final class ConsoleModel: ObservableObject {
     @Published private(set) var lastSuccessfulRead: Date?
     @Published private(set) var lastWorkspaceSnapshotRead: Date?
     @Published private(set) var healthEvents: [HealthEvent] = []
+    @Published private(set) var pipelineExpectation: PipelineRunExpectation
+    @Published private(set) var pipelineDiagnosis: PipelineDiagnosis
+    @Published private(set) var selectedPipelineStageID: PipelineStageID?
 
     private(set) var hasEverConnectedToAgent = false
     private(set) var lastKnownDomainID: Int?
@@ -104,6 +107,7 @@ final class ConsoleModel: ObservableObject {
     private var lastLogRead = Date.distantPast
     private var lastFrameUpdateUptime: TimeInterval?
     private var healthEventTracker = HealthEventTracker()
+    private var pipelineDiagnosisTracker = PipelineDiagnosisTracker()
 
     static let workspaceSnapshotFreshnessLimit: TimeInterval = 15
 
@@ -117,8 +121,23 @@ final class ConsoleModel: ObservableObject {
     }
 
     init() {
+        if let saved = UserDefaults.standard.data(forKey: Self.pipelineExpectationDefaultsKey),
+           let restored = try? JSONDecoder().decode(PipelineRunExpectation.self, from: saved) {
+            pipelineExpectation = restored
+        } else {
+            pipelineExpectation = .unconfigured
+        }
+        pipelineDiagnosis = PipelineDiagnosisEvaluator.evaluate(
+            expectation: pipelineExpectation,
+            agentOnline: false,
+            snapshot: nil,
+            telemetry: nil,
+            logs: nil
+        )
         refreshHealthEvents()
     }
+
+    private static let pipelineExpectationDefaultsKey = "lunarConsole.pipelineRunExpectation.v1"
 
     private let apiRoot = URL(string: "http://127.0.0.1:18765")!
     private let session: URLSession = {
@@ -259,6 +278,31 @@ final class ConsoleModel: ObservableObject {
             evaluationTime: observedAt
         )
         healthEvents = healthEventTracker.update(candidates)
+        refreshPipelineDiagnosis(observedAt: observedAt)
+    }
+
+    func updatePipelineExpectation(_ expectation: PipelineRunExpectation) {
+        pipelineExpectation = expectation
+        if let data = try? JSONEncoder().encode(expectation) {
+            UserDefaults.standard.set(data, forKey: Self.pipelineExpectationDefaultsKey)
+        }
+        refreshPipelineDiagnosis()
+    }
+
+    func selectPipelineStage(_ stageID: PipelineStageID) {
+        selectedPipelineStageID = stageID
+    }
+
+    private func refreshPipelineDiagnosis(observedAt: Date = Date()) {
+        let candidate = PipelineDiagnosisEvaluator.evaluate(
+            expectation: pipelineExpectation,
+            agentOnline: agentOnline,
+            snapshot: healthSnapshot,
+            telemetry: agentOnline ? linkTelemetry : nil,
+            logs: agentOnline ? logs : nil,
+            evaluationTime: observedAt
+        )
+        pipelineDiagnosis = pipelineDiagnosisTracker.update(candidate)
     }
 
     private func refresh() async {
@@ -373,6 +417,7 @@ final class ConsoleModel: ObservableObject {
     func applyLogReading(_ reading: LogReading, requestSession: Int) {
         guard agentOnline, requestSession == agentSession else { return }
         logs = reading
+        refreshPipelineDiagnosis()
     }
 
     func applyVisionReading(_ reading: VisionReading, requestSession: Int) {
@@ -395,12 +440,14 @@ final class ConsoleModel: ObservableObject {
         linkTelemetry = reading
         linkTelemetryMessage = nil
         linkTelemetryEndpointAvailable = true
+        refreshPipelineDiagnosis()
     }
 
     func applyLinkTelemetryError(_ message: String, requestSession: Int) {
         guard agentOnline, requestSession == agentSession else { return }
         linkTelemetry = nil
         linkTelemetryMessage = message
+        refreshPipelineDiagnosis()
     }
 
     func applyVisionFrame(_ data: Data, streamID: VisionStreamID, requestSession: Int, roundTripMs: Double) {

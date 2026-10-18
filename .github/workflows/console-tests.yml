@@ -52,14 +52,16 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             --volume "$RUNNER_TEMP/lunar-ros-results:/results" \
             ros:humble-ros-base \
-            bash -lc 'source /opt/ros/humble/setup.bash; set -eo pipefail; export PYTHONPATH="/workspace/tools/console-agent${PYTHONPATH:+:$PYTHONPATH}"; python3 /workspace/tools/console-agent/scripts/benchmark_link_telemetry.py --report /results/link-telemetry-benchmark.json'
+            bash -lc 'source /opt/ros/humble/setup.bash; set -eo pipefail; export PYTHONPATH="/workspace/tools/console-agent${PYTHONPATH:+:$PYTHONPATH}"; python3 /workspace/tools/console-agent/scripts/benchmark_link_telemetry.py --report /results/link-telemetry-benchmark.json; python3 /workspace/tools/console-agent/acceptance/pipeline_synthetic_scenarios.py --report /results/pipeline-diagnostics-synthetic.json'
 
       - name: Upload benchmark baseline and load report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ros2-pointcloud-agent-benchmark-${{ github.sha }}
-          path: ${{ runner.temp }}/lunar-ros-results/link-telemetry-benchmark.json
+          name: ros2-readonly-telemetry-synthetic-validation-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/lunar-ros-results/link-telemetry-benchmark.json
+            ${{ runner.temp }}/lunar-ros-results/pipeline-diagnostics-synthetic.json
           if-no-files-found: warn
           retention-days: 14
 

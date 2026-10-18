@@ -190,7 +190,9 @@ struct AdvancedRobotTopologyView: View {
                 evaluation: evaluation,
                 context: context,
                 linkTelemetryMessage: model.linkTelemetryMessage,
-                onClose: { interaction.clearSelection() }
+                pipelineDiagnosis: model.pipelineDiagnosis,
+                onClose: { interaction.clearSelection() },
+                onOpenPipelineDiagnostics: { model.section = .diagnostics }
             )
         }
         .accessibilityIdentifier("topology.node-evidence")

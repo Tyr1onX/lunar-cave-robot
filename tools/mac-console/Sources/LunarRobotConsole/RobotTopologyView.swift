@@ -37,7 +37,9 @@ struct TopologyNodeEvidencePanel: View {
     let evaluation: TopologyEvaluation
     let context: TopologyRuntimeContext
     let linkTelemetryMessage: String?
+    var pipelineDiagnosis: PipelineDiagnosis? = nil
     let onClose: () -> Void
+    var onOpenPipelineDiagnostics: (() -> Void)? = nil
 
     private var workspaceEvidence: [(WorkspaceReading, WorkspaceModuleReading)] {
         guard let inventory = context.displayedWorkspaceInventory else { return [] }
@@ -77,6 +79,10 @@ struct TopologyNodeEvidencePanel: View {
                     linkTelemetryEvidence
                 }
 
+                if let stage = pipelineStage {
+                    pipelineStageEvidence(stage)
+                }
+
                 if !workspaceEvidence.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         evidenceHeading("工作区观测 · \(workspaceFreshnessLabel)")
@@ -113,6 +119,64 @@ struct TopologyNodeEvidencePanel: View {
         case .historical: return "历史，不参与实时判定"
         case .expired: return "过期，不参与实时判定"
         case .unavailable: return "不可用"
+        }
+    }
+
+    private var pipelineStage: PipelineStageDiagnosis? {
+        guard let pipelineDiagnosis else { return nil }
+        let stageID: PipelineStageID?
+        switch node.id {
+        case "mid360", "imu-transform", "imu-filter": stageID = .radar
+        case "point-lio", "terrain": stageID = .pointLIO
+        case "scan-conversion", "slam-toolbox", "localization-map", "map-odom-tf": stageID = .slam
+        case "nav2": stageID = .nav2
+        default: stageID = nil
+        }
+        return stageID.flatMap(pipelineDiagnosis.stage)
+    }
+
+    @ViewBuilder
+    private func pipelineStageEvidence(_ stage: PipelineStageDiagnosis) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            evidenceHeading("链路诊断 · \(stage.id.title)")
+            HStack(alignment: .top, spacing: 8) {
+                Text(stage.state.label).font(.system(size: 9, weight: .medium)).foregroundStyle(pipelineColor(stage.state))
+                Text(stage.summary).font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("置信级别 · \(stage.confidence.label) · 观测时间 \(stage.observedAt) · 数据时间 \(stage.dataTime)")
+                .font(.system(size: 7, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+            ForEach(stage.inputEvidence + stage.outputEvidence) { stream in
+                Text("\(stream.role) \(stream.topic) · \(stream.oneLineEvidence) · \(stream.receivedAt ?? "接收时间未知")")
+                    .font(.system(size: 7, design: .monospaced)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            ForEach(stage.logs.prefix(4)) { log in
+                Text("[\(log.time)] [\(log.severity)] \(log.source)：\(log.message)")
+                    .font(.system(size: 7, design: .monospaced)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            if !stage.logs.isEmpty {
+                Text("当前展示最多 4 条相关日志；系统诊断和本地报告包含完整筛选结果。")
+                    .font(.system(size: 7)).foregroundStyle(Palette.muted)
+            }
+            if let onOpenPipelineDiagnostics {
+                Button {
+                    onOpenPipelineDiagnostics()
+                } label: {
+                    Label("打开链路诊断", systemImage: "waveform.path.ecg")
+                        .font(.system(size: 8, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Palette.accent)
+            }
+        }
+        .accessibilityIdentifier("topology.node-pipeline-evidence.\(node.id)")
+    }
+
+    private func pipelineColor(_ state: PipelineStageState) -> Color {
+        switch state {
+        case .confirmedExpectationMismatch: return Palette.danger
+        case .suspectedGap, .possiblyAffected: return Palette.warning
+        case .observed: return Palette.accent
+        case .notConfigured, .unknown: return Palette.muted
         }
     }
 
