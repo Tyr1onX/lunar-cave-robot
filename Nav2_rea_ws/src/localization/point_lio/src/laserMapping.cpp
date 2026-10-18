@@ -360,10 +360,13 @@ int main(int argc, char ** argv)
   Eigen::Matrix<double, 24, 24> Q_input = process_noise_cov_input();
   Eigen::Matrix<double, 30, 30> Q_output = process_noise_cov_output();
   /*** debug record ***/
-  FILE * fp;
-  string pos_log_dir = root_dir + "/Log/pos_log.txt";
-  fp = fopen(pos_log_dir.c_str(), "w");
-  open_file();
+  FILE * fp = nullptr;
+  // These streams use "w" and would truncate existing workspace files if opened while disabled.
+  if (runtime_pos_log) {
+    string pos_log_dir = root_dir + "/Log/pos_log.txt";
+    fp = fopen(pos_log_dir.c_str(), "w");
+    open_file();
+  }
 
   /*** ROS subscribe initialization ***/
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc;
@@ -1036,7 +1039,10 @@ int main(int argc, char ** argv)
     pcl::PCDWriter pcd_writer;
     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
   }
-  fout_out.close();
-  fout_imu_pbp.close();
+  if (runtime_pos_log) {
+    if (fp != nullptr) fclose(fp);
+    fout_out.close();
+    fout_imu_pbp.close();
+  }
   return 0;
 }
