@@ -267,16 +267,6 @@ Eigen::Matrix<double, 3, 1> SO3ToEuler(const SO3 & rot)
   return ang;
 }
 
-void open_file()
-{
-  fout_out.open(DEBUG_FILE_DIR("mat_out.txt"), ios::out);
-  fout_imu_pbp.open(DEBUG_FILE_DIR("imu_pbp.txt"), ios::out);
-  if (fout_out && fout_imu_pbp)
-    std::cout << "~~~~" << ROOT_DIR << " file opened" << '\n';
-  else
-    std::cout << "~~~~" << ROOT_DIR << " doesn't exist" << '\n';
-}
-
 void reset_cov(Eigen::Matrix<double, 24, 24> & P_init)
 {
   P_init = MD(24, 24)::Identity() * 0.1;
