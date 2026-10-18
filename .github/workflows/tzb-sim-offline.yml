@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   humble-build:
-    name: Build tzb_sim in ROS 2 Humble
+    name: Build tzb_sim Python package in ROS 2 Humble
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -30,26 +30,30 @@ jobs:
             ros:humble-ros-base \
             bash -lc '
               set -eo pipefail
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-colcon-common-extensions
               source /opt/ros/humble/setup.bash
               set -u
-              mkdir -p /tmp/tzb-sim-build
-              cd /tmp/tzb-sim-build
-              colcon build --base-paths /workspace/src --packages-select tzb_sim --event-handlers console_direct+
+              mkdir -p /tmp/tzb-sim-ci
+              cp -a /workspace/src/tzb_sim /tmp/tzb-sim-ci/tzb_sim
+              cd /tmp/tzb-sim-ci/tzb_sim
+              python3 setup.py build --build-base /tmp/tzb-sim-ci/build
+              python3 setup.py install --prefix /tmp/tzb-sim-ci/install --single-version-externally-managed --record /tmp/tzb-sim-ci/install-files.txt
               python3 - <<"PY"
           import ast
           from pathlib import Path
           import struct
-          root = Path("/workspace/src/tzb_sim")
+          root = Path("/tmp/tzb-sim-ci/tzb_sim")
           for source in [root / "launch/demo.launch.py", *sorted((root / "tzb_sim").glob("*.py"))]:
               ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
           mesh = (root / "config/blue_block.stl").read_bytes()
           assert len(mesh) >= 84, "binary STL header is truncated"
           triangles = struct.unpack_from("<I", mesh, 80)[0]
           assert triangles > 0 and len(mesh) == 84 + 50 * triangles, "binary STL size does not match its triangle count"
-          print(f"PASS Python syntax and binary STL: {triangles} triangles")
+          install = Path("/tmp/tzb-sim-ci/install/share/tzb_sim")
+          assert (install / "package.xml").is_file()
+          assert (install / "config/visual_grasp.rviz").is_file()
+          assert (install / "config/blue_block_scene.png").is_file()
+          print(f"PASS Python syntax, installed ROS assets, and binary STL: {triangles} triangles")
           PY
-              bash -n /workspace/src/tzb_sim/tools/start_offline_demo.sh
-              bash -n /workspace/src/tzb_sim/tools/stop_offline_demo.sh
+              bash -n /tmp/tzb-sim-ci/tzb_sim/tools/start_offline_demo.sh
+              bash -n /tmp/tzb-sim-ci/tzb_sim/tools/stop_offline_demo.sh
             '
