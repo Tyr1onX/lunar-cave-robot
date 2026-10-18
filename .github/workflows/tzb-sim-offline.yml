@@ -54,6 +54,6 @@ jobs:
           assert (install / "config/blue_block_scene.png").is_file()
           print(f"PASS Python syntax, installed ROS assets, and binary STL: {triangles} triangles")
           PY
-              bash -n /tmp/tzb-sim-ci/tzb_sim/tools/start_offline_demo.sh
-              bash -n /tmp/tzb-sim-ci/tzb_sim/tools/stop_offline_demo.sh
+              bash -n /workspace/src/tzb_sim/tools/start_offline_demo.sh
+              bash -n /workspace/src/tzb_sim/tools/stop_offline_demo.sh
             '
