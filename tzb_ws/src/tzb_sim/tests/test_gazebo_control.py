@@ -67,6 +67,6 @@ if __name__ == "__main__":
 
 class GazeboCameraFrameTests(unittest.TestCase):
     def test_gazebo_camera_axes_convert_to_ros_optical_axes(self):
-        from tzb_sim.gazebo_rgbd_optical_adapter import gazebo_to_optical_xyz
+        from tzb_sim.gazebo_control import gazebo_to_optical_xyz
         self.assertEqual(gazebo_to_optical_xyz(0.8, -0.01, 0.07),
                          (0.01, -0.07, 0.8))

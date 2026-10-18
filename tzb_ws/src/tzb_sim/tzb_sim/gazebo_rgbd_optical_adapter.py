@@ -10,10 +10,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, PointCloud2
 from sensor_msgs_py import point_cloud2
 
-
-def gazebo_to_optical_xyz(x: float, y: float, z: float) -> tuple[float, float, float]:
-    """Gazebo camera (+X forward,+Y left,+Z up) to ROS optical (+Z forward)."""
-    return -y, -z, x
+from .gazebo_control import gazebo_to_optical_xyz
 
 
 class GazeboRgbdOpticalAdapter(Node):
@@ -58,9 +55,7 @@ class GazeboRgbdOpticalAdapter(Node):
             x = points["x"].copy()
             y = points["y"].copy()
             z = points["z"].copy()
-            points["x"] = -y
-            points["y"] = -z
-            points["z"] = x
+            points["x"], points["y"], points["z"] = gazebo_to_optical_xyz(x, y, z)
         except (KeyError, TypeError, ValueError) as exc:
             self.get_logger().error(f"cannot convert Gazebo depth cloud: {exc}")
             return

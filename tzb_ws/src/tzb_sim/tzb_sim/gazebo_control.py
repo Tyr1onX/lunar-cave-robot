@@ -30,6 +30,11 @@ GRIPPER_MIMIC_UPPER = 0.5236
 ARM_INITIAL_POSITIONS = (0.0, 0.8, -2.30, 0.0, 0.0, 0.0)
 
 
+def gazebo_to_optical_xyz(x: float, y: float, z: float) -> tuple[float, float, float]:
+    """Gazebo camera (+X forward,+Y left,+Z up) to ROS optical (+Z forward)."""
+    return -y, -z, x
+
+
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
