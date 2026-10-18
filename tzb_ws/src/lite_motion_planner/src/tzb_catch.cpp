@@ -198,6 +198,7 @@ public:
     e3_target_frame_ = this->declare_parameter<std::string>("tzb.e3_target_frame", "base_link");
     e3_target_xyz_ = declareVec3Param("tzb.e3_target_xyz", {0.35, 0.20, 0.20});
     e3_target_rpy_ = declareVec3Param("tzb.e3_target_rpy", {0.0, 0.0, 0.0});
+    grasp_tcp_offset_xyz_ = declareVec3Param("tzb.grasp_tcp_offset_xyz", {0.0, 0.0, 0.0});
     use_yaml_e3_target_ = this->declare_parameter<bool>("tzb.use_yaml_e3_target", true);
     force_target_roll_ = this->declare_parameter<bool>("tzb.force_target_roll", false);
     force_target_pitch_ = this->declare_parameter<bool>("tzb.force_target_pitch", false);
@@ -366,6 +367,8 @@ public:
       this->declare_parameter<double>("tzb.cartesian_waypoint_rot_tolerance", 0.05));
 
     post_action_wait_sec_ = this->declare_parameter<double>("tzb.post_action_wait_sec", 0.05);
+    release_settle_sec_ = std::max(
+      0.0, this->declare_parameter<double>("tzb.release_settle_sec", 0.0));
     service_wait_sec_ = this->declare_parameter<double>("tzb.service_wait_sec", 30.0);
     const double configured_response_wait_sec =
       this->declare_parameter<double>("tzb.response_wait_sec", 30.0);
@@ -1410,6 +1413,28 @@ private:
       return false;
     }
     return true;
+  }
+
+  geometry_msgs::msg::PoseStamped graspTcpTargetFromObjectPose(
+    const geometry_msgs::msg::PoseStamped& object_pose) {
+    geometry_msgs::msg::PoseStamped tcp_target = object_pose;
+    tcp_target.pose.position.x += grasp_tcp_offset_xyz_[0];
+    tcp_target.pose.position.y += grasp_tcp_offset_xyz_[1];
+    tcp_target.pose.position.z += grasp_tcp_offset_xyz_[2];
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Grasp TCP target in [%s]: object=(%.4f, %.4f, %.4f) planning_offset=(%.4f, %.4f, %.4f) tcp=(%.4f, %.4f, %.4f).",
+      planning_frame_.c_str(),
+      object_pose.pose.position.x,
+      object_pose.pose.position.y,
+      object_pose.pose.position.z,
+      grasp_tcp_offset_xyz_[0],
+      grasp_tcp_offset_xyz_[1],
+      grasp_tcp_offset_xyz_[2],
+      tcp_target.pose.position.x,
+      tcp_target.pose.position.y,
+      tcp_target.pose.position.z);
+    return tcp_target;
   }
 
   bool resolveE3TargetPose(geometry_msgs::msg::PoseStamped& out) {
@@ -2826,7 +2851,8 @@ private:
             }
           }
 
-          if (executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
+          const auto grasp_tcp_target = graspTcpTargetFromObjectPose(e3_target_world_pose_);
+          if (executeArmPosePlan(grasp_tcp_target, false, "move_tcp_to_target")) {
             grasp_target_reached = true;
             break;
           }
@@ -2865,7 +2891,8 @@ private:
           }
         }
 
-        if (!executeArmPosePlan(e3_target_world_pose_, false, "move_tcp_to_target")) {
+        const auto grasp_tcp_target = graspTcpTargetFromObjectPose(e3_target_world_pose_);
+        if (!executeArmPosePlan(grasp_tcp_target, false, "move_tcp_to_target")) {
           return false;
         }
       }
@@ -2934,6 +2961,13 @@ private:
       return false;
     }
     publishGripperCommand("open_gripper_at_place_joint_positions", -1);
+    if (release_settle_sec_ > 0.0) {
+      RCLCPP_INFO(
+        get_logger(),
+        "Waiting %.2f wall seconds after gripper release for the simulated payload to settle under gravity.",
+        release_settle_sec_);
+      std::this_thread::sleep_for(std::chrono::duration<double>(release_settle_sec_));
+    }
 
     if (!executeArmJointPlan(
           observe_joint_positions_, "move_arm_to_observe_after_place")) {
@@ -3607,6 +3641,7 @@ private:
   std::string e3_target_frame_;
   std::array<double, 3> e3_target_xyz_{};
   std::array<double, 3> e3_target_rpy_{};
+  std::array<double, 3> grasp_tcp_offset_xyz_{};
   bool use_yaml_e3_target_{true};
   bool force_target_roll_{false};
   bool force_target_pitch_{false};
@@ -3668,6 +3703,7 @@ private:
   double cartesian_waypoint_pos_tolerance_{0.002};
   double cartesian_waypoint_rot_tolerance_{0.05};
   double post_action_wait_sec_{0.05};
+  double release_settle_sec_{0.0};
   double service_wait_sec_{30.0};
   double response_wait_sec_{30.0};
   std::string e3_marker_topic_{"/tzb_catch/e3_marker"};

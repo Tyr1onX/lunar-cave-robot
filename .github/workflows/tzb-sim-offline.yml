@@ -46,6 +46,7 @@ jobs:
               mkdir -p /tmp/tzb-sim-ci
               cp -a /workspace/src/tzb_sim /tmp/tzb-sim-ci/tzb_sim
               cd /tmp/tzb-sim-ci/tzb_sim
+              PYTHONPATH="$PWD" python3 -m unittest discover -s tests -v
               python3 setup.py build --build-base /tmp/tzb-sim-ci/build
               python3 setup.py install --prefix /tmp/tzb-sim-ci/install --single-version-externally-managed --record /tmp/tzb-sim-ci/install-files.txt
               python3 - <<"PY"
