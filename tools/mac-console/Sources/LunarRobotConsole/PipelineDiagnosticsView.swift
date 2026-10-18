@@ -168,7 +168,7 @@ struct PipelineDiagnosticsPanel: View {
     private func exportReport() {
         let panel = NSSavePanel()
         panel.title = "保存只读链路诊断报告"
-        panel.nameFieldStringValue = "lunar-pipeline-diagnosis-\(Date.now.formatted(.iso8601)).md"
+        panel.nameFieldStringValue = PipelineReportFilename.make(for: .now)
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
