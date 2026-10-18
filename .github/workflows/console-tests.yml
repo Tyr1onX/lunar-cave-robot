@@ -32,6 +32,25 @@ jobs:
             -s tools/console-agent/tests \
             -v
 
+  point-lio-runtime-log-safety:
+    name: Point-LIO disabled-log safety regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify disabled logs are not created or truncated
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_file="Nav2_rea_ws/src/localization/point_lio/test/runtime_log_guard_test.cpp"
+          include_dir="Nav2_rea_ws/src/localization/point_lio/include"
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -I"$include_dir" "$source_file" \
+            -o "$RUNNER_TEMP/point-lio-runtime-log-guard-test"
+          "$RUNNER_TEMP/point-lio-runtime-log-guard-test"
+
   ros2-pointcloud-benchmark:
     name: Isolated ROS 2 PointCloud2 load benchmark
     runs-on: ubuntu-22.04

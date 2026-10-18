@@ -83,7 +83,6 @@ extern MeasureGroup Measures;
 
 extern ofstream fout_out, fout_imu_pbp;
 void readParameters(std::shared_ptr<rclcpp::Node> & n);
-void open_file();
 Eigen::Matrix<double, 3, 1> SO3ToEuler(const SO3 & orient);
 void reset_cov(Eigen::Matrix<double, 24, 24> & P_init);
 void reset_cov_output(Eigen::Matrix<double, 30, 30> & P_init_output);

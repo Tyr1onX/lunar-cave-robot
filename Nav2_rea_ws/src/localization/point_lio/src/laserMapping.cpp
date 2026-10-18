@@ -12,6 +12,7 @@
 #include <nav_msgs/msg/path.hpp>
 
 #include "li_initialization.h"
+#include "runtime_log_guard.hpp"
 
 using namespace std;
 
@@ -361,12 +362,7 @@ int main(int argc, char ** argv)
   Eigen::Matrix<double, 30, 30> Q_output = process_noise_cov_output();
   /*** debug record ***/
   FILE * fp = nullptr;
-  // These streams use "w" and would truncate existing workspace files if opened while disabled.
-  if (runtime_pos_log) {
-    string pos_log_dir = root_dir + "/Log/pos_log.txt";
-    fp = fopen(pos_log_dir.c_str(), "w");
-    open_file();
-  }
+  open_runtime_debug_logs(runtime_pos_log, root_dir, fp, fout_out, fout_imu_pbp);
 
   /*** ROS subscribe initialization ***/
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_pcl_pc;
@@ -1039,10 +1035,6 @@ int main(int argc, char ** argv)
     pcl::PCDWriter pcd_writer;
     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
   }
-  if (runtime_pos_log) {
-    if (fp != nullptr) fclose(fp);
-    fout_out.close();
-    fout_imu_pbp.close();
-  }
+  close_runtime_debug_logs(runtime_pos_log, fp, fout_out, fout_imu_pbp);
   return 0;
 }
