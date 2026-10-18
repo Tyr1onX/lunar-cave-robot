@@ -1,5 +1,15 @@
 import Foundation
 
+enum PipelineReportFilename {
+    static func make(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss'Z'"
+        return "lunar-pipeline-diagnosis-\(formatter.string(from: date)).md"
+    }
+}
+
 enum PipelineStageID: String, CaseIterable, Codable, Identifiable {
     case radar
     case pointLIO = "point-lio"

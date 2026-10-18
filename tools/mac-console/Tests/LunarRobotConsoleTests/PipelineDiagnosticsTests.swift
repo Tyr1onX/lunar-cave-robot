@@ -5,6 +5,15 @@ import XCTest
 final class PipelineDiagnosticsTests: XCTestCase {
     private let collectedAt = "2026-10-18T12:00:00.000Z"
 
+    func testReportFilenameIsStableAndPathSafe() {
+        let filename = PipelineReportFilename.make(for: Date(timeIntervalSince1970: 1_792_000_000))
+
+        XCTAssertEqual(filename, "lunar-pipeline-diagnosis-2026-10-14T17-46-40Z.md")
+        XCTAssertFalse(filename.contains("/"))
+        XCTAssertFalse(filename.contains(":"))
+        XCTAssertTrue(filename.hasSuffix(".md"))
+    }
+
     func testUnconfiguredScenarioNeverReportsMissingStreamsAsFaults() throws {
         let result = evaluate(expectation: .unconfigured, statuses: allUnavailable())
 
