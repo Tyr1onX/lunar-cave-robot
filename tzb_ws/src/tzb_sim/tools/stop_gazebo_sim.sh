@@ -70,14 +70,14 @@ if [[ -n "$ROOT_PID" ]]; then kill -INT -- "-$ROOT_PID" 2>/dev/null || true; fi
 for pid in "${PIDS[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
 sleep 4
 for pid in "${PIDS[@]}"; do
-  sid_now="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  sid_now="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
   if [[ -n "$sid_now" && " ${SIDS[*]} " == *" $sid_now "* ]]; then
     kill -TERM "$pid" 2>/dev/null || true
   fi
 done
 sleep 3
 for pid in "${PIDS[@]}"; do
-  sid_now="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  sid_now="$(ps -o sid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
   state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
   if [[ -n "$sid_now" && " ${SIDS[*]} " == *" $sid_now "* && "$state" != Z* ]]; then
     kill -KILL "$pid" 2>/dev/null || true
