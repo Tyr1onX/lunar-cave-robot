@@ -498,7 +498,10 @@ class MissionCoordinator(Node):
                 return
             self._nav_result_future = None
             if wrapped.status != GoalStatus.STATUS_SUCCEEDED:
-                self._handle_navigation_failure('Nav2 result status=%s' % wrapped.status)
+                self._handle_navigation_failure(
+                    'Nav2 result status=%s' % wrapped.status,
+                    action_status=int(wrapped.status),
+                )
                 return
             self._nav_goal_handle = None
             self._stationary_since = None
@@ -509,8 +512,30 @@ class MissionCoordinator(Node):
             self._record('NAV_RESULT_CONFIRMED', status='SUCCEEDED')
             self._deadline = now + 10.0
 
-    def _handle_navigation_failure(self, reason):
-        self._record('NAVIGATION_FAILURE', reason=reason, attempt=self._nav_attempt)
+    def _handle_navigation_failure(self, reason, action_status=None):
+        destination, goal_x, goal_y = self._nav_destination or (None, None, None)
+        evidence = {
+            'reason': reason,
+            'attempt': self._nav_attempt,
+            'destination': destination,
+            'goal_x_m': goal_x,
+            'goal_y_m': goal_y,
+            'action_status': action_status,
+            'odom_age_sec': (time.monotonic() - self._odom_rx if self._odom_rx else None),
+        }
+        if self._odom is not None:
+            pose = self._odom.pose.pose
+            twist = self._odom.twist.twist
+            evidence.update({
+                'odom_frame_id': self._odom.header.frame_id,
+                'odom_x_m': pose.position.x,
+                'odom_y_m': pose.position.y,
+                'odom_orientation_z': pose.orientation.z,
+                'odom_orientation_w': pose.orientation.w,
+                'linear_speed_mps': twist.linear.x,
+                'angular_speed_rps': twist.angular.z,
+            })
+        self._record('NAVIGATION_FAILURE', **evidence)
         self._nav_goal_handle = None
         self._nav_goal_future = None
         self._nav_result_future = None

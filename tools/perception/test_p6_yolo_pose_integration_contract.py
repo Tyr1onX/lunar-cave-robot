@@ -11,6 +11,10 @@ class P6PerceptionIntegrationContractTest(unittest.TestCase):
         launch = (ROOT / 'tools/perception/p6_yolo_pose_synthetic.launch.py').read_text()
         self.assertIn("SetEnvironmentVariable('ROS_LOCALHOST_ONLY', '1')", launch)
         self.assertIn("'target_topic': '/pose_estimator/object_pose'", launch)
+        self.assertIn("DeclareLaunchArgument('input_rate_hz', default_value='1.0')", launch)
+        self.assertIn("'--rate-hz', LaunchConfiguration('input_rate_hz')", launch)
+        self.assertIn("'--complete-mission'", (ROOT / 'tools/perception/p6_yolo_pose_integration_smoke.py').read_text())
+        self.assertIn("'--require-clean-nav2'", (ROOT / 'tools/perception/p6_yolo_pose_integration_smoke.py').read_text())
         self.assertIn("'arm_backend': 'synthetic'", launch)
         self.assertIn("default_value='0.1'", launch)
         self.assertIn('p6_yolo_pose_synthetic_inputs.py', launch)
@@ -47,6 +51,14 @@ class P6PerceptionIntegrationContractTest(unittest.TestCase):
         self.assertIn("args.scenario in ('normal', 'recovery')", source)
         self.assertIn("'ARM_CANCEL_SENT', 'ARM_CANCEL_CONFIRMED'", source)
         self.assertIn('ROS_LOCALHOST_ONLY', source)
+
+    def test_smoke_collects_source_stamps_and_nav_path_evidence(self):
+        source = (ROOT / 'tools/perception/p6_yolo_pose_integration_smoke.py').read_text()
+        self.assertIn("'/local_costmap/published_footprint'", source)
+        self.assertIn("'/tf:odom->base_link'", source)
+        self.assertIn('discover_path_topics', source)
+        self.assertIn('source_age_sec_at_receive', source)
+        self.assertIn('runtime-observations.jsonl', source)
 
     def test_integration_python_files_parse_without_importing_ros(self):
         paths = [

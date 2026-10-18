@@ -26,6 +26,7 @@ def generate_launch_description():
         DeclareLaunchArgument('chassis_link_status_timeout_sec', default_value='0.5'),
         DeclareLaunchArgument('chassis_command_topic', default_value='/cmd_vel'),
         DeclareLaunchArgument('navigation_timeout_sec', default_value='90.0'),
+        DeclareLaunchArgument('target_x', default_value='10.0'),
         # Keep the historical isolated target topic as the default for existing P6 tests.
         # Composed perception runs can explicitly select PoseEstimator's production topic.
         DeclareLaunchArgument('target_topic', default_value='/p2_offline/pose_estimator/object_pose'),
@@ -69,6 +70,7 @@ def generate_launch_description():
                     LaunchConfiguration('chassis_link_status_timeout_sec'), value_type=float),
                 'navigation_timeout_sec': ParameterValue(
                     LaunchConfiguration('navigation_timeout_sec'), value_type=float),
+                'target_x': ParameterValue(LaunchConfiguration('target_x'), value_type=float),
                 'target_topic': LaunchConfiguration('target_topic'),
                 'target_timeout_sec': ParameterValue(
                     LaunchConfiguration('target_timeout_sec'), value_type=float),

@@ -31,6 +31,7 @@ def generate_launch_description():
         DeclareLaunchArgument('domain_id', default_value='151'),
         DeclareLaunchArgument('mission_scenario', default_value='normal'),
         DeclareLaunchArgument('input_scenario', default_value='normal'),
+        DeclareLaunchArgument('input_rate_hz', default_value='1.0'),
         DeclareLaunchArgument('model_path', default_value=os.environ.get('TZB_OPENVINO_MODEL', '')),
         DeclareLaunchArgument('model_pcd', default_value=str(
             pose_share / 'config' / 'half_block.pcd')),
@@ -81,6 +82,7 @@ def generate_launch_description():
             cmd=[
                 fixture_python, str(fixture_dir / 'p6_yolo_pose_synthetic_inputs.py'),
                 '--scenario', LaunchConfiguration('input_scenario'),
+                '--rate-hz', LaunchConfiguration('input_rate_hz'),
                 '--model-pcd', LaunchConfiguration('model_pcd'),
             ],
             output='screen',
@@ -102,6 +104,9 @@ def generate_launch_description():
                 'p4e_status_required': 'false',
                 'chassis_link_status_required': 'false',
                 'target_topic': '/pose_estimator/object_pose',
+                # The synthetic station leaves additional clearance from the
+                # upper-right obstacle for conservative Nav2 costmap inflation.
+                'target_x': '10.5',
                 'target_timeout_sec': LaunchConfiguration('target_timeout_sec'),
                 'event_log_path': LaunchConfiguration('event_log_path'),
             }.items(),
