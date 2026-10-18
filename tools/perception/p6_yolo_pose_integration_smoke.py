@@ -202,7 +202,7 @@ def main() -> int:
     import rclpy
     from geometry_msgs.msg import PoseStamped
     from geometry_msgs.msg import PolygonStamped
-    from nav_msgs.msg import Odometry, Path
+    from nav_msgs.msg import Odometry, Path as NavPath
     from sensor_msgs.msg import PointCloud2
     from std_msgs.msg import String
     from tf2_msgs.msg import TFMessage
@@ -336,7 +336,7 @@ def main() -> int:
                 if ('nav_msgs/msg/Path' in types and
                         any(token in topic.lower() for token in ('plan', 'path')) and
                         topic not in discovered_path_topics):
-                    node.create_subscription(Path, topic, make_path_callback(topic), 10)
+                    node.create_subscription(NavPath, topic, make_path_callback(topic), 10)
                     discovered_path_topics.add(topic)
 
         node.create_subscription(Odometry, '/odom', on_odom, 10)

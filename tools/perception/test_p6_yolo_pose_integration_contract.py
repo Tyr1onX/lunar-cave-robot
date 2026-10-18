@@ -57,6 +57,8 @@ class P6PerceptionIntegrationContractTest(unittest.TestCase):
         self.assertIn("'/local_costmap/published_footprint'", source)
         self.assertIn("'/tf:odom->base_link'", source)
         self.assertIn('discover_path_topics', source)
+        self.assertIn('from nav_msgs.msg import Odometry, Path as NavPath', source)
+        self.assertIn('node.create_subscription(NavPath, topic', source)
         self.assertIn('source_age_sec_at_receive', source)
         self.assertIn('runtime-observations.jsonl', source)
 
