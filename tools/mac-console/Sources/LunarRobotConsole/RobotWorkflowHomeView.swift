@@ -127,6 +127,7 @@ struct RobotTopologyView: View {
                         expanded: expandedPhaseIDs.contains(phase.id),
                         selectedStepID: selectedStepID,
                         evaluation: evaluation,
+                        pipelineDiagnosis: model.pipelineDiagnosis,
                         onToggle: { toggle(phase) },
                         onSelectStep: { select($0) }
                     )
@@ -150,6 +151,7 @@ struct RobotTopologyView: View {
                         expanded: expandedPhaseIDs.contains(phase.id),
                         selectedStepID: selectedStepID,
                         evaluation: evaluation,
+                        pipelineDiagnosis: model.pipelineDiagnosis,
                         onToggle: { toggle(phase) },
                         onSelectStep: { select($0) }
                     )
@@ -172,6 +174,7 @@ struct RobotTopologyView: View {
             WorkflowStepInspector(
                 step: step,
                 evaluation: evaluation,
+                pipelineDiagnosis: model.pipelineDiagnosis,
                 onSelectNode: { selectedNodeID = $0 }
             )
             if let selectedNode {
@@ -181,7 +184,9 @@ struct RobotTopologyView: View {
                     evaluation: evaluation,
                     context: context,
                     linkTelemetryMessage: model.linkTelemetryMessage,
-                    onClose: { selectedNodeID = nil }
+                    pipelineDiagnosis: model.pipelineDiagnosis,
+                    onClose: { selectedNodeID = nil },
+                    onOpenPipelineDiagnostics: { model.section = .diagnostics }
                 )
             }
         }
@@ -219,6 +224,7 @@ private struct WorkflowPhaseCard: View {
     let expanded: Bool
     let selectedStepID: String?
     let evaluation: TopologyEvaluation
+    let pipelineDiagnosis: PipelineDiagnosis
     let onToggle: () -> Void
     let onSelectStep: (String) -> Void
 
@@ -330,6 +336,7 @@ private struct WorkflowPhaseCard: View {
                     step: step,
                     selected: step.id == selectedStepID,
                     evaluation: evaluation,
+                    pipelineDiagnosis: pipelineDiagnosis,
                     action: { onSelectStep(step.id) }
                 )
                 if index < lane.steps.count - 1 {
@@ -346,9 +353,17 @@ private struct WorkflowStepRow: View {
     let step: RobotWorkflowStepDefinition
     let selected: Bool
     let evaluation: TopologyEvaluation
+    let pipelineDiagnosis: PipelineDiagnosis
     let action: () -> Void
 
     private var actionableSignal: TopologySignal? {
+        if let state = pipelineDiagnosis.workflowState(for: step.id) {
+            switch state {
+            case .confirmedExpectationMismatch: return .abnormal
+            case .suspectedGap, .possiblyAffected: return .dataStale
+            case .observed, .notConfigured, .unknown: break
+            }
+        }
         let signals = step.nodeIDs.map { evaluation.nodeStatus($0).signal } + step.incomingEdgeIDs.map { evaluation.edgeStatus($0).signal }
         if signals.contains(.abnormal) { return .abnormal }
         if signals.contains(.dataStale) { return .dataStale }
@@ -374,10 +389,17 @@ private struct WorkflowStepRow: View {
                 }
                 Spacer(minLength: 2)
                 if let actionableSignal {
-                    Image(systemName: actionableSignal == .abnormal ? "exclamationmark.circle.fill" : "clock.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(actionableSignal == .abnormal ? Palette.danger : Palette.warning)
-                        .accessibilityIdentifier("robot-workflow.step-actionable.\(step.id)")
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Image(systemName: actionableSignal == .abnormal ? "exclamationmark.circle.fill" : "clock.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(actionableSignal == .abnormal ? Palette.danger : Palette.warning)
+                        if let state = pipelineDiagnosis.workflowState(for: step.id) {
+                            Text(state == .possiblyAffected ? "可能受影响" : state == .confirmedExpectationMismatch ? "预期偏差" : "疑似断点")
+                                .font(.system(size: 7, weight: .medium))
+                                .foregroundStyle(state == .confirmedExpectationMismatch ? Palette.danger : Palette.warning)
+                        }
+                    }
+                    .accessibilityIdentifier("robot-workflow.step-actionable.\(step.id)")
                 }
             }
             .padding(.horizontal, 8)
@@ -395,6 +417,7 @@ private struct WorkflowStepRow: View {
 private struct WorkflowStepInspector: View {
     let step: RobotWorkflowStepDefinition
     let evaluation: TopologyEvaluation
+    let pipelineDiagnosis: PipelineDiagnosis
     let onSelectNode: (String) -> Void
 
     private var relatedEdges: [TopologyEdgeDefinition] {
@@ -411,6 +434,22 @@ private struct WorkflowStepInspector: View {
     var body: some View {
         Panel(title: "\(step.title) · 工作原理", subtitle: "先读输入、处理和输出，再查看技术依据") {
             VStack(alignment: .leading, spacing: 13) {
+                if let pipelineState = pipelineDiagnosis.workflowState(for: step.id),
+                   let stageID = pipelineDiagnosis.findingStageID,
+                   let stage = pipelineDiagnosis.stage(stageID) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            pipelineState == .possiblyAffected ? "上游环节可能影响当前步骤" : "链路诊断：\(stage.id.title)",
+                            systemImage: pipelineState == .possiblyAffected ? "arrow.down.right.circle" : "exclamationmark.triangle"
+                        )
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(pipelineState == .possiblyAffected ? Palette.warning : Palette.danger)
+                        Text(stage.summary).font(.system(size: 8)).foregroundStyle(Palette.muted).fixedSize(horizontal: false, vertical: true)
+                        Text("首个异常观测 \(pipelineDiagnosis.firstFinding?.firstObservedAt ?? stage.observedAt) · \(pipelineDiagnosis.firstFinding?.persistenceLabel ?? "单次快照")")
+                            .font(.system(size: 7, design: .monospaced)).foregroundStyle(Palette.muted).textSelection(.enabled)
+                    }
+                    .accessibilityIdentifier("robot-workflow.step-pipeline-evidence.\(step.id)")
+                }
                 if let actionableSignal {
                     Label(actionableSignal == .abnormal ? "存在直接异常证据" : "存在数据延迟证据", systemImage: "exclamationmark.circle.fill")
                         .font(.system(size: 10, weight: .medium))

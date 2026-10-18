@@ -238,7 +238,9 @@ struct RobotCapabilityTopologyView: View {
                     evaluation: evaluation,
                     context: context,
                     linkTelemetryMessage: model.linkTelemetryMessage,
-                    onClose: { selectedNodeID = nil }
+                    pipelineDiagnosis: model.pipelineDiagnosis,
+                    onClose: { selectedNodeID = nil },
+                    onOpenPipelineDiagnostics: { model.section = .diagnostics }
                 )
             }
         } else if let step = selectedStep {

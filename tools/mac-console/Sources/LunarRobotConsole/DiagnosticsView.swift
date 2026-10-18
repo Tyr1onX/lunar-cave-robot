@@ -8,6 +8,7 @@ struct DiagnosticsView: View {
         VStack(alignment: .leading, spacing: 17) {
             OverviewView(model: model)
             HealthDiagnosticsPanel(events: model.healthEvents, workspaceInventory: model.healthWorkspaceInventory)
+            PipelineDiagnosticsPanel(model: model)
             WorkspaceMonitoringPanel(
                 inventory: model.workspaceInventorySnapshot,
                 freshness: model.workspaceSnapshotFreshness,
