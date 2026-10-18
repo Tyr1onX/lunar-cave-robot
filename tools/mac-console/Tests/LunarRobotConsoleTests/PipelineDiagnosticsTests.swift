@@ -293,22 +293,35 @@ final class PipelineDiagnosticsTests: XCTestCase {
         let streams: [[String: Any]] = definitions.compactMap { topic, staleAfter in
             guard !missingTopics.contains(topic) else { return nil }
             let status = statuses[topic] ?? "streaming"
+            let hasRecentSample = status == "streaming" || status == "stale"
             let isStreaming = status == "streaming"
+            let age = status == "stale" ? staleAfter + 100 : isStreaming ? 100 : nil
+            let receivedAt = age.flatMap { timestamp(collectedAt, minusMilliseconds: $0) }
+            let sourceStamp = age.flatMap { timestamp(collectedAt, minusMilliseconds: $0 + 4) }
+            let publisherCount = status == "unavailable" ? 0 : 1
+            let topicType = topic == "/scan" ? "sensor_msgs/msg/LaserScan"
+                : topic == "/map" ? "nav_msgs/msg/OccupancyGrid"
+                : topic == "/livox/imu" || topic == "/imu/data" ? "sensor_msgs/msg/Imu"
+                : topic == "/odometry" ? "nav_msgs/msg/Odometry"
+                : "sensor_msgs/msg/PointCloud2"
             return [
                 "id": topic.replacingOccurrences(of: "/", with: "").replacingOccurrences(of: "_", with: "-"),
                 "label": topic, "topic": topic,
-                "topic_type": "sensor_msgs/msg/PointCloud2", "topic_types": ["sensor_msgs/msg/PointCloud2"],
+                "topic_type": topicType, "topic_types": [topicType],
                 "status": status, "reason": status == "streaming" ? NSNull() : "synthetic status",
-                "publisher_count": 1,
-                "publisher_endpoints": [["name": "point_lio", "namespace": "/", "topic_type": "sensor_msgs/msg/PointCloud2"]],
+                "publisher_count": publisherCount,
+                "publisher_endpoints": publisherCount == 0 ? [] : [["name": "point_lio", "namespace": "/", "topic_type": topicType]],
                 "workspace_attribution": "unknown", "subscription_generation": 2,
-                "subscription_started_at": collectedAt, "previous_received_at": NSNull(),
-                "previous_subscription_generation": NSNull(), "received_at": isStreaming ? collectedAt : NSNull(),
-                "source_stamp": isStreaming ? collectedAt : NSNull(), "age_ms": isStreaming ? 100 : staleAfter + 100,
-                "receive_rate_hz": isStreaming ? 10.0 : NSNull(), "header_to_agent_ms": isStreaming ? 4.0 : NSNull(),
-                "frame_id": "synthetic", "sample_count": 10, "sample_unit": "points",
+                "subscription_started_at": timestamp(collectedAt, minusMilliseconds: 10_000) ?? collectedAt,
+                "previous_received_at": NSNull(),
+                "previous_subscription_generation": NSNull(), "received_at": receivedAt as Any? ?? NSNull(),
+                "source_stamp": sourceStamp as Any? ?? NSNull(), "age_ms": age as Any? ?? NSNull(),
+                "receive_rate_hz": hasRecentSample && (age ?? 0) <= 5_000 ? 10.0 as Any : NSNull(),
+                "header_to_agent_ms": hasRecentSample ? 4.0 as Any : NSNull(),
+                "frame_id": hasRecentSample ? "synthetic" as Any : NSNull(),
+                "sample_count": hasRecentSample ? 10 as Any : NSNull(), "sample_unit": "points",
                 "gap_events": isStreaming ? 0 : 1, "last_gap_ms": isStreaming ? NSNull() : staleAfter + 100,
-                "stale_after_ms": staleAfter, "receive_count": isStreaming ? 20 : 4
+                "stale_after_ms": staleAfter, "receive_count": hasRecentSample ? 20 : 0
             ]
         }
         var value: [String: Any] = [
@@ -328,5 +341,12 @@ final class PipelineDiagnosticsTests: XCTestCase {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func timestamp(_ value: String, minusMilliseconds milliseconds: Int) -> String? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: value) else { return nil }
+        return formatter.string(from: date.addingTimeInterval(-Double(milliseconds) / 1_000))
     }
 }
