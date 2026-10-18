@@ -132,19 +132,34 @@ def update_topic_observation(
     return row
 
 
-def finalize_topic_observations(observations: dict) -> dict:
+def finalize_topic_observations(
+        observations: dict, now_ros_ns: int | None = None,
+        now_monotonic_ns: int | None = None) -> dict:
     """Return a JSON-safe summary without leaking internal monotonic timestamps."""
-    return {
-        topic: {
+    summary = {}
+    for topic, entry in observations.items():
+        last_source_stamp_ns = entry['last_source_stamp_ns']
+        last_received_monotonic_ns = entry['last_received_monotonic_ns']
+        current_source_age_sec = (
+            (int(now_ros_ns) - last_source_stamp_ns) / 1e9
+            if now_ros_ns is not None and last_source_stamp_ns else None)
+        current_receive_silence_sec = (
+            max(0.0, (int(now_monotonic_ns) - last_received_monotonic_ns) / 1e9)
+            if now_monotonic_ns is not None and last_received_monotonic_ns is not None else None)
+        summary[topic] = {
             'count': entry['count'],
             'first_source_stamp_ns': entry['first_source_stamp_ns'],
-            'last_source_stamp_ns': entry['last_source_stamp_ns'],
+            'last_source_stamp_ns': last_source_stamp_ns,
             'max_receive_gap_sec': round(entry['max_receive_gap_sec'], 6),
             'max_source_age_sec': round(entry['max_source_age_sec'], 6),
+            'current_source_age_sec': (round(current_source_age_sec, 6)
+                                       if current_source_age_sec is not None else None),
+            'current_receive_silence_sec': (
+                round(current_receive_silence_sec, 6)
+                if current_receive_silence_sec is not None else None),
             'non_monotonic_source_stamps': entry['non_monotonic_source_stamps'],
         }
-        for topic, entry in observations.items()
-    }
+    return summary
 
 
 def main() -> int:
@@ -383,7 +398,8 @@ def main() -> int:
         last_yolo_confidence = float(timing_matches[-1][0]) if timing_matches else None
         last_yolo_publish = timing_matches[-1][1] == 'True' if timing_matches else None
         nav2_diagnostics = collect_nav2_diagnostics(launch_log_text)
-        topic_observations = finalize_topic_observations(observations)
+        topic_observations = finalize_topic_observations(
+            observations, node.get_clock().now().nanoseconds, time.monotonic_ns())
 
         if args.scenario in ('normal', 'recovery', 'cancel') and (detections == 0 or poses < 3):
             raise AssertionError('perception interface did not produce enough evidence: detections=%d poses=%d' % (detections, poses))
@@ -478,7 +494,10 @@ def main() -> int:
             'mission_events': sorted(event_names),
             'nav2_diagnostics': collect_nav2_diagnostics(
                 launch_log_path.read_text(encoding='utf-8', errors='replace')),
-            'topic_observations': finalize_topic_observations(observations),
+            'topic_observations': finalize_topic_observations(
+                observations,
+                node.get_clock().now().nanoseconds if node is not None else None,
+                time.monotonic_ns()),
             'path_topics_observed': sorted(discovered_path_topics),
             'runtime_observation_log': str(observation_path),
             'error': str(exc),

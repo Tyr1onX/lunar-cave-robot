@@ -89,7 +89,8 @@ class P6FullMissionEvidenceTest(unittest.TestCase):
         second = update_topic_observation(
             observations, '/local_costmap/published_footprint', 10_500_000_000,
             2_500_000_000, 13_500_000_000, {'frame_id': 'odom'})
-        summary = finalize_topic_observations(observations)
+        summary = finalize_topic_observations(
+            observations, now_ros_ns=13_750_000_000, now_monotonic_ns=3_000_000_000)
         self.assertEqual(first['source_age_sec_at_receive'], 2.0)
         self.assertEqual(second['source_age_sec_at_receive'], 3.0)
         self.assertEqual(second['receive_gap_sec'], 1.5)
@@ -97,6 +98,8 @@ class P6FullMissionEvidenceTest(unittest.TestCase):
         self.assertEqual(summary['/local_costmap/published_footprint']['last_source_stamp_ns'],
                          10_500_000_000)
         self.assertEqual(summary['/local_costmap/published_footprint']['max_source_age_sec'], 3.0)
+        self.assertEqual(summary['/local_costmap/published_footprint']['current_source_age_sec'], 3.25)
+        self.assertEqual(summary['/local_costmap/published_footprint']['current_receive_silence_sec'], 0.5)
 
     def test_topic_evidence_marks_non_monotonic_source_time(self):
         observations = {}
