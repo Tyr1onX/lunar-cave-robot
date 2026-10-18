@@ -13,6 +13,13 @@ class OfflineContractTest(unittest.TestCase):
         self.assertIn("get_package_share_directory('nav2_bringup')", launch)
         self.assertIn("executable='cave_simulator'", launch)
 
+    def test_target_topic_is_explicitly_forwarded_without_changing_legacy_default(self):
+        launch = (ROOT / 'Nav2_rea_ws/src/p6_autonomous_mission/launch/'
+                  'p6_autonomous_mission.launch.py').read_text()
+        self.assertIn("DeclareLaunchArgument('target_topic', default_value='/p2_offline/pose_estimator/object_pose')", launch)
+        self.assertIn("'target_topic': LaunchConfiguration('target_topic')", launch)
+        self.assertIn("'target_timeout_sec': ParameterValue(", launch)
+
     def test_offline_entry_uses_distinct_workspaces_and_never_enables_serial(self):
         runner = (ROOT / 'tools/p6_offline/run.sh').read_text()
         arm_launch = (ROOT / 'tzb_ws/src/lite_motion_planner/launch/'

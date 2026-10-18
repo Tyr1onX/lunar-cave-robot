@@ -11,6 +11,17 @@ permissions:
   contents: read
 
 jobs:
+  p6-perception-contract:
+    name: P6 YOLO and pose integration safety contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run P6 launch and scenario contracts
+        run: python3 -m unittest Nav2_rea_ws.src.p6_autonomous_mission.test.test_p6_static_contract tools.perception.test_p6_yolo_pose_integration_contract -v
+
   humble-build:
     name: Build tzb_sim Python package in ROS 2 Humble
     runs-on: ubuntu-22.04
