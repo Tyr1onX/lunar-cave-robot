@@ -121,14 +121,16 @@ final class ConsoleModel: ObservableObject {
     }
 
     init() {
+        let restoredExpectation: PipelineRunExpectation
         if let saved = UserDefaults.standard.data(forKey: Self.pipelineExpectationDefaultsKey),
            let restored = try? JSONDecoder().decode(PipelineRunExpectation.self, from: saved) {
-            pipelineExpectation = restored
+            restoredExpectation = restored
         } else {
-            pipelineExpectation = .unconfigured
+            restoredExpectation = .unconfigured
         }
+        pipelineExpectation = restoredExpectation
         pipelineDiagnosis = PipelineDiagnosisEvaluator.evaluate(
-            expectation: pipelineExpectation,
+            expectation: restoredExpectation,
             agentOnline: false,
             snapshot: nil,
             telemetry: nil,
