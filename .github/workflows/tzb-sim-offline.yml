@@ -29,10 +29,11 @@ jobs:
             --volume "$GITHUB_WORKSPACE/tzb_ws/src:/workspace/src:ro" \
             ros:humble-ros-base \
             bash -lc '
-              set -euo pipefail
+              set -eo pipefail
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-colcon-common-extensions
               source /opt/ros/humble/setup.bash
+              set -u
               mkdir -p /tmp/tzb-sim-build
               cd /tmp/tzb-sim-build
               colcon build --base-paths /workspace/src --packages-select tzb_sim --event-handlers console_direct+
