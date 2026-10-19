@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run P6 launch and scenario contracts
-        run: python3 -m unittest Nav2_rea_ws.src.p6_autonomous_mission.test.test_p6_static_contract tools.perception.test_p6_yolo_pose_integration_contract -v
+        run: python3 -m unittest Nav2_rea_ws.src.p6_autonomous_mission.test.test_p6_static_contract tools.perception.test_p6_yolo_pose_integration_contract tools.perception.test_p6_full_mission_evidence -v
 
   humble-build:
     name: Build tzb_sim Python package in ROS 2 Humble
