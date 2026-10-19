@@ -4,6 +4,7 @@ from tools.perception.p6_yolo_pose_integration_smoke import (
     collect_nav2_diagnostics,
     finalize_topic_observations,
     first_unexpected_process_exit,
+    latest_yolo_gate_observation,
     update_topic_observation,
     validate_full_mission_evidence,
 )
@@ -76,6 +77,14 @@ class P6FullMissionEvidenceTest(unittest.TestCase):
         self.assertEqual(report['controller_progress_failures'], 0)
         self.assertEqual(report['planner_start_in_lethal_space'], 0)
 
+    def test_yolo_gate_observation_survives_failure_reports(self):
+        confidence, publish = latest_yolo_gate_observation(
+            '[yolo_node] [YOLO TIMING] total=95ms max_conf=0.383 publish=True\n'
+            '[yolo_node] [YOLO TIMING] total=90ms max_conf=0.090 publish=False\n')
+        self.assertEqual(confidence, 0.09)
+        self.assertFalse(publish)
+        self.assertEqual(latest_yolo_gate_observation('no timing records'), (None, None))
+
     def test_launch_child_exit_is_reported_before_mission_timeout(self):
         line = '[ERROR] [python3-3]: process has died [pid 123, exit code 1]'
         self.assertEqual(first_unexpected_process_exit('startup\n' + line), line)
@@ -107,6 +116,41 @@ class P6FullMissionEvidenceTest(unittest.TestCase):
         update_topic_observation(observations, '/odom', 19, 200, 20)
         self.assertEqual(finalize_topic_observations(observations)['/odom'][
             'non_monotonic_source_stamps'], 1)
+
+    def test_topic_evidence_separates_fresh_receives_from_stopped_source_stamps(self):
+        observations = {}
+        first = update_topic_observation(
+            observations, '/local_costmap/published_footprint', 12_000_000_000,
+            1_000_000_000, 12_000_000_000, {'frame_id': 'odom'})
+        second = update_topic_observation(
+            observations, '/local_costmap/published_footprint', 12_000_000_000,
+            1_125_000_000, 12_125_000_000, {'frame_id': 'odom'})
+        summary = finalize_topic_observations(
+            observations, now_ros_ns=12_250_000_000, now_monotonic_ns=1_250_000_000)
+        footprint = summary['/local_costmap/published_footprint']
+
+        self.assertIsNotNone(first['received_at_utc'])
+        self.assertEqual(second['receive_gap_sec'], 0.125)
+        self.assertIsNone(second['source_stamp_gap_sec'])
+        self.assertEqual(footprint['receive_hz'], 8.0)
+        self.assertEqual(footprint['source_stamp_hz'], 0.0)
+        self.assertEqual(footprint['repeated_source_stamp_count'], 1)
+        self.assertEqual(footprint['observed_source_duration_sec'], 0.0)
+        self.assertEqual(footprint['current_source_age_sec'], 0.25)
+        self.assertEqual(footprint['current_receive_silence_sec'], 0.125)
+
+    def test_source_stamp_rate_counts_advances_not_republished_messages(self):
+        observations = {}
+        for stamp_sec, receive_sec in (
+                (10, 1.0), (10, 1.1), (11, 1.2), (11, 1.3), (12, 1.4)):
+            update_topic_observation(
+                observations, '/received_global_plan', stamp_sec * 1_000_000_000,
+                int(receive_sec * 1_000_000_000), stamp_sec * 1_000_000_000)
+        summary = finalize_topic_observations(observations)['/received_global_plan']
+        self.assertEqual(summary['receive_hz'], 10.0)
+        self.assertEqual(summary['source_stamp_advance_count'], 2)
+        self.assertEqual(summary['repeated_source_stamp_count'], 2)
+        self.assertEqual(summary['source_stamp_hz'], 1.0)
 
 
 if __name__ == '__main__':

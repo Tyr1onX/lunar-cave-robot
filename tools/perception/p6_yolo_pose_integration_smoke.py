@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -78,6 +79,16 @@ def collect_nav2_diagnostics(log_text: str) -> dict[str, int]:
             for name, pattern in patterns.items()}
 
 
+def latest_yolo_gate_observation(log_text: str) -> tuple[float | None, bool | None]:
+    """Return the most recent logged confidence and publish-gate decision."""
+    matches = re.findall(
+        r'\[YOLO TIMING\].*?max_conf=([0-9.]+) publish=(True|False)', log_text)
+    if not matches:
+        return None, None
+    confidence, publish = matches[-1]
+    return float(confidence), publish == 'True'
+
+
 def first_unexpected_process_exit(log_text: str) -> str | None:
     """Return a launch child-exit line before teardown has begun, if present."""
     for line in log_text.splitlines():
@@ -97,14 +108,19 @@ def update_topic_observation(
         'count': 0,
         'first_source_stamp_ns': None,
         'last_source_stamp_ns': None,
+        'first_received_monotonic_ns': None,
         'last_received_monotonic_ns': None,
         'max_receive_gap_sec': 0.0,
+        'max_source_stamp_gap_sec': 0.0,
         'max_source_age_sec': 0.0,
+        'source_stamp_advance_count': 0,
+        'repeated_source_stamp_count': 0,
         'non_monotonic_source_stamps': 0,
     })
     previous_received = entry['last_received_monotonic_ns']
     previous_source = entry['last_source_stamp_ns']
     gap_sec = None
+    source_gap_sec = None
     if previous_received is not None:
         gap_sec = max(0.0, (received_monotonic_ns - previous_received) / 1e9)
         entry['max_receive_gap_sec'] = max(entry['max_receive_gap_sec'], gap_sec)
@@ -114,8 +130,17 @@ def update_topic_observation(
         entry['max_source_age_sec'] = max(entry['max_source_age_sec'], age_sec)
         if previous_source is not None and source_stamp_ns < previous_source:
             entry['non_monotonic_source_stamps'] += 1
+        elif previous_source is not None and source_stamp_ns == previous_source:
+            entry['repeated_source_stamp_count'] += 1
+        elif previous_source is not None:
+            source_gap_sec = (source_stamp_ns - previous_source) / 1e9
+            entry['source_stamp_advance_count'] += 1
+            entry['max_source_stamp_gap_sec'] = max(
+                entry['max_source_stamp_gap_sec'], source_gap_sec)
     if entry['first_source_stamp_ns'] is None:
         entry['first_source_stamp_ns'] = source_stamp_ns or None
+    if entry['first_received_monotonic_ns'] is None:
+        entry['first_received_monotonic_ns'] = received_monotonic_ns
     entry['count'] += 1
     entry['last_source_stamp_ns'] = source_stamp_ns or None
     entry['last_received_monotonic_ns'] = received_monotonic_ns
@@ -123,9 +148,11 @@ def update_topic_observation(
         'topic': topic,
         'count': entry['count'],
         'source_stamp_ns': source_stamp_ns or None,
+        'received_at_utc': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
         'received_monotonic_ns': received_monotonic_ns,
         'source_age_sec_at_receive': age_sec,
         'receive_gap_sec': gap_sec,
+        'source_stamp_gap_sec': source_gap_sec,
     }
     if details:
         row.update(details)
@@ -139,7 +166,26 @@ def finalize_topic_observations(
     summary = {}
     for topic, entry in observations.items():
         last_source_stamp_ns = entry['last_source_stamp_ns']
+        first_source_stamp_ns = entry['first_source_stamp_ns']
+        first_received_monotonic_ns = entry['first_received_monotonic_ns']
         last_received_monotonic_ns = entry['last_received_monotonic_ns']
+        receive_duration_sec = (
+            (last_received_monotonic_ns - first_received_monotonic_ns) / 1e9
+            if first_received_monotonic_ns is not None and last_received_monotonic_ns is not None
+            else None)
+        source_duration_sec = (
+            (last_source_stamp_ns - first_source_stamp_ns) / 1e9
+            if first_source_stamp_ns is not None and last_source_stamp_ns is not None
+            else None)
+        receive_hz = (
+            (entry['count'] - 1) / receive_duration_sec
+            if entry['count'] > 1 and receive_duration_sec and receive_duration_sec > 0
+            else (0.0 if entry['count'] > 1 else None))
+        source_stamp_hz = (
+            entry['source_stamp_advance_count'] / source_duration_sec
+            if entry['source_stamp_advance_count'] > 0 and source_duration_sec
+            and source_duration_sec > 0
+            else (0.0 if entry['count'] > 1 else None))
         current_source_age_sec = (
             (int(now_ros_ns) - last_source_stamp_ns) / 1e9
             if now_ros_ns is not None and last_source_stamp_ns else None)
@@ -148,18 +194,53 @@ def finalize_topic_observations(
             if now_monotonic_ns is not None and last_received_monotonic_ns is not None else None)
         summary[topic] = {
             'count': entry['count'],
-            'first_source_stamp_ns': entry['first_source_stamp_ns'],
+            'first_source_stamp_ns': first_source_stamp_ns,
             'last_source_stamp_ns': last_source_stamp_ns,
+            'observed_receive_duration_sec': (
+                round(receive_duration_sec, 6) if receive_duration_sec is not None else None),
+            'observed_source_duration_sec': (
+                round(source_duration_sec, 6) if source_duration_sec is not None else None),
+            'receive_hz': round(receive_hz, 3) if receive_hz is not None else None,
+            'source_stamp_hz': (
+                round(source_stamp_hz, 3) if source_stamp_hz is not None else None),
             'max_receive_gap_sec': round(entry['max_receive_gap_sec'], 6),
+            'max_source_stamp_gap_sec': round(entry['max_source_stamp_gap_sec'], 6),
             'max_source_age_sec': round(entry['max_source_age_sec'], 6),
             'current_source_age_sec': (round(current_source_age_sec, 6)
                                        if current_source_age_sec is not None else None),
             'current_receive_silence_sec': (
                 round(current_receive_silence_sec, 6)
                 if current_receive_silence_sec is not None else None),
+            'repeated_source_stamp_count': entry['repeated_source_stamp_count'],
+            'source_stamp_advance_count': entry['source_stamp_advance_count'],
             'non_monotonic_source_stamps': entry['non_monotonic_source_stamps'],
         }
     return summary
+
+
+def snapshot_topic_endpoints(node, topics: list[str]) -> dict:
+    """Capture ROS graph endpoints relevant to the observed navigation links."""
+    result = {}
+    for topic in topics:
+        result[topic] = {}
+        for kind, getter in (
+                ('publishers', node.get_publishers_info_by_topic),
+                ('subscriptions', node.get_subscriptions_info_by_topic)):
+            endpoints = []
+            try:
+                for endpoint in getter(topic):
+                    endpoints.append({
+                        'node_name': endpoint.node_name,
+                        'node_namespace': endpoint.node_namespace,
+                        'topic_type': endpoint.topic_type,
+                        'endpoint_type': str(endpoint.endpoint_type),
+                    })
+            except Exception as exc:
+                result[topic][kind + '_error'] = type(exc).__name__
+            result[topic][kind] = sorted(
+                endpoints, key=lambda item: (
+                    item['node_namespace'], item['node_name'], item['topic_type']))
+    return result
 
 
 def main() -> int:
@@ -202,8 +283,8 @@ def main() -> int:
     import rclpy
     from geometry_msgs.msg import PoseStamped
     from geometry_msgs.msg import PolygonStamped
-    from nav_msgs.msg import Odometry, Path as NavPath
-    from sensor_msgs.msg import PointCloud2
+    from nav_msgs.msg import OccupancyGrid, Odometry, Path as NavPath
+    from sensor_msgs.msg import LaserScan, PointCloud2
     from std_msgs.msg import String
     from tf2_msgs.msg import TFMessage
     from yolo_node.msg import DetectionArray
@@ -241,6 +322,7 @@ def main() -> int:
     detection_messages = 0
     poses = 0
     cloud_messages = 0
+    max_observed_detection_confidence: float | None = None
     detecting_since: float | None = None
     first_cloud_after_detecting_sec: float | None = None
     event_names: set[str] = set()
@@ -265,20 +347,43 @@ def main() -> int:
             if state == 'DETECTING_TARGET' and detecting_since is None:
                 detecting_since = time.monotonic()
 
-        def on_cloud(_message):
+        def on_cloud(message):
             nonlocal cloud_messages, first_cloud_after_detecting_sec
             cloud_messages += 1
             if detecting_since is not None and first_cloud_after_detecting_sec is None:
                 first_cloud_after_detecting_sec = time.monotonic() - detecting_since
+            observe('/camera/depth/color/points', message.header,
+                    frame_id=message.header.frame_id,
+                    width=message.width,
+                    height=message.height,
+                    point_step=message.point_step,
+                    point_count=message.width * message.height)
 
         def on_detection(message):
-            nonlocal detections, detection_messages
+            nonlocal detections, detection_messages, max_observed_detection_confidence
             detection_messages += 1
             detections += len(message.detections)
+            confidences = [float(item.confidence) for item in message.detections]
+            if confidences:
+                current_max = max(confidences)
+                max_observed_detection_confidence = max(
+                    current_max,
+                    max_observed_detection_confidence
+                    if max_observed_detection_confidence is not None else current_max)
+            observe('/yolo/detections', message.header,
+                    frame_id=message.header.frame_id,
+                    detection_count=len(message.detections),
+                    max_confidence=max(confidences) if confidences else None,
+                    class_names=sorted({item.class_name for item in message.detections}))
 
-        def on_pose(_message):
+        def on_pose(message):
             nonlocal poses
             poses += 1
+            observe('/pose_estimator/object_pose', message.header,
+                    frame_id=message.header.frame_id,
+                    position_m=[message.pose.position.x,
+                                message.pose.position.y,
+                                message.pose.position.z])
 
         def on_event(message):
             try:
@@ -307,6 +412,23 @@ def main() -> int:
                     y_m=message.pose.pose.position.y,
                     linear_speed_mps=message.twist.twist.linear.x,
                     angular_speed_rps=message.twist.twist.angular.z)
+
+        def on_scan(message):
+            observe('/scan', message.header,
+                    frame_id=message.header.frame_id,
+                    range_count=len(message.ranges),
+                    range_min_m=message.range_min,
+                    range_max_m=message.range_max,
+                    angle_increment_rad=message.angle_increment)
+
+        def on_costmap(message):
+            metadata = message.info
+            observe('/local_costmap/costmap', message.header,
+                    frame_id=message.header.frame_id,
+                    size_x=metadata.width,
+                    size_y=metadata.height,
+                    resolution_m=metadata.resolution,
+                    cell_count=len(message.data))
 
         def on_footprint(message):
             observe('/local_costmap/published_footprint', message.header,
@@ -340,6 +462,8 @@ def main() -> int:
                     discovered_path_topics.add(topic)
 
         node.create_subscription(Odometry, '/odom', on_odom, 10)
+        node.create_subscription(LaserScan, '/scan', on_scan, 10)
+        node.create_subscription(OccupancyGrid, '/local_costmap/costmap', on_costmap, 10)
         node.create_subscription(PolygonStamped, '/local_costmap/published_footprint',
                                  on_footprint, 10)
         node.create_subscription(TFMessage, '/tf', on_tf, 50)
@@ -392,14 +516,18 @@ def main() -> int:
 
         log.flush()
         launch_log_text = launch_log_path.read_text(encoding='utf-8', errors='replace')
-        timing_matches = re.findall(
-            r'\[YOLO TIMING\].*?max_conf=([0-9.]+) publish=(True|False)',
+        last_yolo_confidence, last_yolo_publish = latest_yolo_gate_observation(
             launch_log_text)
-        last_yolo_confidence = float(timing_matches[-1][0]) if timing_matches else None
-        last_yolo_publish = timing_matches[-1][1] == 'True' if timing_matches else None
         nav2_diagnostics = collect_nav2_diagnostics(launch_log_text)
         topic_observations = finalize_topic_observations(
             observations, node.get_clock().now().nanoseconds, time.monotonic_ns())
+        graph_topics = sorted({
+            '/scan', '/odom', '/tf', '/local_costmap/costmap',
+            '/local_costmap/published_footprint', '/camera/color/image_raw',
+            '/camera/depth/color/points', '/yolo/detections',
+            '/pose_estimator/object_pose',
+        } | discovered_path_topics)
+        graph_endpoints = snapshot_topic_endpoints(node, graph_topics)
 
         if args.scenario in ('normal', 'recovery', 'cancel') and (detections == 0 or poses < 3):
             raise AssertionError('perception interface did not produce enough evidence: detections=%d poses=%d' % (detections, poses))
@@ -462,10 +590,12 @@ def main() -> int:
             'pose_count': poses,
             'cloud_count': cloud_messages,
             'first_cloud_after_detecting_sec': first_cloud_after_detecting_sec,
+            'max_observed_detection_confidence': max_observed_detection_confidence,
             'mission_events': sorted(event_names),
             'recent_reasons': recent_reasons[-5:],
             'nav2_diagnostics': nav2_diagnostics,
             'topic_observations': topic_observations,
+            'topic_graph_endpoints': graph_endpoints,
             'path_topics_observed': sorted(discovered_path_topics),
             'runtime_observation_log': str(observation_path),
             'event_log': str(event_path),
@@ -486,18 +616,35 @@ def main() -> int:
     except Exception as exc:
         log.flush()
         observation_log.flush()
+        launch_log_text = launch_log_path.read_text(encoding='utf-8', errors='replace')
+        last_yolo_confidence, last_yolo_publish = latest_yolo_gate_observation(
+            launch_log_text)
         failure_report = {
             'scenario': args.scenario,
             'domain_id': args.domain_id,
             'validation_scope': 'full_mission' if args.complete_mission else 'scenario_checkpoint',
             'mission_state': state,
             'mission_events': sorted(event_names),
-            'nav2_diagnostics': collect_nav2_diagnostics(
-                launch_log_path.read_text(encoding='utf-8', errors='replace')),
+            'nav2_diagnostics': collect_nav2_diagnostics(launch_log_text),
             'topic_observations': finalize_topic_observations(
                 observations,
                 node.get_clock().now().nanoseconds if node is not None else None,
                 time.monotonic_ns()),
+            'detection_messages': detection_messages,
+            'detection_count': detections,
+            'pose_count': poses,
+            'cloud_count': cloud_messages,
+            'first_cloud_after_detecting_sec': first_cloud_after_detecting_sec,
+            'max_observed_detection_confidence': max_observed_detection_confidence,
+            'last_yolo_max_confidence': last_yolo_confidence,
+            'last_yolo_gate_open': last_yolo_publish,
+            'topic_graph_endpoints': (
+                snapshot_topic_endpoints(node, sorted({
+                    '/scan', '/odom', '/tf', '/local_costmap/costmap',
+                    '/local_costmap/published_footprint', '/camera/color/image_raw',
+                    '/camera/depth/color/points', '/yolo/detections',
+                    '/pose_estimator/object_pose',
+                } | discovered_path_topics)) if node is not None else {}),
             'path_topics_observed': sorted(discovered_path_topics),
             'runtime_observation_log': str(observation_path),
             'error': str(exc),

@@ -54,12 +54,24 @@ class P6PerceptionIntegrationContractTest(unittest.TestCase):
 
     def test_smoke_collects_source_stamps_and_nav_path_evidence(self):
         source = (ROOT / 'tools/perception/p6_yolo_pose_integration_smoke.py').read_text()
+        self.assertIn('from nav_msgs.msg import OccupancyGrid, Odometry, Path as NavPath', source)
+        self.assertIn('from sensor_msgs.msg import LaserScan, PointCloud2', source)
+        self.assertIn("node.create_subscription(LaserScan, '/scan', on_scan", source)
+        self.assertIn("node.create_subscription(OccupancyGrid, '/local_costmap/costmap', on_costmap", source)
         self.assertIn("'/local_costmap/published_footprint'", source)
         self.assertIn("'/tf:odom->base_link'", source)
         self.assertIn('discover_path_topics', source)
-        self.assertIn('from nav_msgs.msg import Odometry, Path as NavPath', source)
         self.assertIn('node.create_subscription(NavPath, topic', source)
         self.assertIn('source_age_sec_at_receive', source)
+        self.assertIn('source_stamp_hz', source)
+        self.assertIn('source_stamp_advance_count', source)
+        self.assertIn('repeated_source_stamp_count', source)
+        self.assertIn('topic_graph_endpoints', source)
+        self.assertIn("'/camera/depth/color/points'", source)
+        self.assertIn("'/yolo/detections'", source)
+        self.assertIn("'/pose_estimator/object_pose'", source)
+        self.assertIn("'detection_messages': detection_messages", source)
+        self.assertIn("'pose_count': poses", source)
         self.assertIn('runtime-observations.jsonl', source)
 
     def test_integration_python_files_parse_without_importing_ros(self):
