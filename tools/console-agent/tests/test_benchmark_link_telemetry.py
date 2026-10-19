@@ -52,6 +52,18 @@ class PointCloudBenchmarkMetricsTests(unittest.TestCase):
         self.assertTrue(result["ci_resource_pressure_observed"])
         self.assertIn("cannot be attributed to the Agent alone", result["interpretation"])
 
+    def test_sequence_gaps_are_reported_even_when_all_rates_meet_the_minimum(self) -> None:
+        result = _diagnose_pipeline(
+            10.0,
+            5.9,
+            5.0,
+            ci_pressure_observed=False,
+            publisher_probe_sequence_missing_count=49,
+        )
+        self.assertTrue(result["publisher_to_probe_sequence_gaps_observed"])
+        self.assertEqual(result["suspected_cause_category"], "publisher_to_probe_delivery_or_probe_queue")
+        self.assertIn("cannot distinguish DDS delivery loss", result["interpretation"])
+
     def test_five_hz_acceptance_threshold_is_not_lowered(self) -> None:
         self.assertEqual(MIN_ACCEPTED_RATE_HZ, 5.0)
         self.assertFalse(_diagnose_pipeline(5.0, 5.0, 4.99, ci_pressure_observed=False)[

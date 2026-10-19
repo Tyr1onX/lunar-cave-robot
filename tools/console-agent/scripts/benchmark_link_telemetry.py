@@ -96,6 +96,7 @@ def _diagnose_pipeline(
     publisher_cpu_percent: float | None = None,
     probe_cpu_percent: float | None = None,
     agent_cpu_percent: float | None = None,
+    publisher_probe_sequence_missing_count: int = 0,
 ) -> dict[str, Any]:
     """Classify the first measured rate boundary without attributing unsupported root cause."""
     publisher_ok = publisher_rate_hz >= MIN_ACCEPTED_RATE_HZ
@@ -109,7 +110,7 @@ def _diagnose_pipeline(
         stage = "agent_receive_path_below_5_hz"
     else:
         stage = "all_observed_stages_at_or_above_5_hz"
-    if publisher_ok and probe_ok and agent_ok:
+    if publisher_ok and probe_ok and agent_ok and publisher_probe_sequence_missing_count == 0:
         suspected_cause = "none_observed"
     elif not publisher_ok:
         suspected_cause = (
@@ -117,9 +118,11 @@ def _diagnose_pipeline(
             if ci_pressure_observed or (publisher_cpu_percent is not None and publisher_cpu_percent >= 80.0)
             else "publisher_generation_or_timer"
         )
-    elif not probe_ok:
+    elif not probe_ok or publisher_probe_sequence_missing_count > 0:
         suspected_cause = (
-            "independent_probe_or_ci_resource_pressure"
+            "publisher_to_probe_delivery_or_probe_queue"
+            if publisher_probe_sequence_missing_count > 0 and not ci_pressure_observed
+            else "independent_probe_or_ci_resource_pressure"
             if ci_pressure_observed or (probe_cpu_percent is not None and probe_cpu_percent >= 80.0)
             else "dds_delivery_path"
         )
@@ -135,11 +138,18 @@ def _diagnose_pipeline(
         "independent_dds_probe_at_least_5_hz": probe_ok,
         "agent_receive_p05_at_least_5_hz": agent_ok,
         "first_stage_below_threshold": stage,
+        "publisher_to_probe_sequence_gaps_observed": publisher_probe_sequence_missing_count > 0,
+        "publisher_to_probe_sequence_missing_count": publisher_probe_sequence_missing_count,
+        "first_observed_loss_boundary": (
+            "publisher_to_independent_probe" if publisher_probe_sequence_missing_count > 0 else None
+        ),
         "suspected_cause_category": suspected_cause,
         "ci_resource_pressure_observed": ci_pressure_observed,
         "interpretation": (
             "CI CPU/resource pressure evidence was observed during the measurement; low rates cannot be attributed to the Agent alone."
             if ci_pressure_observed and stage != "all_observed_stages_at_or_above_5_hz"
+            else "Publisher sequence gaps at the independent probe were observed; the result cannot distinguish DDS delivery loss from probe-side queue or processing limits."
+            if publisher_probe_sequence_missing_count > 0
             else "The first below-threshold measurement localizes the stage; it does not by itself prove a root cause."
         ),
     }
@@ -680,6 +690,7 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
                 )
             ),
             agent_cpu_percent=load.get("agent_cpu_percent_of_one_core_average"),
+            publisher_probe_sequence_missing_count=delivery["publisher_probe_sequence_missing_count"],
         )
         recovery_deadline = time.monotonic() + 8.0
         recovered_to_unavailable = False
