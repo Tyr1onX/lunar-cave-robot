@@ -1,0 +1,5 @@
+- ros_topic_name: /p2_gazebo/gz_pose_tf
+  gz_topic_name: /world/tzb_p2/pose/info
+  ros_type_name: tf2_msgs/msg/TFMessage
+  gz_type_name: gz.msgs.Pose_V
+  direction: GZ_TO_ROS

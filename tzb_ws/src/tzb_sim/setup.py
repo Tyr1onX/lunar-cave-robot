@@ -15,17 +15,22 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*')),
+        (os.path.join('share', package_name, 'tools'), glob('tools/*.sh')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='tzb',
     maintainer_email='tzb@example.com',
-    description='Synthetic RGB-D scene for the tzb arm pipeline',
+    description='Isolated synthetic and Gazebo simulation tools for the tzb arm pipeline',
     license='MIT',
     entry_points={
         'console_scripts': [
             'blue_block_scene = tzb_sim.blue_block_scene:main',
             'serial_bridge_sim = tzb_sim.serial_bridge_sim:main',
+            'gazebo_joint_command_adapter = tzb_sim.gazebo_effort_controller:main',
+            'gazebo_state_visualizer = tzb_sim.gazebo_state_visualizer:main',
+            'gazebo_pose_tf_adapter = tzb_sim.gazebo_pose_tf_adapter:main',
+            'gazebo_rgbd_optical_adapter = tzb_sim.gazebo_rgbd_optical_adapter:main',
         ],
     },
 )

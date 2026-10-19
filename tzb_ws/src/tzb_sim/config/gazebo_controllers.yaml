@@ -1,0 +1,27 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 250
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    arm_position_controller:
+      type: forward_command_controller/ForwardCommandController
+    gripper_effort_controller:
+      type: forward_command_controller/ForwardCommandController
+
+arm_position_controller:
+  ros__parameters:
+    joints:
+      - J1_joint
+      - J2_joint
+      - J3_joint
+      - J4_joint
+      - J5_joint
+      - J6_joint
+    interface_name: position
+
+gripper_effort_controller:
+  ros__parameters:
+    joints:
+      - Claw_left_joint
+      - claw_right_joint
+    interface_name: effort
