@@ -61,11 +61,19 @@ def _summarize_deliveries(
     agent_received_count: int,
     start: float,
     end: float,
+    probe_sequences: list[int] | None = None,
 ) -> dict[str, Any]:
     publisher_count = _count_events(publisher_times, start, end)
     probe_count = _count_events(probe_times, start, end)
     publisher_probe_delta = publisher_count - probe_count
     probe_agent_delta = probe_count - agent_received_count
+    in_window_sequences = {
+        sequence
+        for sequence, stamp in enumerate(publisher_times, start=1)
+        if start <= stamp <= end
+    }
+    observed_sequences = set(probe_sequences or [])
+    delivered_sequence_count = len(in_window_sequences & observed_sequences)
     return {
         "publisher_count": publisher_count,
         "publisher_rate_hz": _event_rate_hz(publisher_times, start, end),
@@ -74,6 +82,8 @@ def _summarize_deliveries(
         "agent_count": agent_received_count,
         "publisher_probe_delta": publisher_probe_delta,
         "publisher_probe_missing_lower_bound": max(0, publisher_probe_delta),
+        "publisher_probe_sequence_delivered_count": delivered_sequence_count,
+        "publisher_probe_sequence_missing_count": max(0, len(in_window_sequences) - delivered_sequence_count),
         "probe_agent_delta": probe_agent_delta,
         "probe_agent_missing_lower_bound": max(0, probe_agent_delta),
     }
@@ -130,7 +140,7 @@ def _diagnose_pipeline(
         "suspected_cause_category": suspected_cause,
         "ci_resource_pressure_observed": ci_pressure_observed,
         "interpretation": (
-            "CI CPU throttling was observed during the measurement; low rates cannot be attributed to the Agent alone."
+            "CI CPU/resource pressure evidence was observed during the measurement; low rates cannot be attributed to the Agent alone."
             if ci_pressure_observed and stage != "all_observed_stages_at_or_above_5_hz"
             else "The first below-threshold measurement localizes the stage; it does not by itself prove a root cause."
         ),
@@ -181,6 +191,7 @@ def _publisher_main(stats_path: str | None = None) -> int:
     published_times: list[float] = []
     timer_times: list[float] = []
     next_stats_write = time.monotonic()
+    matched_subscription_count = 0
 
     def stats() -> dict[str, Any]:
         intervals = [right - left for left, right in zip(published_times, published_times[1:])]
@@ -195,14 +206,15 @@ def _publisher_main(stats_path: str | None = None) -> int:
             "measured_publish_rate_hz": round((len(published_times) - 1) / duration, 3) if duration > 0 else 0.0,
             "publish_interval_ms_p95": _percentile([value * 1000 for value in intervals], 0.95),
             "timer_callback_interval_ms_p95": _percentile([value * 1000 for value in timer_intervals], 0.95),
-            "matched_subscription_count": publisher.get_subscription_count(),
+            "matched_subscription_count": matched_subscription_count,
             "last_sequence": len(published_times),
         }
 
     def publish() -> None:
-        nonlocal next_stats_write
+        nonlocal matched_subscription_count, next_stats_write
         timer_now = time.monotonic()
         timer_times.append(timer_now)
+        matched_subscription_count = publisher.get_subscription_count()
         message.header.stamp = node.get_clock().now().to_msg()
         message.header.frame_id = f"synthetic_ci_lidar:{len(published_times) + 1}"
         publisher.publish(message)
@@ -311,7 +323,21 @@ def _cpu_cgroup_snapshot() -> dict[str, Any]:
         result["throttled_periods"] = int(values["nr_throttled"]) if "nr_throttled" in values else None
         result["total_periods"] = int(values["nr_periods"]) if "nr_periods" in values else None
     except (OSError, ValueError, IndexError, KeyError):
-        pass
+        try:
+            quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text(encoding="ascii"))
+            period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text(encoding="ascii"))
+            if quota > 0 and period > 0:
+                result["quota_cores"] = round(quota / period, 3)
+            cpu_stat = Path("/sys/fs/cgroup/cpu/cpu.stat").read_text(encoding="ascii").splitlines()
+            values = dict(line.split() for line in cpu_stat if len(line.split()) == 2)
+            if "throttled_time" in values:
+                result["throttled_usec"] = int(values["throttled_time"]) // 1000
+            if "nr_throttled" in values:
+                result["throttled_periods"] = int(values["nr_throttled"])
+            if "nr_periods" in values:
+                result["total_periods"] = int(values["nr_periods"])
+        except (OSError, ValueError, IndexError, KeyError):
+            pass
     return result
 
 
@@ -617,6 +643,8 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
         except subprocess.TimeoutExpired:
             probe.terminate()
             probe.wait(timeout=5.0)
+        publisher_shutdown_clean = publisher.returncode == 0
+        probe_shutdown_clean = probe.returncode == 0
         publisher_stats = _read_json(publisher_stats_path)
         probe_stats = _read_json(probe_stats_path)
         load_start = float(load["started_monotonic_seconds"])
@@ -631,6 +659,7 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
             agent_received_count=agent_received_in_window,
             start=load_start,
             end=load_end,
+            probe_sequences=[int(item) for item in probe_stats.get("sequence_numbers", [])],
         )
         published_in_window = delivery["publisher_count"]
         probe_received_in_window = delivery["probe_count"]
@@ -720,18 +749,21 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
             "loss_estimates": {
                 "published_minus_independent_probe_count": publisher_to_probe_difference,
                 "publisher_to_probe_missing_count_lower_bound": delivery["publisher_probe_missing_lower_bound"],
+                "publisher_to_probe_sequence_delivered_count": delivery["publisher_probe_sequence_delivered_count"],
+                "publisher_to_probe_sequence_missing_count": delivery["publisher_probe_sequence_missing_count"],
                 "independent_probe_minus_agent_count": probe_to_agent_difference,
                 "probe_to_agent_missing_count_lower_bound": delivery["probe_agent_missing_lower_bound"],
                 "method_note": (
-                    "Publisher and probe events use the shared monotonic clock. Agent callback count is "
-                    "differenced across polled telemetry snapshots and may have a boundary error of up to one "
-                    "poll interval."
+                    "Publisher-to-probe sequence loss counts messages published in the measurement window "
+                    "and observed by the probe before shutdown. Probe and Agent count differences are estimates; "
+                    "Agent callback count is differenced across polled telemetry snapshots and may have a boundary "
+                    "error of up to one poll interval. The Agent endpoint does not expose per-message sequence history."
                 ),
             },
             "ci_resources": {
                 "before": ci_before,
                 "after": ci_after,
-                "cpu_throttling": ci_throttling,
+                "resource_pressure": ci_throttling,
             },
             "pipeline_diagnosis": pipeline_diagnosis,
             "impact": {
@@ -745,11 +777,14 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
                 "publisher_actual_rate_hz": publisher_rate,
                 "independent_dds_probe_rate_hz": dds_probe_rate,
                 "publisher_to_probe_missing_count_lower_bound": delivery["publisher_probe_missing_lower_bound"],
+                "publisher_to_probe_sequence_missing_count": delivery["publisher_probe_sequence_missing_count"],
                 "probe_to_agent_missing_count_lower_bound": delivery["probe_agent_missing_lower_bound"],
                 "stream_returns_to_unavailable_after_publisher_stop": recovered_to_unavailable,
             },
             "acceptance": {
                 "agent_stream_reached_streaming": stream_reached_streaming,
+                "publisher_shutdown_clean": publisher_shutdown_clean,
+                "independent_dds_probe_shutdown_clean": probe_shutdown_clean,
                 "agent_cpu_average_below_one_core": load["agent_cpu_percent_of_one_core_average"] < 100.0,
                 "agent_rss_increase_below_128_mib": rss_increase is not None and rss_increase < 128 * 1024 * 1024,
                 "graph_age_p95_below_5000_ms": graph_p95 is not None and graph_p95 < 5_000,

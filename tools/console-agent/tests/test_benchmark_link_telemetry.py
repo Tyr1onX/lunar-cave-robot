@@ -19,11 +19,14 @@ class PointCloudBenchmarkMetricsTests(unittest.TestCase):
             agent_received_count=3,
             start=0.0,
             end=0.5,
+            probe_sequences=[1, 2, 4, 5],
         )
         self.assertEqual(result["publisher_count"], 6)
         self.assertEqual(result["probe_count"], 4)
         self.assertEqual(result["agent_count"], 3)
         self.assertEqual(result["publisher_probe_missing_lower_bound"], 2)
+        self.assertEqual(result["publisher_probe_sequence_delivered_count"], 4)
+        self.assertEqual(result["publisher_probe_sequence_missing_count"], 2)
         self.assertEqual(result["probe_agent_missing_lower_bound"], 1)
 
     def test_publisher_timer_rate_uses_observed_publish_timestamps(self) -> None:
