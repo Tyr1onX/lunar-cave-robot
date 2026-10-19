@@ -80,12 +80,10 @@ def _summarize_deliveries(
         "probe_count": probe_count,
         "probe_rate_hz": _event_rate_hz(probe_times, start, end),
         "agent_count": agent_received_count,
-        "publisher_probe_delta": publisher_probe_delta,
-        "publisher_probe_missing_lower_bound": max(0, publisher_probe_delta),
+        "publisher_probe_event_count_delta": publisher_probe_delta,
         "publisher_probe_sequence_delivered_count": delivered_sequence_count,
         "publisher_probe_sequence_missing_count": max(0, len(in_window_sequences) - delivered_sequence_count),
-        "probe_agent_delta": probe_agent_delta,
-        "probe_agent_missing_lower_bound": max(0, probe_agent_delta),
+        "probe_agent_event_count_delta_estimate": probe_agent_delta,
     }
 
 
@@ -665,8 +663,8 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
         probe_received_in_window = delivery["probe_count"]
         publisher_rate = delivery["publisher_rate_hz"]
         dds_probe_rate = delivery["probe_rate_hz"]
-        publisher_to_probe_difference = delivery["publisher_probe_delta"]
-        probe_to_agent_difference = delivery["probe_agent_delta"]
+        publisher_to_probe_difference = delivery["publisher_probe_event_count_delta"]
+        probe_to_agent_difference = delivery["probe_agent_event_count_delta_estimate"]
         ci_throttling = _cpu_throttling_delta(ci_before, ci_after, load_elapsed)
         pipeline_diagnosis = _diagnose_pipeline(
             publisher_rate,
@@ -747,12 +745,10 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
                 },
             },
             "loss_estimates": {
-                "published_minus_independent_probe_count": publisher_to_probe_difference,
-                "publisher_to_probe_missing_count_lower_bound": delivery["publisher_probe_missing_lower_bound"],
+                "publisher_minus_probe_event_count_delta": publisher_to_probe_difference,
                 "publisher_to_probe_sequence_delivered_count": delivery["publisher_probe_sequence_delivered_count"],
                 "publisher_to_probe_sequence_missing_count": delivery["publisher_probe_sequence_missing_count"],
-                "independent_probe_minus_agent_count": probe_to_agent_difference,
-                "probe_to_agent_missing_count_lower_bound": delivery["probe_agent_missing_lower_bound"],
+                "probe_minus_agent_event_count_delta_estimate": probe_to_agent_difference,
                 "method_note": (
                     "Publisher-to-probe sequence loss counts messages published in the measurement window "
                     "and observed by the probe before shutdown. Probe and Agent count differences are estimates; "
@@ -776,9 +772,8 @@ def run_benchmark(report_path: Path, baseline_seconds: float, load_seconds: floa
                 "synthetic_stream_rate_p05_hz": receive_p05,
                 "publisher_actual_rate_hz": publisher_rate,
                 "independent_dds_probe_rate_hz": dds_probe_rate,
-                "publisher_to_probe_missing_count_lower_bound": delivery["publisher_probe_missing_lower_bound"],
                 "publisher_to_probe_sequence_missing_count": delivery["publisher_probe_sequence_missing_count"],
-                "probe_to_agent_missing_count_lower_bound": delivery["probe_agent_missing_lower_bound"],
+                "probe_to_agent_event_count_delta_estimate": delivery["probe_agent_event_count_delta_estimate"],
                 "stream_returns_to_unavailable_after_publisher_stop": recovered_to_unavailable,
             },
             "acceptance": {

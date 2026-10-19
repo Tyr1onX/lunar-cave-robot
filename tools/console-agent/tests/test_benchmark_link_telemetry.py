@@ -24,10 +24,10 @@ class PointCloudBenchmarkMetricsTests(unittest.TestCase):
         self.assertEqual(result["publisher_count"], 6)
         self.assertEqual(result["probe_count"], 4)
         self.assertEqual(result["agent_count"], 3)
-        self.assertEqual(result["publisher_probe_missing_lower_bound"], 2)
+        self.assertEqual(result["publisher_probe_event_count_delta"], 2)
         self.assertEqual(result["publisher_probe_sequence_delivered_count"], 4)
         self.assertEqual(result["publisher_probe_sequence_missing_count"], 2)
-        self.assertEqual(result["probe_agent_missing_lower_bound"], 1)
+        self.assertEqual(result["probe_agent_event_count_delta_estimate"], 1)
 
     def test_publisher_timer_rate_uses_observed_publish_timestamps(self) -> None:
         self.assertEqual(_event_rate_hz([0.0, 0.1, 0.2, 0.4], 0.0, 0.4), 7.5)
