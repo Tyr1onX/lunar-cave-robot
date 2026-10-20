@@ -16,6 +16,9 @@ ament_target_dependencies(chassis_serial_bridge_node rclcpp geometry_msgs std_ms
 install(TARGETS chassis_serial_bridge_node
   DESTINATION lib/${PROJECT_NAME}
 )
+install(FILES src/chassis_serial_protocol.hpp
+  DESTINATION include/${PROJECT_NAME}
+)
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
 )

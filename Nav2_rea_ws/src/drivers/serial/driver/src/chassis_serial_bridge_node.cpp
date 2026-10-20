@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/string.hpp>
+#include "chassis_serial_protocol.hpp"
 
 #include <array>
 #include <cerrno>
@@ -17,32 +18,7 @@
 
 namespace
 {
-constexpr std::size_t kFrameSize = 14;
-constexpr std::uint8_t kFrameHeader = 0xA5;
-constexpr std::uint8_t kFrameTail = 0x4A;
-
-using Frame = std::array<std::uint8_t, kFrameSize>;
-
-void writeFloatLe(Frame & frame, std::size_t offset, float value)
-{
-  static_assert(sizeof(float) == sizeof(std::uint32_t), "STM32 protocol requires 32-bit float");
-  std::uint32_t bits = 0;
-  std::memcpy(&bits, &value, sizeof(bits));
-  for (std::size_t i = 0; i < sizeof(bits); ++i) {
-    frame[offset + i] = static_cast<std::uint8_t>((bits >> (8U * i)) & 0xFFU);
-  }
-}
-
-Frame encodeFrame(float vx, float vy, float wz)
-{
-  Frame frame{};
-  frame[0] = kFrameHeader;
-  writeFloatLe(frame, 1, vx);
-  writeFloatLe(frame, 5, vy);
-  writeFloatLe(frame, 9, wz);
-  frame[13] = kFrameTail;
-  return frame;
-}
+using chassis_serial_bridge::protocol::Frame;
 
 bool finiteTwist(const geometry_msgs::msg::Twist & msg)
 {
@@ -62,8 +38,14 @@ public:
     command_topic_ = declare_parameter<std::string>("command_topic", "/cmd_vel");
     link_status_topic_ = declare_parameter<std::string>(
       "link_status_topic", "/chassis/serial_link_status");
+    pusher_command_topic_ = declare_parameter<std::string>(
+      "pusher_command_topic", "/chassis/pusher_command");
+    pusher_status_topic_ = declare_parameter<std::string>(
+      "pusher_status_topic", "/chassis/pusher_status");
+    pusher_commands_enabled_ = declare_parameter<bool>("pusher_commands_enabled", false);
     const int tx_period_ms = declare_parameter<int>("tx_period_ms", 20);
     command_timeout_ms_ = declare_parameter<int>("command_timeout_ms", 100);
+    pusher_command_timeout_ms_ = declare_parameter<int>("pusher_command_timeout_ms", 500);
     max_linear_x_ = declare_parameter<double>("max_linear_x", 0.6);
     max_angular_z_ = declare_parameter<double>("max_angular_z", 1.5);
     max_linear_y_abs_ = declare_parameter<double>("max_linear_y_abs", 0.01);
@@ -73,7 +55,10 @@ public:
     if (baud_rate != 115200) {
       throw std::invalid_argument("STM32 USART1 bridge baud_rate must be 115200");
     }
-    if (tx_period_ms <= 0 || tx_period_ms > 1000 || command_timeout_ms_ <= 0 ||
+    if (command_topic_.empty() || pusher_command_topic_.empty() ||
+        command_topic_ == pusher_command_topic_ ||
+        tx_period_ms <= 0 || tx_period_ms > 1000 || command_timeout_ms_ <= 0 ||
+        pusher_command_timeout_ms_ <= 0 || pusher_command_timeout_ms_ > 2000 ||
         !std::isfinite(max_linear_x_) || max_linear_x_ <= 0.0 ||
         !std::isfinite(max_angular_z_) || max_angular_z_ <= 0.0 ||
         !std::isfinite(max_linear_y_abs_) || max_linear_y_abs_ < 0.0 ||
@@ -82,11 +67,18 @@ public:
     {
       throw std::invalid_argument("invalid chassis bridge safety parameter");
     }
+    command_state_.setTimeouts(
+      std::chrono::milliseconds(command_timeout_ms_),
+      std::chrono::milliseconds(pusher_command_timeout_ms_));
 
     command_sub_ = create_subscription<geometry_msgs::msg::Twist>(
       command_topic_, rclcpp::QoS(10),
       std::bind(&ChassisSerialBridge::commandCallback, this, std::placeholders::_1));
+    pusher_command_sub_ = create_subscription<std_msgs::msg::String>(
+      pusher_command_topic_, rclcpp::QoS(10),
+      std::bind(&ChassisSerialBridge::pusherCommandCallback, this, std::placeholders::_1));
     link_status_pub_ = create_publisher<std_msgs::msg::String>(link_status_topic_, rclcpp::QoS(10));
+    pusher_status_pub_ = create_publisher<std_msgs::msg::String>(pusher_status_topic_, rclcpp::QoS(10));
     timer_ = create_wall_timer(
       std::chrono::milliseconds(tx_period_ms),
       std::bind(&ChassisSerialBridge::timerCallback, this));
@@ -107,7 +99,8 @@ public:
   ~ChassisSerialBridge() override
   {
     if (serial_fd_ >= 0) {
-      const Frame stop = encodeFrame(0.0F, 0.0F, 0.0F);
+      const Frame stop = chassis_serial_bridge::protocol::encodeFrame(
+        0.0F, 0.0F, chassis_serial_bridge::protocol::kStopVY);
       (void)::write(serial_fd_, stop.data(), stop.size());
       (void)::tcdrain(serial_fd_);
       (void)::close(serial_fd_);
@@ -121,9 +114,7 @@ private:
   void commandCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     const auto reject = [this](const char * reason) {
-      command_valid_ = false;
-      latest_vx_ = 0.0F;
-      latest_wz_ = 0.0F;
+      command_state_.rejectAll();
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000, "Rejecting /cmd_vel and commanding zero: %s", reason);
     };
@@ -147,10 +138,64 @@ private:
       return;
     }
 
-    latest_vx_ = static_cast<float>(msg->linear.x);
-    latest_wz_ = static_cast<float>(msg->angular.z);
-    command_received_at_ = Clock::now();
-    command_valid_ = true;
+    if (!command_state_.setMotion(
+        static_cast<float>(msg->linear.x), static_cast<float>(msg->angular.z), Clock::now()))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "Rejecting nonzero /cmd_vel while the pusher is active or its stop frame is pending");
+    }
+  }
+
+  void pusherCommandCallback(const std_msgs::msg::String::SharedPtr msg)
+  {
+    chassis_serial_bridge::protocol::PusherCommand command;
+    if (!chassis_serial_bridge::protocol::parsePusherCommand(msg->data, command)) {
+      command_state_.rejectAll();
+      publishPusherStatus("REJECTED_INVALID_SAFE_STOP");
+      RCLCPP_WARN(get_logger(), "Invalid pusher command; clearing pending chassis and pusher commands");
+      return;
+    }
+
+    if (command == chassis_serial_bridge::protocol::PusherCommand::Stop) {
+      (void)command_state_.requestPusher(command, Clock::now());
+      publishPusherStatus("STOPPED_HOST_COMMAND");
+      return;
+    }
+
+    if (!pusher_commands_enabled_) {
+      command_state_.rejectAll();
+      publishPusherStatus("REJECTED_DISABLED");
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "Pusher command rejected: pusher_commands_enabled is false");
+      return;
+    }
+    if (serial_fd_ < 0) {
+      command_state_.rejectAll();
+      publishPusherStatus("REJECTED_SERIAL_DISCONNECTED");
+      return;
+    }
+
+    const auto result = command_state_.requestPusher(command, Clock::now());
+    if (result == chassis_serial_bridge::protocol::PusherRequestResult::Accepted) {
+      publishPusherStatus(
+        command == chassis_serial_bridge::protocol::PusherCommand::Extend ?
+        "HOST_COMMAND_ACCEPTED_EXTEND" : "HOST_COMMAND_ACCEPTED_RETRACT");
+    } else {
+      publishPusherStatus("REJECTED_STOP_INTERLOCK");
+      RCLCPP_WARN(
+        get_logger(), "Pusher direction change rejected until a stop frame has been sent");
+    }
+  }
+
+  void publishPusherStatus(const char * status)
+  {
+    std_msgs::msg::String message;
+    message.data = status;
+    pusher_status_pub_->publish(message);
+    RCLCPP_INFO(
+      get_logger(), "Pusher host-side status: %s (not actuator acknowledgement)", status);
   }
 
   void timerCallback()
@@ -168,18 +213,15 @@ private:
       }
     }
 
-    const bool fresh = command_valid_ &&
-      (now - command_received_at_) <= std::chrono::milliseconds(command_timeout_ms_);
-    const float vx = fresh ? latest_vx_ : 0.0F;
-    const float wz = fresh ? latest_wz_ : 0.0F;
-    const Frame frame = encodeFrame(vx, 0.0F, wz);
+    if (command_state_.expirePusher(now)) {
+      publishPusherStatus("AUTO_STOPPED_TIMEOUT");
+    }
+    const Frame frame = command_state_.nextFrame(now);
     if (!writeFrame(frame)) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000,
         "Serial write failed; cached command cleared and port will reconnect");
-      command_valid_ = false;
-      latest_vx_ = 0.0F;
-      latest_wz_ = 0.0F;
+      command_state_.resetAfterDisconnect();
       closePort();
       publishLinkStatus("DISCONNECTED");
       return;
@@ -241,9 +283,7 @@ private:
 
     (void)::tcflush(fd, TCIOFLUSH);
     serial_fd_ = fd;
-    command_valid_ = false;
-    latest_vx_ = 0.0F;
-    latest_wz_ = 0.0F;
+    command_state_.resetAfterDisconnect();
     RCLCPP_INFO(get_logger(), "Serial device opened: %s (115200 8N1)", device_name_.c_str());
     return true;
   }
@@ -277,20 +317,24 @@ private:
   std::string device_name_;
   std::string command_topic_;
   std::string link_status_topic_;
+  std::string pusher_command_topic_;
+  std::string pusher_status_topic_;
   std::string last_link_status_;
+  bool pusher_commands_enabled_{false};
   int command_timeout_ms_{100};
+  int pusher_command_timeout_ms_{500};
   double max_linear_x_{0.6};
   double max_angular_z_{1.5};
   double max_linear_y_abs_{0.01};
   double unsupported_axis_tolerance_{0.01};
   int serial_fd_{-1};
   Clock::time_point next_open_attempt_{};
-  Clock::time_point command_received_at_{};
-  float latest_vx_{0.0F};
-  float latest_wz_{0.0F};
-  bool command_valid_{false};
+  chassis_serial_bridge::CommandState command_state_{
+    std::chrono::milliseconds(100), std::chrono::milliseconds(500)};
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pusher_command_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr link_status_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pusher_status_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 }  // namespace

@@ -5,6 +5,12 @@ chassis_serial_bridge:
     device_name: ""
     baud_rate: 115200
     command_topic: "/cmd_vel"
+    # Separate input, serialized by the same bridge that owns the chassis UART.
+    # Keep disabled until the installed STM32 firmware is verified for raw VY tokens.
+    pusher_command_topic: "/chassis/pusher_command"
+    pusher_status_topic: "/chassis/pusher_status"
+    pusher_commands_enabled: false
+    pusher_command_timeout_ms: 500
     tx_period_ms: 20
     command_timeout_ms: 100
     max_linear_x: 0.6
