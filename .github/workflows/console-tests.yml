@@ -69,7 +69,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE:/workspace:ro" \
             ros:humble-ros-base \
             bash -lc '
-              set -euo pipefail
+              set -eo pipefail
               source /opt/ros/humble/setup.bash
               mkdir -p /tmp/lunar-chassis-build/src
               cp -a /workspace/Nav2_rea_ws/src/drivers/serial/driver \
